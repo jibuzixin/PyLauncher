@@ -1,0 +1,2238 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Python 脚本启动器</title>
+<style>
+/* ===== Tool Launcher · 极简黑白风 ===== */
+:root {
+  --bg: #ffffff;
+  --bg-soft: #f7f7f7;
+  --bg-hover: #f2f2f2;
+  --border: #e6e6e6;
+  --border-strong: #d4d4d4;
+  --text: #111111;
+  --muted: #6e6e6e;
+  --faint: #9a9a9a;
+  --danger: #d93025;
+  --ok: #1a7f37;
+  --radius: 10px;
+  --radius-sm: 7px;
+  --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas,
+    "Liberation Mono", monospace;
+  --shadow: 0 2px 10px rgba(0, 0, 0, 0.04);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+/* hidden 属性优先级最高，防止被其他 display 规则覆盖 */
+[hidden] { display: none !important; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font);
+  color: var(--text);
+  background: var(--bg);
+  font-size: 13px;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+button { font-family: inherit; cursor: pointer; }
+input, select, textarea { font-family: inherit; font-size: 13px; color: var(--text); }
+::selection { background: #111; color: #fff; }
+
+svg { flex-shrink: 0; }
+
+/* ===== Topbar ===== */
+.topbar {
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  z-index: 5;
+  position: relative;
+}
+.brand { display: flex; align-items: center; gap: 8px; }
+.brand-logo {
+  width: 26px; height: 26px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text);
+}
+.brand-logo svg { width: 22px; height: 22px; }
+.brand-name { font-size: 14px; font-weight: 600; letter-spacing: -0.01em; }
+.page-badge { font-weight: 600; transition: color .2s; }
+.page-badge.ok { color: #16a34a; border-color: #bbf7d0; background: #f0fdf4; }
+.page-badge.bad { color: #dc2626; border-color: #fecaca; background: #fef2f2; }
+.badge {
+  font-size: 11px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 999px;
+  padding: 1px 8px;
+}
+.topbar-actions { display: flex; gap: 8px; }
+
+/* ===== Buttons ===== */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 32px; padding: 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px; font-weight: 500;
+  transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s;
+  white-space: nowrap;
+}
+.btn svg { width: 15px; height: 15px; }
+.btn:hover { background: var(--bg-hover); }
+.btn:active { transform: translateY(0.5px); }
+.btn.ghost { border-color: transparent; background: transparent; }
+.btn.ghost:hover { background: var(--bg-hover); }
+.btn.primary {
+  background: var(--text); color: #fff; border-color: var(--text);
+}
+.btn.primary:hover { background: #333; }
+.btn.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.big { height: 38px; padding: 0 20px; font-size: 14px; border-radius: var(--radius-sm); }
+.btn.mini { height: 26px; padding: 0 8px; font-size: 12px; }
+.btn.mini svg { width: 13px; height: 13px; }
+.btn.danger { color: var(--danger); border-color: var(--danger); background: transparent; }
+.btn.danger:hover { background: #fdeceb; }
+.btn.danger.primary { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn.icon { padding: 0 7px; }
+
+/* ===== Layout ===== */
+.layout {
+  display: flex;
+  height: calc(100vh - 52px);
+  min-height: 0;
+}
+
+/* ===== Sidebar ===== */
+.sidebar {
+  width: 264px;
+  min-width: 220px;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+  background: var(--bg-soft);
+  min-height: 0;
+}
+.search-wrap {
+  display: flex; align-items: center; gap: 8px;
+  margin: 12px 12px 8px;
+  padding: 0 10px;
+  height: 34px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.search-wrap:focus-within { border-color: var(--text); }
+.search-wrap svg { width: 14px; height: 14px; color: var(--faint); }
+.search-wrap input {
+  flex: 1; border: none; outline: none; background: transparent;
+}
+.icon-btn {
+  border: none; background: transparent; color: var(--faint);
+  width: 24px; height: 24px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.icon-btn svg { width: 14px; height: 14px; }
+.icon-btn:hover { background: var(--bg-hover); color: var(--text); }
+
+/* 标签过滤区 */
+.tag-filter { padding: 4px 12px 8px; border-bottom: 1px solid var(--border); }
+.tag-filter-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.tag-filter-head > span { font-size: 11px; color: var(--faint); }
+.tag-clear { border: none; background: transparent; color: var(--faint); font-size: 11px; cursor: pointer; padding: 0; }
+.tag-clear:hover { color: var(--danger); }
+.tag-filter-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 88px; overflow: auto; }
+.tag-chip {
+  font-size: 11px; padding: 2px 9px; border-radius: 999px;
+  border: 1px solid var(--border-strong); background: var(--bg);
+  color: var(--muted); cursor: pointer; transition: all 0.12s;
+}
+.tag-chip:hover { border-color: var(--text); color: var(--text); }
+.tag-chip.active { background: var(--text); color: #fff; border-color: var(--text); }
+
+/* 脚本卡片标签行 */
+.sc-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+.sc-tags .tag { font-size: 10px; padding: 0 6px; line-height: 16px; border-radius: 4px; background: var(--bg-soft); border: 1px solid var(--border); color: var(--muted); }
+.sc-tags .tag.more { color: var(--faint); background: transparent; }
+.scan-info {
+  padding: 0 14px 8px; font-size: 11px; color: var(--faint);
+  display: none;
+}
+.scan-info.show { display: block; }
+
+.script-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.script-card {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 9px 10px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 2px;
+  transition: background 0.1s;
+}
+.script-card:hover { background: var(--bg-hover); }
+.script-card.active { background: var(--bg); border-color: var(--border-strong); box-shadow: var(--shadow); }
+.script-card .sc-name { font-weight: 600; font-size: 13px; display: flex; align-items: center; gap: 6px; }
+.script-card .sc-arg {
+  font-size: 10px; color: var(--muted);
+  border: 1px solid var(--border); border-radius: 4px;
+  padding: 0 5px; line-height: 16px;
+}
+.script-card .sc-path {
+  font-family: var(--mono); font-size: 10.5px; color: var(--faint);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.sidebar-empty {
+  padding: 24px 16px; text-align: center; color: var(--faint);
+  font-size: 12px; line-height: 1.8;
+}
+
+/* ===== Form Pane ===== */
+.form-pane {
+  flex: 1;
+  min-width: 340px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+.form-empty {
+  height: 100%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font-size: 13px;
+  text-align: center; padding: 24px;
+}
+.form-content { padding: 18px 20px 28px; display: flex; flex-direction: column; gap: 14px; }
+
+.script-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.script-title { min-width: 0; }
+.script-title h2 { font-size: 17px; font-weight: 650; letter-spacing: -0.01em; cursor: pointer; }
+.script-title h2:hover { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.script-desc {
+  font-size: 12px; color: var(--muted);
+  margin-top: 4px; cursor: pointer;
+  max-width: 520px;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
+.script-desc:hover { text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+.script-desc.empty { color: var(--faint); font-style: italic; }
+.script-path {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 520px;
+}
+.script-actions { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* env bar */
+.env-bar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 9px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-soft);
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.env-bar .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex-shrink: 0; }
+.env-bar .dot.ok { background: var(--ok); }
+.env-bar .dot.warn { background: #e0a800; }
+.env-bar .dot.err { background: var(--danger); }
+.env-bar .env-text { color: var(--muted); }
+.env-bar .env-text.ok { color: var(--ok); font-weight: 500; }
+.env-bar .env-text.warn { color: #b45309; }
+.env-bar .env-text.err { color: var(--danger); font-weight: 500; }
+.env-bar .env-actions { margin-left: auto; display: flex; gap: 6px; }
+.env-bar .env-deps { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 4px; }
+.env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.env-bar .env-deps .dep-input { height: 28px; flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px; padding: 0 8px; }
+
+/* preset bar */
+.preset-bar { display: flex; align-items: center; gap: 8px; }
+.preset-bar .lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
+.preset-select {
+  height: 30px; min-width: 140px; flex: 1;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 0 8px; background: var(--bg); outline: none;
+}
+.preset-select:focus { border-color: var(--text); }
+.preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; padding: 3px 9px;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  background: var(--bg); cursor: pointer; transition: background 0.1s;
+}
+.preset-chip:hover { background: var(--bg-hover); }
+.preset-chip .x { color: var(--faint); font-size: 11px; }
+.preset-chip .x:hover { color: var(--danger); }
+
+/* fields */
+.fields-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.fields-toolbar .lbl { font-size: 12px; font-weight: 600; color: var(--muted); letter-spacing: .02em; }
+.fields-toolbar .chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+.fields-toolbar .chk input { accent-color: #2563eb; cursor: pointer; }
+.fields { display: flex; flex-direction: column; gap: 12px; }
+.field { display: flex; flex-direction: column; gap: 5px; }
+.field .f-label { display: flex; align-items: center; gap: 6px; font-weight: 550; font-size: 12.5px; }
+.field .f-label .req { color: var(--danger); font-weight: 700; }
+.field .f-label .f-kind { font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 15px; font-weight: 400; }
+.field .f-label .f-type { font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 4px; font-weight: 500; }
+.f-type.str { color: #6e6e6e; background: #f2f2f2; border: 1px solid #ddd; }
+.f-type.int { color: #1d4ed8; background: #eef2ff; border: 1px solid #c7d2fe; }
+.f-type.float { color: #0e7490; background: #ecfeff; border: 1px solid #a5f3fc; }
+.f-type.bool { color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe; }
+.f-type.list { color: #c2410c; background: #fff7ed; border: 1px solid #fed7aa; }
+.f-type.choices { color: #15803d; background: #f0fdf4; border: 1px solid #bbf7d0; }
+.f-type.path { color: #374151; background: #f4f4f5; border: 1px solid #e4e4e7; }
+.field .f-help { font-size: 11px; color: var(--faint); }
+.field .f-input {
+  height: 34px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  padding: 0 10px; background: var(--bg); outline: none;
+  transition: border-color 0.12s;
+}
+.field .f-input:focus { border-color: var(--text); }
+.field .f-input.mono { font-family: var(--mono); font-size: 12.5px; }
+textarea.f-input { height: auto; min-height: 60px; padding: 8px 10px; resize: vertical; font-family: var(--mono); font-size: 12.5px; }
+
+/* switch */
+.switch { position: relative; display: inline-block; width: 36px; height: 21px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .slider {
+  position: absolute; inset: 0;
+  background: var(--border-strong);
+  border-radius: 999px;
+  transition: background 0.15s;
+}
+.switch .slider::before {
+  content: ""; position: absolute;
+  width: 17px; height: 17px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+  transition: transform 0.15s;
+}
+.switch input:checked + .slider { background: var(--text); }
+.switch input:checked + .slider::before { transform: translateX(15px); }
+/* bool 字段与普通字段排版一致：名称在上、说明在中间、开关在下 */
+.field-switch { flex-direction: column; }
+.field-switch .f-control { display: flex; align-items: center; gap: 8px; }
+.field-switch .f-control .sw-val { font-size: 12px; color: var(--muted); }
+
+select.f-input { appearance: none; padding-right: 28px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236e6e6e' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 8px center;
+}
+
+/* run bar */
+.run-bar { display: flex; align-items: center; gap: 12px; margin-top: 6px; }
+.run-state { font-size: 12px; color: var(--text); }
+.run-state.run { color: var(--muted); }
+.run-state.ok { color: var(--ok); }
+.run-state.err { color: var(--danger); }
+.run-state.warn { color: #b45309; }
+
+/* ===== Panel (console / history) ===== */
+.panel {
+  width: 42%;
+  min-width: 420px;
+  display: flex; flex-direction: column;
+  background: var(--bg);
+  position: relative;
+  min-height: 0;
+}
+.panel-tabs { display: flex; border-bottom: 1px solid var(--border); padding: 0 10px; }
+.tab {
+  border: none; background: transparent;
+  padding: 9px 14px; font-size: 13px; font-weight: 500;
+  color: var(--muted); border-bottom: 2px solid transparent;
+  transition: color 0.12s;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--text); border-bottom-color: var(--text); }
+
+.panel-toolbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  gap: 8px;
+}
+.console-opts { display: flex; gap: 14px; align-items: center; }
+.chk { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); cursor: pointer; }
+.chk input { accent-color: #111; }
+.console-actions { display: flex; gap: 6px; }
+#btn-history-scope.active { color: var(--text); border-color: var(--border-strong); background: var(--bg-hover); }
+
+.panel-body { flex: 1; position: relative; min-height: 0; overflow: hidden; }
+
+.console-wrap { position: absolute; inset: 0; overflow: auto; }
+.console-placeholder {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font-size: 12px;
+  pointer-events: none;
+}
+.console {
+  padding: 8px 0;
+  font-size: 12px;
+  min-height: 100%;
+}
+.console.mono { font-family: var(--mono); }
+
+.console-line {
+  display: flex;
+  min-height: 18px;
+  line-height: 18px;
+  padding: 0 10px;
+  position: relative;
+}
+.console-line:hover { background: var(--bg-hover); }
+.console-line .line-no {
+  width: 44px; flex-shrink: 0;
+  text-align: right; padding-right: 10px;
+  color: var(--faint); user-select: none;
+  font-size: 11px;
+  position: relative;
+  font-family: var(--mono);
+}
+.console-line .line-no .copy-btn {
+  position: absolute; right: 2px; top: 0;
+  display: none;
+  border: 1px solid var(--border-strong); background: #fff;
+  border-radius: 5px; padding: 1px 5px;
+  font-size: 10px; color: var(--text);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  z-index: 3;
+}
+.console-line:hover .line-no .copy-btn { display: inline-flex; align-items: center; gap: 3px; }
+.console-line .line-text {
+  flex: 1;
+  white-space: pre-wrap;
+  word-break: break-all;
+  min-width: 0;
+}
+.console-line.stderr .line-text { color: #b3261e; }
+.console-line.info .line-text { color: var(--muted); font-style: italic; }
+.console-line.hl { background: rgba(0,0,0,0.06); }
+
+/* history */
+.history-wrap {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column;
+  min-height: 0;
+}
+.history-filter {
+  display: flex; align-items: center; gap: 7px;
+  margin: 10px 12px;
+  padding: 0 10px; height: 32px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+.history-filter svg { width: 13px; height: 13px; color: var(--faint); }
+.history-filter input { flex: 1; border: none; outline: none; }
+.history-list { flex: 1; overflow-y: auto; padding: 0 8px 12px; min-height: 0; }
+.hist-item {
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  margin-bottom: 6px;
+  cursor: pointer;
+  background: var(--bg);
+  transition: border-color 0.1s, background 0.1s;
+}
+.hist-item:hover { border-color: var(--border-strong); background: var(--bg-soft); }
+.hist-item.active { border-color: var(--text); }
+.hist-item .hi-top { display: flex; align-items: center; gap: 8px; }
+.hist-item .hi-name { font-weight: 600; font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hist-item .hi-time { font-size: 10.5px; color: var(--faint); flex-shrink: 0; }
+.hist-item .hi-mid { display: flex; align-items: center; gap: 6px; margin-top: 5px; flex-wrap: wrap; }
+.status-pill { font-size: 10px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border-strong); color: var(--muted); }
+.status-pill.success { color: var(--ok); border-color: #cde9d3; background: #f0f9f1; }
+.status-pill.failed { color: var(--danger); border-color: #f3c8c4; background: #fdf0ef; }
+.status-pill.terminated { color: #b45309; border-color: #f2d5a7; background: #fef7ec; }
+.status-pill.running { color: #555; border-color: var(--border-strong); background: var(--bg-soft); }
+.hist-item .hi-args { font-family: var(--mono); font-size: 10.5px; color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 3px; }
+.hist-item .hi-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.tag { font-size: 10px; color: var(--muted); background: var(--bg-soft); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; }
+.tag .x { cursor: pointer; margin-left: 3px; color: var(--faint); }
+.tag .x:hover { color: var(--danger); }
+
+.history-detail {
+  flex: 1; overflow-y: auto; padding: 12px;
+  border-top: 1px solid var(--border);
+  display: flex; flex-direction: column; gap: 10px;
+}
+.hd-head { display: flex; align-items: center; gap: 10px; }
+.hd-head .btn { flex-shrink: 0; }
+.hd-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hd-tags input {
+  height: 26px; padding: 0 8px;
+  border: 1px dashed var(--border-strong); border-radius: 6px;
+  outline: none; font-size: 11px; width: 150px;
+}
+.hd-output {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  white-space: pre-wrap; word-break: break-all;
+  max-height: 60%;
+  overflow-y: auto;
+  color: var(--text);
+}
+.hd-truncated { font-size: 11px; color: var(--faint); }
+
+/* copy float */
+.copy-float {
+  position: absolute;
+  bottom: 14px; right: 14px;
+  z-index: 20;
+}
+.copy-float .btn { box-shadow: 0 4px 16px rgba(0,0,0,0.12); background: #111; color: #fff; border-color: #111; }
+.copy-float .btn:hover { background: #333; }
+
+/* ===== Modal ===== */
+.modal-mask {
+  position: fixed; inset: 0;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 100;
+}
+.modal {
+  width: 460px; max-width: calc(100vw - 40px);
+  max-height: calc(100vh - 80px);
+  background: var(--bg);
+  border-radius: 12px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.18);
+  display: flex; flex-direction: column;
+  overflow: hidden;
+}
+.modal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.modal-title { font-size: 14px; font-weight: 650; }
+.modal-close {
+  border: none; background: transparent; color: var(--muted);
+  width: 26px; height: 26px; border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+}
+.modal-close:hover { background: var(--bg-hover); color: var(--text); }
+.modal-close svg { width: 14px; height: 14px; }
+.modal-body { padding: 18px; overflow-y: auto; }
+.modal-foot {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+
+.m-field { margin-bottom: 14px; }
+.m-field:last-child { margin-bottom: 0; }
+.m-field .m-label { font-size: 12.5px; font-weight: 550; margin-bottom: 6px; }
+.m-field .f-input { width: 100%; }
+.m-field .m-hint { font-size: 11px; color: var(--faint); margin-top: 5px; }
+.m-field .m-radio { display: flex; gap: 16px; margin-top: 4px; }
+.m-field .m-radio label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; cursor: pointer; }
+.m-field .m-radio input { accent-color: #111; }
+
+.uv-install {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.uv-install .cmd {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 10px;
+  word-break: break-all; position: relative;
+}
+.uv-install .cmd .copy-mini {
+  position: absolute; top: 6px; right: 6px;
+  font-size: 10px; color: var(--muted);
+  border: 1px solid var(--border); background: #fff;
+  border-radius: 5px; padding: 1px 6px;
+}
+.uv-install .cmd .copy-mini:hover { color: var(--text); }
+
+.result-tip { font-size: 12px; margin-bottom: 10px; }
+.result-tip.ok { color: var(--ok); }
+.result-tip.err { color: var(--danger); }
+.result-summary {
+  font-family: var(--mono); font-size: 11.5px;
+  background: var(--bg-soft); border: 1px solid var(--border);
+  border-radius: 7px; padding: 10px;
+  max-height: 200px; overflow-y: auto;
+  white-space: pre-wrap; word-break: break-all;
+}
+
+/* scrollbar */
+::-webkit-scrollbar { width: 9px; height: 9px; }
+::-webkit-scrollbar-thumb { background: #d9d9d9; border-radius: 99px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: #bdbdbd; }
+::-webkit-scrollbar-track { background: transparent; }
+
+.toast {
+  position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+  background: #111; color: #fff;
+  font-size: 12.5px; padding: 9px 16px;
+  border-radius: 999px;
+  z-index: 200;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.2s;
+}
+.toast.show { opacity: 1; }
+.toast.err { background: var(--danger); }
+
+.spinner {
+  width: 12px; height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--text);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ===== 文件夹分组 ===== */
+.folder-group { margin-bottom: 2px; }
+.folder-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; margin: 2px 0;
+  font-size: 11px; font-weight: 600; color: var(--muted);
+  cursor: pointer; border-radius: 6px;
+}
+.folder-head:hover { background: var(--bg-hover); }
+.folder-head .caret { width: 9px; height: 9px; transition: transform 0.12s; flex-shrink: 0; }
+.folder-group.collapsed .folder-head .caret { transform: rotate(-90deg); }
+.folder-head .fname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-head .fcount { font-weight: 400; color: var(--faint); font-size: 10px; }
+.folder-head .fdel {
+  margin-left: auto; border: none; background: transparent; color: var(--faint);
+  width: 18px; height: 18px; border-radius: 5px;
+  display: none; align-items: center; justify-content: center; font-size: 11px;
+}
+.folder-head:hover .fdel { display: flex; }
+.folder-head .fdel:hover { color: var(--danger); background: #fdeceb; }
+.folder-group.collapsed > .script-card { display: none; }
+
+/* ===== 移动菜单 ===== */
+.script-card { position: relative; }
+.script-card .sc-move {
+  position: absolute; right: 7px; top: 7px;
+  border: none; background: transparent; color: var(--faint);
+  width: 20px; height: 20px; border-radius: 5px;
+  display: none; align-items: center; justify-content: center;
+}
+.script-card:hover .sc-move { display: flex; }
+.script-card .sc-move:hover { color: var(--text); background: var(--bg-hover); }
+.script-card .sc-move svg { width: 12px; height: 12px; }
+.move-menu {
+  position: absolute; z-index: 60;
+  background: #fff; border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.12);
+  min-width: 170px; padding: 4px;
+}
+.move-menu .mm-title { font-size: 10px; color: var(--faint); padding: 4px 10px; text-transform: uppercase; letter-spacing: 0.04em; }
+.move-menu .mm-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 6px 10px; font-size: 12px; border-radius: 6px; cursor: pointer;
+}
+.move-menu .mm-item:hover { background: var(--bg-hover); }
+.move-menu .mm-item.active { font-weight: 600; }
+.move-menu .mm-item svg { width: 13px; height: 13px; color: var(--faint); }
+.move-menu .mm-new { border-top: 1px solid var(--border); margin-top: 3px; padding-top: 5px; }
+
+/* ===== Modal 加大 + 文件选择 ===== */
+.modal { width: 580px; }
+.modal .f-input { height: 38px; font-size: 13px; }
+.modal textarea.f-input { height: auto; min-height: 60px; }
+.path-row { display: flex; gap: 8px; }
+.path-row .f-input { flex: 1; min-width: 0; }
+.path-row .btn { height: 38px; flex-shrink: 0; }
+
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
+    </span>
+    <span class="brand-name">Python 脚本启动器</span>
+    <span class="badge">v0.0.4</span>
+    <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
+  </div>
+  <div class="topbar-actions">
+    <button class="btn ghost" id="btn-export" title="导出全部脚本信息（JSON）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+      <span>导出</span>
+    </button>
+    <button class="btn ghost" id="btn-import-config" title="从 JSON 导入脚本信息">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
+      <span>导入</span>
+    </button>
+    <button class="btn ghost" id="btn-clear-history" title="清空全部执行记录">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
+      <span>清空历史</span>
+    </button>
+    <button class="btn primary" id="btn-add">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      <span>导入 / 扫描</span>
+    </button>
+  </div>
+</header>
+
+<div class="layout">
+
+  <aside class="sidebar">
+    <div class="search-wrap">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <input id="script-search" placeholder="搜索脚本…" autocomplete="off">
+    </div>
+    <div class="tag-filter" id="tag-filter" hidden>
+      <div class="tag-filter-head"><span>标签过滤</span><button id="btn-tag-clear" class="tag-clear">清除</button></div>
+      <div class="tag-filter-list" id="tag-filter-list"></div>
+    </div>
+    <div class="scan-info" id="scan-info"></div>
+    <div class="script-list" id="script-list"></div>
+    <div class="sidebar-empty" id="sidebar-empty" hidden>暂无脚本<br>点击右上角「导入 / 扫描」开始</div>
+  </aside>
+
+  <main class="form-pane" id="form-pane">
+    <div class="form-empty" id="form-empty">从左侧选择一个脚本，或导入新脚本开始</div>
+    <div class="form-content" id="form-content" hidden>
+      <div class="script-head">
+        <div class="script-title">
+          <h2 id="script-name"></h2>
+          <div class="script-desc" id="script-desc" title="点击编辑描述"></div>
+          <div class="script-path" id="script-path" title=""></div>
+        </div>
+        <div class="script-actions">
+          <button class="btn ghost" id="btn-reload" title="脚本文件更新后重新解析参数">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+            <span>重新加载</span>
+          </button>
+          <button class="btn ghost" id="btn-delete-script" title="删除该脚本">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+            <span>删除</span>
+          </button>
+          <button class="btn ghost" id="btn-open-dir">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            <span>打开目录</span>
+          </button>
+          <button class="btn ghost" id="btn-copy-path">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+            <span>复制路径</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="env-bar" id="env-bar"></div>
+      <div class="preset-bar" id="preset-bar"></div>
+
+      <div class="fields-toolbar">
+        <span class="lbl">参数</span>
+        <label class="chk" title="只显示已填写的参数，空值参数隐藏">
+          <input type="checkbox" id="opt-hide-empty"> 仅显示已填参数
+        </label>
+      </div>
+      <div class="fields" id="fields"></div>
+
+      <div class="run-bar">
+        <button class="btn primary big" id="btn-run">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
+          <span>执行</span>
+        </button>
+        <span class="run-state" id="run-state"></span>
+      </div>
+    </div>
+  </main>
+
+  <section class="panel">
+    <div class="panel-tabs">
+      <button class="tab" data-tab="console">控制台</button>
+      <button class="tab active" data-tab="history">执行记录</button>
+    </div>
+    <div class="panel-toolbar">
+      <div class="console-opts">
+        <label class="chk"><input type="checkbox" id="opt-autoscroll" checked> 自动滚动</label>
+        <label class="chk"><input type="checkbox" id="opt-mono" checked> 等宽字体</label>
+      </div>
+      <div class="console-actions">
+        <button id="btn-terminate" class="btn mini danger" hidden>终止</button>
+        <button id="btn-clear-console" class="btn mini ghost">清屏</button>
+      </div>
+    </div>
+    <div class="panel-body">
+      <div class="console-wrap" id="console-wrap" style="display:none">
+        <div class="console-placeholder" id="console-placeholder">运行脚本后，标准输出将实时显示在这里</div>
+        <div class="console mono" id="console"></div>
+      </div>
+      <div class="history-wrap" id="history-wrap">
+        <div class="history-filter">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="history-search" placeholder="筛选：标签 / 脚本名 / 状态…" autocomplete="off">
+          <button class="btn mini ghost" id="btn-history-scope" title="切换显示当前脚本 / 全部脚本">全部</button>
+        </div>
+        <div class="history-list" id="history-list"></div>
+        <div class="history-detail" id="history-detail" hidden></div>
+      </div>
+    </div>
+    <div class="copy-float" id="copy-float" hidden></div>
+  </section>
+
+</div>
+
+<!-- 通用弹窗 -->
+<div class="modal-mask" id="modal" hidden>
+  <div class="modal">
+    <div class="modal-head">
+      <span class="modal-title" id="modal-title"></span>
+      <button class="modal-close" id="modal-close">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="modal-body" id="modal-body"></div>
+    <div class="modal-foot" id="modal-foot"></div>
+  </div>
+</div>
+
+<script>
+/* Tool Launcher · 前端逻辑 v0.0.2 */
+"use strict";
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+const state = {
+  scripts: [],
+  selectedId: null,
+  script: null,          // 当前脚本详情（含 schema / presets / env）
+  activePresetId: null,
+  currentExecId: null,
+  lineCount: 0,
+  ws: null,
+  running: false,
+  uvOk: null,
+  selectedTags: new Set(), // 标签过滤（多选）
+};
+
+/* ================= UI 偏好持久化（重启后保留） ================= */
+const PREFS_KEY = "launcher_prefs";
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"); } catch { return {}; }
+}
+function savePrefs() {
+  const p = {
+    tags: [...state.selectedTags],
+    hideEmpty: $("#opt-hide-empty").checked,
+    historyScope,
+    autoscroll: $("#opt-autoscroll").checked,
+    mono: $("#opt-mono").checked,
+  };
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch {}
+}
+function applyPrefs() {
+  const p = loadPrefs();
+  if (Array.isArray(p.tags)) state.selectedTags = new Set(p.tags);
+  if (p.hideEmpty !== undefined) $("#opt-hide-empty").checked = !!p.hideEmpty;
+  if (p.historyScope === "script" || p.historyScope === "all") historyScope = p.historyScope;
+  if (p.autoscroll !== undefined) $("#opt-autoscroll").checked = !!p.autoscroll;
+  if (p.mono !== undefined) $("#opt-mono").checked = !!p.mono;
+  // 同步按钮与控制台样式
+  const scopeBtn = $("#btn-history-scope");
+  if (scopeBtn) {
+    scopeBtn.textContent = historyScope === "script" ? "当前脚本" : "全部";
+    scopeBtn.classList.toggle("active", historyScope === "all");
+  }
+  const consoleEl = $("#console");
+  if (consoleEl) consoleEl.classList.toggle("mono", $("#opt-mono").checked);
+}
+
+/* ================= 基础工具 ================= */
+
+async function api(path, opts = {}) {
+  const conf = { method: opts.method || "GET", headers: {} };
+  if (opts.body !== undefined) {
+    conf.headers["Content-Type"] = "application/json";
+    conf.body = JSON.stringify(opts.body);
+  }
+  const res = await fetch(path, conf);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok && !data.ok) throw new Error(data.error || `请求失败 ${res.status}`);
+  return data;
+}
+
+let toastTimer = null;
+function toast(msg, isErr = false) {
+  let el = $("#toast");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "toast";
+    el.className = "toast";
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.className = "toast show" + (isErr ? " err" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove("show"), 2400);
+}
+
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      ta.remove();
+      return true;
+    } catch { return false; }
+  }
+}
+
+function escapeHtml(s) {
+  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+/* ================= Modal ================= */
+
+function openModal({ title, bodyHTML, footHTML, onMount } = {}) {
+  const mask = $("#modal");
+  $("#modal-title").textContent = title;
+  $("#modal-body").innerHTML = bodyHTML || "";
+  $("#modal-foot").innerHTML = footHTML || "";
+  mask.hidden = false;
+  if (onMount) onMount(mask);
+}
+function closeModal() { $("#modal").hidden = true; }
+$("#modal-close").addEventListener("click", closeModal);
+$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+
+/** 删除等危险操作的二次确认弹窗 */
+function confirmModal({ title = "确认操作", message, confirmText = "删除", onConfirm } = {}) {
+  openModal({
+    title,
+    bodyHTML: `<div class="result-tip err" style="margin-bottom:0">${escapeHtml(message)}</div>`,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn danger primary" id="confirm-ok">${confirmText}</button>`,
+    onMount: (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      $("#confirm-ok", mask).addEventListener("click", async () => {
+        closeModal();
+        try { await onConfirm(); } catch (e) { toast(e.message, true); }
+      });
+    },
+  });
+}
+
+/* ================= 顶部：导入 / 扫描 ================= */
+
+function openAddModal() {
+  const lastDir = localStorage.getItem("last_scan_dir") || "";
+  openModal({
+    title: "导入 / 扫描脚本",
+    bodyHTML: `
+      <div class="m-field">
+        <div class="m-radio">
+          <label><input type="radio" name="add-mode" value="scan" checked> 扫描目录</label>
+          <label><input type="radio" name="add-mode" value="file"> 导入单个脚本</label>
+        </div>
+        <div class="m-hint">扫描模式递归查找并自动导入；导入模式可填路径或选择本地 .py 文件</div>
+      </div>
+      <div class="m-field" id="path-field">
+        <div class="m-label">路径</div>
+        <div class="path-row">
+          <input class="f-input mono" id="add-path" placeholder="/path/to/scripts 或 /path/to/script.py" value="${escapeHtml(lastDir)}" autocomplete="off">
+          <button class="btn ghost" id="add-browse" title="打开文件选择器">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
+            选择文件…
+          </button>
+        </div>
+        <div class="m-hint" id="path-hint">选择文件会把脚本复制到启动器管理目录（imported/）</div>
+        <input type="file" id="add-file" accept=".py" style="display:none">
+      </div>
+      <div class="m-field" id="name-field">
+        <div class="m-label">显示名称（可选，留空使用脚本名）</div>
+        <input class="f-input" id="add-name" placeholder="例如：数据清洗工具" autocomplete="off">
+      </div>
+      <div class="m-field" id="desc-field">
+        <div class="m-label">描述（可选，留空自动取脚本内 description）</div>
+        <input class="f-input" id="add-desc" placeholder="这个脚本用来做什么…" autocomplete="off">
+      </div>
+      <div class="m-field" id="recursive-wrap">
+        <label class="chk"><input type="checkbox" id="add-recursive" checked> 递归扫描子目录</label>
+      </div>
+    `,
+    footHTML: `<button class="btn ghost" id="add-cancel">取消</button><button class="btn primary" id="add-confirm">确定</button>`,
+    onMount: (mask) => {
+      $("#add-cancel", mask).addEventListener("click", closeModal);
+      $("#add-confirm", mask).addEventListener("click", doAdd);
+      const mode = () => $('input[name="add-mode"]:checked').value;
+      const syncMode = () => {
+        const m = mode();
+        $("#recursive-wrap").style.display = m === "scan" ? "" : "none";
+        $("#name-field").style.display = m === "scan" ? "none" : "";
+        $("#desc-field").style.display = m === "scan" ? "none" : "";
+        $("#path-hint").style.display = m === "scan" ? "none" : "";
+      };
+      $$('input[name="add-mode"]', mask).forEach(r => r.addEventListener("change", syncMode));
+      syncMode(); // 初始按当前 radio（扫描）显示正确字段
+      // 文件选择器
+      $("#add-browse", mask).addEventListener("click", () => { $('input[name="add-mode"][value="file"]').checked = true; syncMode(); $("#add-file", mask).click(); });
+      $("#add-file", mask).addEventListener("change", async (e) => {
+        const f = e.target.files[0];
+        if (!f) return;
+        if (await uploadScript(f)) closeModal();
+      });
+    },
+  });
+}
+
+async function uploadScript(file) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const name = $("#add-name").value.trim();
+  if (name) fd.append("name", name);
+  try {
+    const res = await fetch("/api/scripts/upload", { method: "POST", body: fd });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || "上传失败");
+    toast("已导入 " + data.script.name);
+    await loadScripts();
+    selectScript(data.script.id);
+    return true;
+  } catch (err) {
+    toast("导入失败：" + err.message, true);
+    return false;
+  }
+}
+
+async function doAdd() {
+  const mode = $('input[name="add-mode"]:checked').value;
+  const confirmBtn = $("#add-confirm");
+  confirmBtn.disabled = true;
+  confirmBtn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 处理中…';
+  try {
+    if (mode === "scan") {
+      const path = $("#add-path").value.trim();
+      if (!path) return toast("请输入目录路径", true);
+      const data = await api("/api/scripts/scan", { method: "POST", body: { directory: path, recursive: $("#add-recursive").checked } });
+      localStorage.setItem("last_scan_dir", path);
+      const skipped = data.skipped || [];
+      openModal({
+        title: "扫描完成",
+        bodyHTML: `
+          <div class="result-tip ok">成功导入 ${data.imported.length} 个脚本（共扫描 ${data.total} 个 .py 文件）</div>
+          ${skipped.length ? `<div class="result-tip err">${skipped.length} 个未通过 argparse 约定检查：</div><div class="result-summary">${skipped.map(s => s.path + "\n  └ " + s.error).join("\n")}</div>` : ""}
+        `,
+        footHTML: `<button class="btn primary" id="add-done">完成</button>`,
+        onMount: (mask) => { $("#add-done", mask).addEventListener("click", closeModal); },
+      });
+      await loadScripts();
+    } else {
+      const path = $("#add-path").value.trim();
+      if (!path) return toast("请输入脚本路径", true);
+      const body = { path };
+      const name = $("#add-name").value.trim();
+      const desc = $("#add-desc").value.trim();
+      if (name) body.name = name;
+      if (desc) body.description = desc;
+      const data = await api("/api/scripts/import", { method: "POST", body });
+      closeModal();
+      toast("已导入 " + data.script.name);
+      await loadScripts();
+      selectScript(data.script.id);
+    }
+  } catch (e) {
+    toast("导入失败：" + e.message, true);
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = "确定";
+  }
+}
+
+/* ================= 脚本列表（标签过滤） ================= */
+
+async function loadScripts() {
+  state.scripts = await api("/api/scripts");
+  renderTagFilter();
+  renderScriptList();
+}
+
+/** 汇总所有脚本的标签，渲染侧边栏多选过滤区 */
+function renderTagFilter() {
+  const wrap = $("#tag-filter");
+  const listEl = $("#tag-filter-list");
+  const allTags = [...new Set(state.scripts.flatMap((s) => s.tags || []))].sort((a, b) => a.localeCompare(b, "zh"));
+  wrap.hidden = allTags.length === 0;
+  listEl.innerHTML = "";
+  for (const t of allTags) {
+    const chip = document.createElement("button");
+    chip.className = "tag-chip" + (state.selectedTags.has(t) ? " active" : "");
+    chip.textContent = t;
+    chip.onclick = () => {
+      state.selectedTags.has(t) ? state.selectedTags.delete(t) : state.selectedTags.add(t);
+      renderTagFilter();
+      renderScriptList();
+      savePrefs();
+    };
+    listEl.appendChild(chip);
+  }
+}
+
+function renderScriptList() {
+  const list = $("#script-list");
+  const empty = $("#sidebar-empty");
+  const kw = ($("#script-search").value || "").toLowerCase();
+  const filtered = state.scripts.filter((s) => {
+    if (state.selectedTags.size && !(s.tags || []).some((t) => state.selectedTags.has(t))) return false;
+    if (!kw) return true;
+    return s.name.toLowerCase().includes(kw) || s.path.toLowerCase().includes(kw) || (s.tags || []).some((t) => t.toLowerCase().includes(kw));
+  });
+  list.innerHTML = "";
+  empty.hidden = filtered.length > 0;
+  if (!filtered.length) return;
+  for (const s of filtered) list.appendChild(scriptCard(s));
+}
+
+function scriptCard(s) {
+  const card = document.createElement("div");
+  card.className = "script-card" + (s.id === state.selectedId ? " active" : "");
+  const nargs = (JSON.parse(s.args_schema || "[]")).length;
+  const row1 = document.createElement("div");
+  row1.className = "sc-name";
+  const nm = document.createElement("span");
+  nm.textContent = s.name;
+  const badge = document.createElement("span");
+  badge.className = "sc-arg";
+  badge.textContent = nargs + " 参数";
+  row1.append(nm, badge);
+  const row2 = document.createElement("div");
+  row2.className = "sc-path";
+  row2.textContent = s.path;
+  row2.title = s.path;
+  card.append(row1, row2);
+  if (s.tags && s.tags.length) {
+    const tagsRow = document.createElement("div");
+    tagsRow.className = "sc-tags";
+    for (const t of s.tags.slice(0, 3)) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "#" + t;
+      tagsRow.appendChild(tag);
+    }
+    if (s.tags.length > 3) {
+      const more = document.createElement("span");
+      more.className = "tag more";
+      more.textContent = "+" + (s.tags.length - 3);
+      tagsRow.appendChild(more);
+    }
+    card.appendChild(tagsRow);
+  }
+  card.addEventListener("click", () => selectScript(s.id));
+  return card;
+}
+
+/* ================= 选中脚本 ================= */
+
+async function selectScript(id) {
+  state.selectedId = id;
+  state.activePresetId = null;
+  renderScriptList();
+  try {
+    const rec = await api(`/api/scripts/${id}`);
+    state.script = rec;
+    $("#form-empty").hidden = true;
+    $("#form-content").hidden = false;
+    renderScriptHead(rec);
+    renderEnvBar(rec.env);
+    renderPresets(rec.presets);
+    renderFields(rec.args_schema, rec.auto_saved_args);
+    setRunning(false);
+    // 若历史面板当前可见，切脚本后同步为当前脚本的记录
+    if ($("#history-wrap") && !$("#history-wrap").hidden) refreshHistory();
+  } catch (e) {
+    toast(e.message, true);
+  }
+}
+
+function renderScriptHead(rec) {
+  const nameEl = $("#script-name");
+  nameEl.textContent = rec.name;
+  nameEl.title = "点击重命名";
+  nameEl.onclick = () => editScriptMeta(rec);
+
+  const descEl = $("#script-desc");
+  descEl.textContent = rec.description || "（无描述，点击添加）";
+  descEl.className = "script-desc" + (rec.description ? "" : " empty");
+  descEl.onclick = () => editScriptMeta(rec);
+
+  const p = $("#script-path");
+  p.textContent = rec.path;
+  p.title = rec.path;
+  $("#btn-open-dir").onclick = () => openScriptDir(rec.path);
+  $("#btn-copy-path").onclick = async () => {
+    if (await copyText(rec.path)) toast("路径已复制");
+  };
+  $("#btn-reload").onclick = reloadScript;
+  $("#btn-delete-script").onclick = () => confirmModal({
+    title: "删除脚本",
+    message: `确定删除脚本「${rec.name}」吗？该脚本的预设与执行记录会一并删除，脚本文件本身不受影响。`,
+    onConfirm: async () => {
+      await api(`/api/scripts/${rec.id}`, { method: "DELETE" });
+      toast("脚本已删除");
+      state.selectedId = null;
+      localStorage.removeItem("last_script_id");
+      $("#form-empty").hidden = false;
+      $("#form-content").hidden = true;
+      clearConsole();
+      await loadScripts();
+      await refreshHistory();
+    },
+  });
+}
+
+/** 重新加载：脚本文件更新后重新解析参数 */
+async function reloadScript() {
+  if (!state.script) return;
+  const btn = $("#btn-reload");
+  const label = btn.querySelector("span");
+  btn.disabled = true;
+  label.textContent = "解析中…";
+  try {
+    await api(`/api/scripts/${state.script.id}/reload`, { method: "POST" });
+    toast("已重新加载，参数已更新");
+    await loadScripts();
+    await selectScript(state.script.id);
+  } catch (e) {
+    toast("重新加载失败：" + e.message, true);
+  }
+  btn.disabled = false;
+  label.textContent = "重新加载";
+}
+
+function editScriptMeta(rec) {
+  openModal({
+    title: "编辑脚本信息",
+    bodyHTML: `
+      <div class="m-field">
+        <div class="m-label">显示名称</div>
+        <input class="f-input" id="meta-name" value="${escapeHtml(rec.name)}" autocomplete="off">
+      </div>
+      <div class="m-field">
+        <div class="m-label">描述</div>
+        <textarea class="f-input" id="meta-desc" placeholder="这个脚本用来做什么…" rows="3">${escapeHtml(rec.description || "")}</textarea>
+      </div>
+      <div class="m-field">
+        <div class="m-label">依赖文件路径（可选，默认自动检测脚本目录的 requirements.txt 或 pyproject.toml）</div>
+        <input class="f-input mono" id="meta-deps" placeholder="如：/path/to/requirements.txt" value="${escapeHtml(rec.deps_path || "")}" autocomplete="off">
+      </div>
+      <div class="m-field">
+        <div class="m-label">标签（多个用逗号分隔，用于侧边栏过滤）</div>
+        <input class="f-input" id="meta-tags" placeholder="如：数据处理, 生产, 测试" value="${escapeHtml((rec.tags || []).join(", "))}" autocomplete="off">
+      </div>`,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="meta-save">保存</button>`,
+    onMount: (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      $("#meta-save", mask).addEventListener("click", async () => {
+        const name = $("#meta-name", mask).value.trim();
+        if (!name) return toast("名称不能为空", true);
+        const desc = $("#meta-desc", mask).value.trim();
+        const deps = $("#meta-deps", mask).value.trim();
+        const tags = $("#meta-tags", mask).value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
+        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { name, description: desc, deps_path: deps, tags } });
+        closeModal();
+        toast("已保存");
+        await loadScripts();
+        await selectScript(rec.id);
+      });
+      $("#meta-name", mask).focus();
+    },
+  });
+}
+
+function openScriptDir(path) {
+  api("/api/utils/open-dir", { method: "POST", body: { path } })
+    .then(() => toast("已打开脚本所在目录"))
+    .catch((e) => toast(e.message, true));
+}
+
+/* ================= 环境状态 / uv ================= */
+
+function renderEnvBar(env) {
+  const bar = $("#env-bar");
+  bar.innerHTML = "";
+  if (!env) return;
+  const parts = [];
+  if (!state.uvOk) {
+    const span = document.createElement("span");
+    span.innerHTML = '<span class="dot err"></span><span class="env-text err">未检测到 uv</span>';
+    parts.push(span);
+    const b = document.createElement("button");
+    b.className = "btn mini primary";
+    b.textContent = "查看安装指引";
+    b.onclick = showUvInstall;
+    parts.push(b);
+  } else {
+    const vSpan = document.createElement("span");
+    vSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">uv ${escapeHtml(env.uv_version || "")}</span>`;
+    parts.push(vSpan);
+  }
+
+  const venvSpan = document.createElement("span");
+  if (env.has_venv) {
+    venvSpan.innerHTML = '<span class="dot ok"></span><span class="env-text ok">venv 已就绪</span>';
+  } else {
+    venvSpan.innerHTML = '<span class="dot warn"></span><span class="env-text warn">未初始化虚拟环境</span>';
+    const initBtn = document.createElement("button");
+    initBtn.className = "btn mini primary";
+    initBtn.textContent = env.has_deps ? "初始化环境（含依赖）" : "初始化环境";
+    initBtn.onclick = () => initEnv();
+    parts.push(initBtn);
+  }
+  parts.push(venvSpan);
+
+  if (env.has_deps) {
+    const r = document.createElement("span");
+    r.innerHTML = `<span class="dot ok"></span><span class="env-text ok">${escapeHtml(env.deps_name || "")}</span>`;
+    r.title = env.requirements_path || "";
+    parts.push(r);
+  }
+
+  // 依赖文件行：可自定义依赖文件路径并安装
+  const depRow = document.createElement("div");
+  depRow.className = "env-deps";
+  const depDot = document.createElement("span");
+  depDot.className = "dot" + (env.has_deps ? " ok" : "");
+  const depLbl = document.createElement("span");
+  depLbl.className = "dep-lbl";
+  depLbl.textContent = "依赖文件";
+  depLbl.title = env.has_deps ? ("已检测到 " + env.requirements_path) : "未检测到依赖文件（requirements.txt / pyproject.toml）";
+  const depInput = document.createElement("input");
+  depInput.className = "f-input dep-input";
+  depInput.placeholder = "留空自动检测脚本目录 requirements.txt";
+  depInput.value = (state.script && state.script.deps_path) || "";
+  depInput.title = depLbl.title;
+  const depInstall = document.createElement("button");
+  depInstall.className = "btn mini primary";
+  depInstall.textContent = "安装依赖";
+  depInstall.onclick = () => initEnvDeps(depInput.value.trim());
+  depRow.append(depDot, depLbl, depInput, depInstall);
+  bar.append(...parts, depRow);
+}
+
+/** 用自定义依赖文件路径安装依赖（留空则自动检测脚本目录 requirements.txt） */
+async function initEnvDeps(depsPath) {
+  if (!state.script) return;
+  if (depsPath && depsPath !== state.script.deps_path) {
+    await api(`/api/scripts/${state.script.id}`, { method: "PUT", body: { deps_path: depsPath } });
+    state.script.deps_path = depsPath;
+  }
+  switchTab("console");
+  clearConsole();
+  const installBtn = $("#env-bar .env-deps .btn.primary");
+  if (installBtn) { installBtn.disabled = true; installBtn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 安装中…'; }
+  try {
+    const res = await api(`/api/scripts/${state.script.id}/env/init`, {
+      method: "POST",
+      body: { deps_path: depsPath || null },
+    });
+    await connectWs(`/ws/env/${res.session_id}`, { envInit: true, scriptId: state.script.id });
+  } catch (e) {
+    toast("安装失败：" + e.message, true);
+  }
+  if (installBtn) { installBtn.disabled = false; installBtn.textContent = "安装依赖"; }
+}
+
+function showUvInstall() {
+  const hint = state.uvHint || {};
+  const entries = [];
+  if (hint.mac) entries.push(["macOS", hint.mac]);
+  if (hint.win) entries.push(["Windows (PowerShell)", hint.win]);
+  if (hint.linux) entries.push(["Linux", hint.linux]);
+  openModal({
+    title: "需要安装 uv",
+    bodyHTML: `
+      <div class="result-tip err" style="margin-bottom:12px">未检测到 uv。uv 是脚本启动器运行依赖的环境管理器，请先安装：</div>
+      <div class="uv-install">
+        ${entries.map(([os, cmd]) => `
+          <div>
+            <div class="m-label" style="margin-bottom:4px">${os}</div>
+            <div class="cmd">${escapeHtml(cmd)}<button class="copy-mini" data-copy="${escapeHtml(cmd)}">复制</button></div>
+          </div>`).join("")}
+      </div>
+    `,
+    footHTML: `<button class="btn ghost" id="uv-later">稍后</button><button class="btn primary" id="uv-retry">我已安装，重新检测</button>`,
+    onMount: (mask) => {
+      $("#uv-later", mask).addEventListener("click", closeModal);
+      $("#uv-retry", mask).addEventListener("click", async () => {
+        await checkUv();
+        closeModal();
+        if (state.uvOk && state.script) {
+          const env = await api(`/api/scripts/${state.script.id}/env`);
+          renderEnvBar(env);
+        }
+      });
+      $$(".copy-mini", mask).forEach((b) => b.addEventListener("click", async () => {
+        if (await copyText(b.dataset.copy)) toast("已复制安装命令");
+      }));
+    },
+  });
+}
+
+async function initEnv() {
+  if (!state.script) return;
+  const btn = $("#env-bar .btn.primary");
+  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 初始化中…'; }
+  switchTab("console");
+  clearConsole();
+  try {
+    const res = await api(`/api/scripts/${state.script.id}/env/init`, { method: "POST" });
+    await connectWs(`/ws/env/${res.session_id}`, { envInit: true, scriptId: state.script.id });
+  } catch (e) {
+    toast("初始化失败：" + e.message, true);
+  }
+}
+
+/* ================= 预设 ================= */
+
+function renderPresets(presets) {
+  const bar = $("#preset-bar");
+  bar.innerHTML = "";
+  const lbl = document.createElement("span");
+  lbl.className = "lbl";
+  lbl.textContent = "预设";
+  const chips = document.createElement("div");
+  chips.className = "preset-chips";
+  for (const p of presets) {
+    const chip = document.createElement("span");
+    chip.className = "preset-chip";
+    chip.textContent = p.name;
+    chip.title = "点击应用此预设";
+    chip.onclick = () => applyPreset(p);
+    const x = document.createElement("span");
+    x.className = "x";
+    x.textContent = "✕";
+    x.title = "删除预设";
+    x.onclick = async (e) => {
+      e.stopPropagation();
+      confirmModal({
+        title: "删除预设",
+        message: `确定删除预设「${p.name}」吗？`,
+        onConfirm: async () => {
+          await api(`/api/presets/${p.id}`, { method: "DELETE" });
+          toast("预设已删除");
+          reloadDetail();
+        },
+      });
+    };
+    chip.appendChild(x);
+    chips.appendChild(chip);
+  }
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "btn mini ghost";
+  saveBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>';
+  saveBtn.appendChild(document.createTextNode(" 保存当前为预设"));
+  saveBtn.onclick = saveAsPreset;
+  bar.append(lbl, chips, saveBtn);
+}
+
+async function saveAsPreset() {
+  const values = collectValues();
+  openModal({
+    title: "保存为预设",
+    bodyHTML: `
+      <div class="m-field">
+        <div class="m-label">预设名称</div>
+        <input class="f-input" id="preset-name" placeholder="例如：生产环境 / 调试模式" autocomplete="off">
+      </div>`,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="preset-save">保存</button>`,
+    onMount: (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      $("#preset-save", mask).addEventListener("click", async () => {
+        const name = $("#preset-name", mask).value.trim();
+        if (!name) return toast("请输入预设名称", true);
+        await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
+        closeModal();
+        toast("预设已保存");
+        reloadDetail();
+      });
+      $("#preset-name", mask).focus();
+    },
+  });
+}
+
+function applyPreset(p) {
+  state.activePresetId = p.id;
+  fillValues(p.args || {});
+  saveArgs(p.args || {});
+  toast("已应用预设「" + p.name + "」");
+}
+
+/* ================= 参数表单 ================= */
+
+/** 参数类型标签（带颜色区分） */
+function typeLabelOf(a) {
+  if (a.is_flag) return { cls: "bool", text: "bool" };
+  if (a.choices && a.choices.length) return { cls: "choices", text: "enum" };
+  const t = a.type || "str";
+  if (a.nargs || a.action === "append") return { cls: "list", text: "list" };
+  if (t === "int") return { cls: "int", text: "int" };
+  if (t === "float") return { cls: "float", text: "float" };
+  return { cls: "str", text: "str" };
+}
+
+function renderFields(schema, saved) {
+  const wrap = $("#fields");
+  wrap.innerHTML = "";
+  if (!schema || schema.length === 0) {
+    const tip = document.createElement("div");
+    tip.className = "form-empty";
+    tip.style.height = "auto";
+    tip.style.padding = "20px";
+    tip.textContent = "该脚本没有定义任何命令行参数";
+    wrap.appendChild(tip);
+    return;
+  }
+  for (const a of schema) {
+    const field = document.createElement("div");
+    field.className = "field" + (a.is_flag ? " field-switch" : "");
+    field.dataset.dest = a.dest;
+
+    const label = document.createElement("div");
+    label.className = "f-label";
+    const nm = document.createElement("span");
+    nm.textContent = a.dest;
+    if (a.required) {
+      const req = document.createElement("span");
+      req.className = "req";
+      req.textContent = "*";
+      req.title = "必选参数";
+      label.appendChild(req);
+    }
+    const kind = document.createElement("span");
+    kind.className = "f-kind";
+    kind.textContent = a.kind === "positional" ? "位置" : "可选";
+    label.appendChild(nm);
+    label.appendChild(kind);
+    const tl = typeLabelOf(a);
+    if (tl) {
+      const t = document.createElement("span");
+      t.className = "f-type " + tl.cls;
+      t.textContent = tl.text;
+      t.title = "参数类型：" + tl.text;
+      label.appendChild(t);
+    }
+    field.appendChild(label);
+
+    // 帮助/说明：显示在输入框上方、参数名称下方
+    if (a.help || (a.option_strings && a.option_strings.length)) {
+      const help = document.createElement("div");
+      help.className = "f-help";
+      const optStr = a.option_strings ? a.option_strings.join(" / ") : a.name;
+      help.textContent = (a.help ? a.help : "") + (a.help && optStr ? " · " : "") + (optStr ? optStr : "");
+      field.appendChild(help);
+    }
+
+    const defaultVal = a.default;
+    const savedVal = saved ? saved[a.dest] : undefined;
+    let value = savedVal !== undefined && savedVal !== null ? savedVal : defaultVal;
+
+    let input;
+    if (a.is_flag) {
+      // 布尔：开关 + 状态文本，与其他字段排版一致（名称在上、开关在下）
+      const ctrl = document.createElement("div");
+      ctrl.className = "f-control";
+      const sw = document.createElement("label");
+      sw.className = "switch";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!value;
+      const slider = document.createElement("span");
+      slider.className = "slider";
+      sw.append(cb, slider);
+      const val = document.createElement("span");
+      val.className = "sw-val";
+      val.textContent = cb.checked ? "开启" : "关闭";
+      cb.addEventListener("change", () => {
+        val.textContent = cb.checked ? "开启" : "关闭";
+        autoSave();
+      });
+      ctrl.append(sw, val);
+      field.appendChild(ctrl);
+      input = cb;
+    } else if (a.choices && a.choices.length) {
+      input = document.createElement("select");
+      input.className = "f-input";
+      const emptyOpt = document.createElement("option");
+      emptyOpt.value = "";
+      emptyOpt.textContent = a.required ? "请选择…" : "（不传）";
+      input.appendChild(emptyOpt);
+      for (const c of a.choices) {
+        const opt = document.createElement("option");
+        opt.value = String(c);
+        opt.textContent = String(c);
+        input.appendChild(opt);
+      }
+      input.value = value !== undefined && value !== null ? String(value) : "";
+      input.addEventListener("change", autoSave);
+      field.appendChild(input);
+    } else {
+      input = document.createElement("input");
+      input.className = "f-input mono";
+      const isNum = a.type === "int" || a.type === "float";
+      if (isNum) {
+        input.type = "number";
+        if (a.type === "int") input.step = "1";
+      } else {
+        input.type = "text";
+      }
+      const isMulti = a.nargs || a.action === "append";
+      if (isMulti) input.placeholder = "多个值用英文逗号分隔";
+      if (value !== undefined && value !== null) {
+        input.value = Array.isArray(value) ? value.join(", ") : String(value);
+      }
+      input.addEventListener("input", () => autoSave());
+      field.appendChild(input);
+    }
+    wrap.appendChild(field);
+  }
+  applyEmptyFilter();
+}
+
+/** 开关「仅显示已填参数」：空值参数隐藏，布尔开关始终显示 */
+function applyEmptyFilter() {
+  const box = $("#opt-hide-empty");
+  if (!box) return;
+  const hide = box.checked;
+  for (const field of $$("#fields .field")) {
+    if (!hide || field.classList.contains("field-switch")) {
+      field.style.display = "";
+      continue;
+    }
+    const sel = field.querySelector("select");
+    const inp = field.querySelector("input");
+    const val = sel ? sel.value : (inp ? inp.value : "");
+    field.style.display = val !== "" && val !== null && val !== undefined ? "" : "none";
+  }
+}
+$("#opt-hide-empty").addEventListener("change", () => { applyEmptyFilter(); savePrefs(); });
+
+function collectValues() {
+  const values = {};
+  for (const field of $$("#fields .field")) {
+    const dest = field.dataset.dest;
+    const arg = (state.script.args_schema || []).find((a) => a.dest === dest);
+    if (!arg) continue;
+    if (arg.is_flag) {
+      const cb = field.querySelector("input[type=checkbox]");
+      values[dest] = !!cb.checked;
+    } else if (arg.choices && arg.choices.length) {
+      const sel = field.querySelector("select");
+      values[dest] = sel.value;
+    } else {
+      const inp = field.querySelector("input");
+      const raw = inp.value.trim();
+      const isMulti = arg.nargs || arg.action === "append";
+      if (isMulti) {
+        values[dest] = raw ? raw.split(/[,，\s]+/).filter(Boolean) : [];
+      } else if (arg.type === "int") {
+        values[dest] = raw === "" ? "" : Number(raw);
+      } else if (arg.type === "float") {
+        values[dest] = raw === "" ? "" : Number(raw);
+      } else {
+        values[dest] = raw;
+      }
+    }
+  }
+  return values;
+}
+
+function fillValues(values) {
+  for (const field of $$("#fields .field")) {
+    const dest = field.dataset.dest;
+    const v = values ? values[dest] : undefined;
+    if (v === undefined) continue;
+    if (field.querySelector("input[type=checkbox]")) {
+      field.querySelector("input[type=checkbox]").checked = !!v;
+    } else if (field.querySelector("select")) {
+      field.querySelector("select").value = String(v);
+    } else {
+      const inp = field.querySelector("input");
+      inp.value = Array.isArray(v) ? v.join(", ") : String(v);
+    }
+  }
+  applyEmptyFilter();
+}
+
+let saveTimer = null;
+function autoSave() {
+  const values = collectValues();
+  if (!state.script) return;
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(() => {
+    saveArgs(values);
+  }, 500);
+}
+
+async function saveArgs(values) {
+  try {
+    await api(`/api/scripts/${state.script.id}/args`, { method: "PUT", body: { args: values } });
+  } catch { /* 忽略保存失败 */ }
+}
+
+async function reloadDetail() {
+  if (state.selectedId) await selectScript(state.selectedId);
+}
+
+/* ================= 执行 ================= */
+
+function setRunning(running) {
+  state.running = running;
+  const btn = $("#btn-run");
+  btn.disabled = running;
+  btn.querySelector("span").textContent = running ? "运行中…" : "执行";
+  $("#btn-terminate").hidden = !running;
+  if (!running) {
+    state.currentExecId = null;
+  }
+}
+
+async function run() {
+  if (!state.script || state.running) return;
+  const values = collectValues();
+  const schema = state.script.args_schema || [];
+  const missing = schema.filter((a) => a.required && (
+    values[a.dest] === undefined || values[a.dest] === null || values[a.dest] === "" ||
+    (Array.isArray(values[a.dest]) && values[a.dest].length === 0)
+  ));
+  if (missing.length) {
+    return toast("缺少必选参数：" + missing.map((a) => a.dest).join(", "), true);
+  }
+  // 立即保存当前值
+  saveArgs(values);
+  switchTab("console");
+  clearConsole(); // 每次执行都是干净的控制台
+  setRunning(true);
+  $("#run-state").textContent = "启动中…";
+  $("#run-state").className = "run-state run";
+  try {
+    const res = await api("/api/execute", {
+      method: "POST",
+      body: { script_id: state.script.id, args: values, preset_id: state.activePresetId },
+    });
+    state.currentExecId = res.execution_id;
+    connectWs(`/ws/run/${res.execution_id}`, {});
+  } catch (e) {
+    setRunning(false);
+    toast("执行失败：" + e.message, true);
+  }
+}
+
+function clearConsole() {
+  $("#console").innerHTML = "";
+  $("#console-placeholder").style.display = "flex";
+  state.lineCount = 0;
+}
+
+function appendLine(stream, text) {
+  const consoleEl = $("#console");
+  $("#console-placeholder").style.display = "none";
+
+  // 进度条场景：行内含 \r（同一行刷新）→ 更新最后一行，与终端行为一致
+  if (text.includes("\r")) {
+    const parts = text.split("\r");
+    let clean = parts[parts.length - 1];
+    if (clean === "" && parts.length > 1) clean = parts[parts.length - 2];
+    const last = consoleEl.querySelector(".console-line:last-child");
+    if (last) {
+      last.querySelector(".line-text").textContent = clean;
+      last.className = "console-line" + (stream === "stderr" ? " stderr" : stream === "info" ? " info" : "");
+      if ($("#opt-autoscroll").checked) {
+        $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
+      }
+      return; // 不新增行、不递增行号
+    }
+    text = clean; // 无最后一行时作为新行创建
+  }
+  const lineNo = state.lineCount + 1; // 记录渲染时的行号
+  const line = document.createElement("div");
+  line.className = "console-line" + (stream === "stderr" ? " stderr" : stream === "info" ? " info" : "");
+  const no = document.createElement("div");
+  no.className = "line-no";
+  no.textContent = lineNo;
+  const btn = document.createElement("button");
+  btn.className = "copy-btn";
+  btn.textContent = "复制";
+  btn.onclick = async (e) => {
+    e.stopPropagation();
+    if (await copyText(text)) toast("已复制第 " + lineNo + " 行");
+  };
+  no.appendChild(btn);
+  const txt = document.createElement("div");
+  txt.className = "line-text";
+  txt.textContent = text;
+  line.append(no, txt);
+  consoleEl.appendChild(line);
+  state.lineCount++;
+
+  // 控制控制台体量：最多保留 5000 行
+  while (consoleEl.children.length > 5000) consoleEl.removeChild(consoleEl.firstChild);
+
+  if ($("#opt-autoscroll").checked) {
+    $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
+  }
+}
+
+async function connectWs(path, { envInit = false, scriptId = null } = {}) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}${path}`);
+  state.ws = ws;
+  ws.onmessage = async (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "line") {
+      appendLine(m.stream, m.line);
+    } else if (m.type === "done") {
+      const r = m.result || {};
+      if (envInit) {
+        if (r.ok) {
+          toast("环境初始化完成");
+          const env = await api(`/api/scripts/${scriptId}/env`);
+          if (state.script && state.script.id === scriptId) renderEnvBar(env);
+        } else {
+          toast("环境初始化失败：" + (r.message || ""), true);
+        }
+        const btn = $("#env-bar .btn.primary");
+        if (btn) { btn.disabled = false; btn.textContent = "初始化环境"; }
+      } else {
+        const statusText = { success: "执行成功", failed: "执行失败", terminated: "已终止" }[r.status] || "执行结束";
+        $("#run-state").textContent = `${statusText} · 退出码 ${r.exit_code ?? "-"}`;
+        $("#run-state").className = "run-state " + (r.status === "success" ? "ok" : r.status === "failed" ? "err" : "warn");
+        setRunning(false);
+        refreshHistory(); // 后台刷新历史数据，但不自动跳转
+      }
+    }
+  };
+  ws.onerror = () => { toast("实时连接断开", true); };
+  ws.onclose = () => { state.ws = null; };
+}
+
+/* ================= 终止 ================= */
+
+$("#btn-terminate").addEventListener("click", async () => {
+  if (!state.currentExecId) return;
+  try {
+    await api(`/api/executions/${state.currentExecId}/terminate`, { method: "POST" });
+    toast("已发送终止信号");
+  } catch (e) {
+    toast(e.message, true);
+  }
+});
+
+/* ================= 控制台工具 ================= */
+
+$("#btn-clear-console").addEventListener("click", clearConsole);
+$("#opt-mono").addEventListener("change", (e) => {
+  $("#console").classList.toggle("mono", e.target.checked);
+  savePrefs();
+});
+$("#opt-autoscroll").addEventListener("change", savePrefs);
+
+/* 多选复制：拖选跨行后弹出复制按钮 */
+function updateMultiCopy() {
+  const floatEl = $("#copy-float");
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) { floatEl.hidden = true; return; }
+  const range = sel.getRangeAt(0);
+  const consoleEl = $("#console");
+  if (!consoleEl.contains(range.commonAncestorContainer)) { floatEl.hidden = true; return; }
+  const lines = $$(".console-line", consoleEl);
+  let count = 0;
+  for (const ln of lines) {
+    if (range.intersectsNode(ln)) count++;
+  }
+  if (count === 0) { floatEl.hidden = true; return; }
+  floatEl.hidden = false;
+  const btn = document.createElement("button");
+  btn.className = "btn";
+  btn.textContent = "复制选中 " + count + " 行";
+  btn.onclick = async () => {
+    if (await copyText(sel.toString())) toast("已复制 " + count + " 行");
+    floatEl.hidden = true;
+  };
+  floatEl.innerHTML = "";
+  floatEl.appendChild(btn);
+}
+document.addEventListener("mouseup", updateMultiCopy);
+document.addEventListener("keyup", updateMultiCopy);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { $("#copy-float").hidden = true; $$(".move-menu").forEach((m) => m.remove()); }
+});
+/* ================= 历史记录 ================= */
+
+let historyScope = "all"; // "all"=全部脚本（默认，确保能看到所有记录）| "script"=仅当前脚本
+
+async function updatePageBadge() {
+  const el = $("#page-badge");
+  if (!el) return;
+  try {
+    const [s, h] = await Promise.all([api("/api/scripts"), api("/api/executions?limit=200")]);
+    el.textContent = `脚本 ${s.length} · 记录 ${Array.isArray(h) ? h.length : 0}`;
+    el.classList.add("ok");
+  } catch (e) {
+    el.textContent = "连接异常";
+    el.classList.add("bad");
+  }
+}
+
+async function refreshHistory() {
+  let list = [];
+  try {
+    list = await api("/api/executions?limit=200");
+  } catch (e) {
+    renderHistoryError(e.message);
+    return;
+  }
+  renderHistory(list);
+  updatePageBadge();
+}
+
+function renderHistoryError(msg) {
+  const wrap = $("#history-list");
+  wrap.innerHTML = `<div class="sidebar-empty" style="padding:20px">无法加载执行记录：${escapeHtml(msg)}</div>`;
+}
+
+function renderHistory(list) {
+  const wrap = $("#history-list");
+  wrap.innerHTML = "";
+  const kw = ($("#history-search").value || "").toLowerCase();
+  const filtered = list.filter((h) => {
+    if (historyScope === "script" && state.selectedId && h.script_id !== state.selectedId) return false;
+    if (!kw) return true;
+    const tags = JSON.parse(h.tags || "[]").join(" ");
+    return (h.script_name || "").toLowerCase().includes(kw) ||
+      h.status.includes(kw) ||
+      tags.toLowerCase().includes(kw);
+  });
+  if (filtered.length === 0) {
+    const hint = historyScope === "script" && state.selectedId
+      ? `当前选中的「${state.script ? state.script.name : ""}」暂无执行记录，可点上方「全部」查看所有脚本的记录`
+      : "暂无执行记录：运行脚本后，每次执行都会自动记录到这里";
+    wrap.innerHTML = `<div class="sidebar-empty" style="padding:20px">${escapeHtml(hint)}</div>`;
+    return;
+  }
+  for (const h of filtered) {
+    const item = document.createElement("div");
+    item.className = "hist-item";
+    const top = document.createElement("div");
+    top.className = "hi-top";
+    const nm = document.createElement("span");
+    nm.className = "hi-name";
+    nm.textContent = h.script_name || "（脚本已删除）";
+    nm.title = h.script_name || "";
+    const st = document.createElement("span");
+    st.className = "status-pill " + h.status;
+    st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[h.status] || h.status;
+    const tm = document.createElement("span");
+    tm.className = "hi-time";
+    tm.textContent = formatTime(h.started_at);
+    top.append(nm, st, tm);
+
+    const argsLine = document.createElement("div");
+    argsLine.className = "hi-args";
+    argsLine.textContent = summarizeArgs(h.args);
+    argsLine.title = h.args;
+
+    const tagsRow = document.createElement("div");
+    tagsRow.className = "hi-tags";
+    const tags = JSON.parse(h.tags || "[]");
+    for (const t of tags) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      tag.textContent = "#" + t;
+      tagsRow.appendChild(tag);
+    }
+
+    item.append(top, argsLine, tagsRow);
+    item.onclick = () => showHistoryDetail(h.id, item);
+    wrap.appendChild(item);
+  }
+}
+
+function summarizeArgs(argsStr) {
+  try {
+    const a = JSON.parse(argsStr || "{}");
+    const kv = Object.entries(a).filter(([, v]) => v !== "" && v !== null && v !== undefined);
+    if (kv.length === 0) return "（无参数）";
+    return kv.map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(",") : v}`).join("  ");
+  } catch { return ""; }
+}
+
+function formatTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function showHistoryDetail(id, itemEl) {
+  $$(".hist-item").forEach((el) => el.classList.remove("active"));
+  if (itemEl) itemEl.classList.add("active");
+  const rec = await api(`/api/executions/${id}`);
+  const detail = $("#history-detail");
+  detail.hidden = false;
+  detail.innerHTML = "";
+
+  const head = document.createElement("div");
+  head.className = "hd-head";
+  const info = document.createElement("span");
+  info.style.cssText = "font-size:12.5px;font-weight:600";
+  info.textContent = `${rec.script_name || "脚本"} · ${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
+  const rerun = document.createElement("button");
+  rerun.className = "btn mini primary";
+  rerun.textContent = "↻ 用此参数重跑";
+  rerun.onclick = () => rerunExecution(rec);
+  const del = document.createElement("button");
+  del.className = "btn mini danger";
+  del.textContent = "删除";
+  del.onclick = async () => {
+    confirmModal({
+      title: "删除执行记录",
+      message: `确定删除这条执行记录（${rec.script_name || "脚本"} · ${formatTime(rec.started_at)}）吗？`,
+      onConfirm: async () => {
+        await api(`/api/executions/${rec.id}`, { method: "DELETE" });
+        detail.hidden = true;
+        refreshHistory();
+      },
+    });
+  };
+  head.append(info, rerun, del);
+
+  const tagsRow = document.createElement("div");
+  tagsRow.className = "hd-tags";
+  const tagsLbl = document.createElement("span");
+  tagsLbl.style.cssText = "font-size:11px;color:var(--muted)";
+  tagsLbl.textContent = "标签:";
+  tagsRow.appendChild(tagsLbl);
+  const renderTags = () => {
+    $$(".hd-tag", tagsRow).forEach((t) => t.remove());
+    const inp = $("#hd-tag-input", tagsRow);
+    for (const t of rec.tags) {
+      const tag = document.createElement("span");
+      tag.className = "tag hd-tag";
+      const txt = document.createTextNode("#" + t);
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "✕";
+      x.onclick = async () => {
+        rec.tags = rec.tags.filter((v) => v !== t);
+        await api(`/api/executions/${rec.id}/tags`, { method: "PUT", body: { tags: rec.tags } });
+        renderTags(); refreshHistory();
+      };
+      tag.append(txt, x);
+      tagsRow.insertBefore(tag, inp);
+    }
+  };
+  const inp = document.createElement("input");
+  inp.id = "hd-tag-input";
+  inp.placeholder = "+ 添加标签，回车确认";
+  inp.onkeydown = async (e) => {
+    if (e.key === "Enter" && inp.value.trim()) {
+      rec.tags = [...new Set([...rec.tags, inp.value.trim()])];
+      inp.value = "";
+      await api(`/api/executions/${rec.id}/tags`, { method: "PUT", body: { tags: rec.tags } });
+      renderTags(); refreshHistory();
+    }
+  };
+  tagsRow.appendChild(inp);
+  renderTags();
+
+  const out = document.createElement("div");
+  out.className = "hd-output";
+  out.textContent = rec.output || "（无输出）";
+  const truncated = document.createElement("div");
+  truncated.className = "hd-truncated";
+  truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
+
+  detail.append(head, tagsRow, out, truncated);
+}
+
+async function rerunExecution(rec) {
+  if (!rec.script_id) return toast("原脚本已删除，无法重跑", true);
+  if (state.selectedId !== rec.script_id) {
+    await selectScript(rec.script_id);
+  }
+  const args = typeof rec.args === "string" ? JSON.parse(rec.args || "{}") : (rec.args || {});
+  fillValues(args); // 填充该次执行的参数
+  saveArgs(args); // 立即保存为当前值
+  state.activePresetId = rec.preset_id;
+  toast("已载入该次执行参数，确认后点击「执行」即可重跑");
+}
+
+/* ================= Tab ================= */
+
+function switchTab(name) {
+  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  $("#console-wrap").style.display = name === "console" ? "" : "none";
+  $("#history-wrap").style.display = name === "history" ? "" : "none";
+}
+document.addEventListener("click", (e) => {
+  const t = e.target.closest(".tab");
+  if (!t) return;
+  switchTab(t.dataset.tab);
+  if (t.dataset.tab === "history") refreshHistory();
+});
+
+/* ================= 导出 / 导入（版本迁移） ================= */
+
+async function exportData() {
+  try {
+    const data = await api("/api/export");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `tool-launcher-export-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast("已导出 " + data.scripts.length + " 个脚本配置");
+  } catch (e) {
+    toast("导出失败：" + e.message, true);
+  }
+}
+
+async function importConfig(file) {
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data || !Array.isArray(data.scripts)) throw new Error("不是有效的启动器导出文件");
+    const r = await api("/api/import", { method: "POST", body: { data } });
+    toast(`导入完成：新增 ${r.imported}、更新 ${r.updated}${r.skipped.length ? `、跳过 ${r.skipped.length}` : ""}`);
+    await loadScripts();
+    return true;
+  } catch (e) {
+    toast("导入失败：" + e.message, true);
+    return false;
+  }
+}
+
+/* ================= 事件绑定 ================= */
+
+$("#btn-add").addEventListener("click", openAddModal);
+$("#btn-tag-clear").addEventListener("click", () => {
+  state.selectedTags.clear();
+  renderTagFilter();
+  renderScriptList();
+});
+$("#script-search").addEventListener("input", renderScriptList);
+$("#history-search").addEventListener("input", refreshHistory);
+$("#btn-run").addEventListener("click", run);
+$("#btn-history-scope").addEventListener("click", () => {
+  historyScope = historyScope === "script" ? "all" : "script";
+  $("#btn-history-scope").textContent = historyScope === "script" ? "当前脚本" : "全部";
+  $("#btn-history-scope").classList.toggle("active", historyScope === "all");
+  refreshHistory();
+  savePrefs();
+});
+$("#btn-clear-history").addEventListener("click", () => {
+  confirmModal({
+    title: "清空全部执行记录",
+    message: "确定清空全部执行记录吗？此操作不可恢复。",
+    confirmText: "清空",
+    onConfirm: async () => {
+      const r = await api("/api/executions/clear", { method: "POST", body: {} });
+      toast("已清空 " + r.deleted + " 条记录");
+      refreshHistory();
+    },
+  });
+});
+$("#btn-export").addEventListener("click", exportData);
+$("#btn-import-config").addEventListener("click", () => {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".json,application/json";
+  input.onchange = async (e) => {
+    const f = e.target.files[0];
+    if (f) await importConfig(f);
+    input.remove();
+  };
+  input.click();
+});
+
+/* ================= uv 检测 ================= */
+
+async function checkUv() {
+  try {
+    const r = await api("/api/system/uv");
+    state.uvOk = r.ok;
+    if (!r.ok) {
+      state.uvHint = r.install_hint || {};
+      setTimeout(() => {
+        const seen = sessionStorage.getItem("uv_notice");
+        if (!seen) {
+          showUvInstall();
+          sessionStorage.setItem("uv_notice", "1");
+        }
+      }, 600);
+    } else {
+      state.uvHint = null;
+    }
+  } catch {
+    state.uvOk = null;
+  }
+}
+
+/* ================= 初始化 ================= */
+
+async function init() {
+  applyPrefs(); // 恢复上次的 UI 偏好（标签过滤 / 开关等）
+  await checkUv();
+  try {
+    await loadScripts();
+  } catch (e) {
+    // 服务器可能刚重启（旧页面请求失败）：自动刷新一次，最多 2 次避免死循环
+    const reloadKey = "launcher_auto_reload";
+    const n = Number(sessionStorage.getItem(reloadKey) || 0);
+    if (n < 2) {
+      sessionStorage.setItem(reloadKey, String(n + 1));
+      toast("连接服务失败，正在自动刷新…", true);
+      setTimeout(() => location.reload(), 1000);
+      return;
+    }
+    sessionStorage.removeItem(reloadKey);
+    toast("无法连接服务，请确认已双击 start.command 启动程序", true);
+  }
+  updatePageBadge();
+  refreshHistory(); // 默认展示执行记录（不依赖点击）
+  const last = localStorage.getItem("last_script_id");
+  if (last && state.scripts.some((s) => String(s.id) === last)) {
+    selectScript(Number(last));
+  }
+}
+
+// 记住最后选中的脚本
+const origSelect = selectScript;
+selectScript = async function (id) {
+  localStorage.setItem("last_script_id", String(id));
+  return origSelect(id);
+};
+
+init();
+
+</script>
+</body>
+</html>

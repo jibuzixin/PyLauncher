@@ -1,0 +1,18 @@
+# Python 运行时
+__pycache__/
+*.pyc
+.venv/
+
+# 数据与运行时产物
+launcher.db
+launcher.db-journal
+imported/
+*.log
+
+# 系统文件
+.DS_Store
+
+# 前端构建产物（由 build.sh 从 static 源码生成，提交源码不提交产物）
+# static/index.html 由 index.template.html + app.js + style.css 生成
+# 如需提交构建产物可删除下面这行
+# static/index.html

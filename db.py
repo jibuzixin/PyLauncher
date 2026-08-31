@@ -1,0 +1,461 @@
+"""sqlite 数据层：脚本注册表 / 参数预设 / 执行记录 / 配置表。
+
+使用标准库 sqlite3。每次操作独立开连接，避免跨线程复用问题。
+"""
+from __future__ import annotations
+
+import json
+import os
+import sqlite3
+import threading
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Iterable, Iterator, Optional
+
+_DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.db")
+
+# 执行记录只保留程序结束后的最后 N 行
+OUTPUT_KEEP_LINES = 1000
+
+_lock = threading.Lock()
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS scripts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    path TEXT NOT NULL UNIQUE,
+    args_schema TEXT NOT NULL DEFAULT '[]',
+    auto_saved_args TEXT NOT NULL DEFAULT '{}',
+    description TEXT NOT NULL DEFAULT '',
+    deps_path TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS folders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS presets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    args TEXT NOT NULL DEFAULT '{}',
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS executions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    script_id INTEGER REFERENCES scripts(id) ON DELETE SET NULL,
+    preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL,
+    args TEXT NOT NULL DEFAULT '{}',
+    status TEXT NOT NULL DEFAULT 'running',
+    exit_code INTEGER,
+    output TEXT NOT NULL DEFAULT '',
+    tags TEXT NOT NULL DEFAULT '[]',
+    started_at TEXT NOT NULL,
+    finished_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS meta (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_scripts_path ON scripts(path);
+CREATE INDEX IF NOT EXISTS idx_exec_script ON executions(script_id);
+CREATE INDEX IF NOT EXISTS idx_exec_status ON executions(status);
+CREATE INDEX IF NOT EXISTS idx_exec_started ON executions(started_at DESC);
+"""
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """老库增量迁移：补充新增列，并清理已废弃的文件夹分组。"""
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(scripts)")}
+    if "description" not in cols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    if "folder_id" not in cols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN folder_id INTEGER REFERENCES folders(id)")
+    if "deps_path" not in cols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN deps_path TEXT NOT NULL DEFAULT ''")
+    if "tags" not in cols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
+    conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
+    conn.execute("DELETE FROM folders")
+
+
+def now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+@contextmanager
+def _conn() -> Iterator[sqlite3.Connection]:
+    conn = sqlite3.connect(_DB_PATH)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    try:
+        yield conn
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def init_db() -> None:
+    with _lock:
+        with _conn() as conn:
+            conn.executescript(SCHEMA)
+            _migrate(conn)
+
+
+# ---------- 工具 ----------
+
+def _dumps(obj: Any) -> str:
+    return json.dumps(obj, ensure_ascii=False)
+
+
+def _loads(s: str, default: Any = None) -> Any:
+    try:
+        return json.loads(s)
+    except (TypeError, ValueError):
+        return default if default is not None else {}
+
+
+# ---------- scripts ----------
+
+def add_script(name: str, path: str, args_schema: list[dict], description: str = "") -> Optional[dict]:
+    """注册脚本。路径重复则更新 schema；用户改过的名称/描述不被扫描覆盖。"""
+    ts = now_iso()
+    with _lock, _conn() as conn:
+        existing = conn.execute("SELECT * FROM scripts WHERE path = ?", (path,)).fetchone()
+        if existing:
+            # 名称：用户改过（与脚本名不同）则保留，否则同步脚本名
+            final_name = name if existing["name"] == name else existing["name"]
+            # 描述：用户已填则保留，否则用 argparse description 填充
+            final_desc = existing["description"] if existing["description"] else (description or "")
+            conn.execute(
+                "UPDATE scripts SET name=?, args_schema=?, description=?, updated_at=? WHERE id=?",
+                (final_name, _dumps(args_schema), final_desc, ts, existing["id"]),
+            )
+            return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (existing["id"],)).fetchone())
+        cur = conn.execute(
+            "INSERT INTO scripts(name, path, args_schema, description, created_at, updated_at) VALUES(?,?,?,?,?,?)",
+            (name, path, _dumps(args_schema), description or "", ts, ts),
+        )
+        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def update_script(script_id: int, name: str | None = None, description: str | None = None,
+                  deps_path: str | None = None, tags: list[str] | None = None) -> Optional[dict]:
+    """更新脚本名称/描述/依赖路径/标签，不传的字段保持不变。"""
+    sets: list[str] = []
+    params: list = []
+    if name is not None:
+        sets.append("name=?")
+        params.append(name)
+    if description is not None:
+        sets.append("description=?")
+        params.append(description)
+    if deps_path is not None:
+        sets.append("deps_path=?")
+        params.append(deps_path)
+    if tags is not None:
+        sets.append("tags=?")
+        params.append(_dumps([str(t).strip() for t in tags if str(t).strip()]))
+    if not sets:
+        return get_script(script_id)
+    sets.append("updated_at=?")
+    params.append(now_iso())
+    params.append(script_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE scripts SET {', '.join(sets)} WHERE id=?", params)
+        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
+
+
+def update_script_schema(script_id: int, args_schema: list[dict], description: str) -> Optional[dict]:
+    """重新加载：只更新参数 schema 与描述，保留用户名称/描述自定义。"""
+    with _lock, _conn() as conn:
+        existing = conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone()
+        if not existing:
+            return None
+        final_desc = existing["description"] if existing["description"] else (description or "")
+        conn.execute(
+            "UPDATE scripts SET args_schema=?, description=?, updated_at=? WHERE id=?",
+            (_dumps(args_schema), final_desc, now_iso(), script_id),
+        )
+        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
+
+
+def list_scripts() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM scripts ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["tags"] = _loads(d.get("tags") or "[]", [])
+            out.append(d)
+        return out
+
+
+def get_script(script_id: int) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM scripts WHERE id=?",
+            (script_id,),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        d["tags"] = _loads(d.get("tags") or "[]", [])
+        return d
+
+
+def delete_script(script_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM scripts WHERE id=?", (script_id,))
+        return cur.rowcount > 0
+
+
+def save_auto_args(script_id: int, args: dict) -> None:
+    ts = now_iso()
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE scripts SET auto_saved_args=?, updated_at=? WHERE id=?",
+            (_dumps(args), ts, script_id),
+        )
+
+
+# ---------- presets ----------
+
+def add_preset(script_id: int, name: str, args: dict) -> dict:
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO presets(script_id, name, args, created_at) VALUES(?,?,?,?)",
+            (script_id, name, _dumps(args), now_iso()),
+        )
+        return dict(conn.execute("SELECT * FROM presets WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def list_presets(script_id: int) -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM presets WHERE script_id=? ORDER BY created_at DESC", (script_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_preset(preset_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM presets WHERE id=?", (preset_id,))
+        return cur.rowcount > 0
+
+
+# ---------- executions ----------
+
+def add_execution(
+    script_id: int | None, args: dict, preset_id: int | None = None
+) -> dict:
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO executions(script_id, preset_id, args, status, started_at) VALUES(?,?,?,?,?)",
+            (script_id, preset_id, _dumps(args), "running", now_iso()),
+        )
+        return dict(conn.execute("SELECT * FROM executions WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def finish_execution(exec_id: int, status: str, exit_code: int | None, output_lines: list[str]) -> None:
+    """status: success / failed / terminated。output 只保留最后 OUTPUT_KEEP_LINES 行。"""
+    kept = output_lines[-OUTPUT_KEEP_LINES:] if output_lines else []
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE executions SET status=?, exit_code=?, output=?, finished_at=? WHERE id=?",
+            (status, exit_code, "\n".join(kept), now_iso(), exec_id),
+        )
+
+
+def get_execution(exec_id: int) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM executions WHERE id=?", (exec_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_executions(
+    script_id: int | None = None,
+    tag: str | None = None,
+    status: str | None = None,
+    limit: int = 200,
+) -> list[dict]:
+    sql = "SELECT e.*, s.name AS script_name FROM executions e LEFT JOIN scripts s ON e.script_id = s.id WHERE 1=1"
+    params: list = []
+    if script_id is not None:
+        sql += " AND e.script_id=?"
+        params.append(script_id)
+    if status:
+        sql += " AND e.status=?"
+        params.append(status)
+    if tag:
+        sql += " AND e.tags LIKE ?"
+        params.append(f'%"{tag}"%')
+    sql += " ORDER BY e.started_at DESC LIMIT ?"
+    params.append(limit)
+    with _conn() as conn:
+        rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_execution_tags(exec_id: int, tags: Iterable[str]) -> None:
+    with _lock, _conn() as conn:
+        conn.execute("UPDATE executions SET tags=? WHERE id=?", (_dumps(list(tags)), exec_id))
+
+
+def delete_execution(exec_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM executions WHERE id=?", (exec_id,))
+        return cur.rowcount > 0
+
+
+def clear_executions(script_id: int | None = None) -> int:
+    with _lock, _conn() as conn:
+        if script_id is None:
+            cur = conn.execute("DELETE FROM executions")
+        else:
+            cur = conn.execute("DELETE FROM executions WHERE script_id=?", (script_id,))
+        return cur.rowcount
+
+
+# ---------- folders ----------
+
+def create_folder(name: str) -> Optional[dict]:
+    name = name.strip()
+    if not name:
+        return None
+    ts = now_iso()
+    with _lock, _conn() as conn:
+        existing = conn.execute("SELECT * FROM folders WHERE name=?", (name,)).fetchone()
+        if existing:
+            return dict(existing)
+        cur = conn.execute("INSERT INTO folders(name, created_at) VALUES(?,?)", (name, ts))
+        return dict(conn.execute("SELECT * FROM folders WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def list_folders() -> list[dict]:
+    with _conn() as conn:
+        rows = conn.execute("SELECT * FROM folders ORDER BY name COLLATE NOCASE").fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_folder(folder_id: int) -> bool:
+    with _lock, _conn() as conn:
+        conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id=?", (folder_id,))
+        cur = conn.execute("DELETE FROM folders WHERE id=?", (folder_id,))
+        return cur.rowcount > 0
+
+
+def move_script(script_id: int, folder_id: int | None) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("UPDATE scripts SET folder_id=? WHERE id=?", (folder_id, script_id))
+        return cur.rowcount > 0
+
+
+# ---------- 导出 / 导入（版本迁移） ----------
+
+def export_all() -> dict:
+    """导出脚本、文件夹、预设（不含执行历史）。"""
+    with _conn() as conn:
+        folders = [dict(r) for r in conn.execute("SELECT id, name FROM folders").fetchall()]
+        scripts = []
+        for row in conn.execute("SELECT * FROM scripts").fetchall():
+            s = dict(row)
+            presets = [dict(r) for r in conn.execute(
+                "SELECT name, args FROM presets WHERE script_id=?", (s["id"],)
+            ).fetchall()]
+            scripts.append({
+                "name": s["name"],
+                "path": s["path"],
+                "description": s.get("description") or "",
+                "deps_path": s.get("deps_path") or "",
+                "tags": _loads(s.get("tags") or "[]", []),
+                "args_schema": _loads(s.get("args_schema") or "[]", []),
+                "auto_saved_args": _loads(s.get("auto_saved_args") or "{}", {}),
+                "presets": presets,
+            })
+        return {"version": 1, "folders": [f["name"] for f in folders], "scripts": scripts}
+
+
+def import_all(data: dict) -> dict:
+    """导入导出数据。以脚本 path 为唯一键，已存在则更新，预设同名跳过。"""
+    imported, updated, skipped = 0, 0, []
+    with _lock, _conn() as conn:
+        # 文件夹功能已废弃，导入时忽略 folders 字段
+        ts = now_iso()
+        for sc in data.get("scripts", []):
+            path = sc.get("path", "")
+            name = sc.get("name") or "unnamed"
+            schema = sc.get("args_schema") or []
+            desc = sc.get("description") or ""
+            deps = sc.get("deps_path") or ""
+            tags = _dumps([str(t) for t in (sc.get("tags") or []) if str(t).strip()])
+            try:
+                existing = conn.execute("SELECT id FROM scripts WHERE path=?", (path,)).fetchone()
+                if existing:
+                    sid = existing["id"]
+                    conn.execute(
+                        "UPDATE scripts SET name=?, args_schema=?, description=?, deps_path=?, tags=?, folder_id=NULL, updated_at=? WHERE id=?",
+                        (name, _dumps(schema), desc, deps, tags, ts, sid),
+                    )
+                    updated += 1
+                else:
+                    cur = conn.execute(
+                        "INSERT INTO scripts(name, path, args_schema, auto_saved_args, description, deps_path, tags, folder_id, created_at, updated_at) "
+                        "VALUES(?,?,?,?,?,?,?,NULL,?,?)",
+                        (name, path, _dumps(schema), _dumps(sc.get("auto_saved_args") or {}),
+                         desc, deps, tags, ts, ts),
+                    )
+                    sid = cur.lastrowid
+                    imported += 1
+                # 预设：同名跳过
+                for p in sc.get("presets", []):
+                    pname = p.get("name", "")
+                    if not pname:
+                        continue
+                    dup = conn.execute(
+                        "SELECT id FROM presets WHERE script_id=? AND name=?", (sid, pname)
+                    ).fetchone()
+                    if not dup:
+                        conn.execute(
+                            "INSERT INTO presets(script_id, name, args, created_at) VALUES(?,?,?,?)",
+                            (sid, pname, _dumps(p.get("args") or {}), ts),
+                        )
+            except Exception as e:  # noqa: BLE001
+                skipped.append({"path": path, "error": str(e)})
+        return {"imported": imported, "updated": updated, "skipped": skipped}
+
+
+# ---------- meta ----------
+
+def meta_get(key: str, default: str | None = None) -> Optional[str]:
+    with _conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
+
+
+def meta_set(key: str, value: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
+def meta_list() -> dict:
+    with _conn() as conn:
+        rows = conn.execute("SELECT key, value FROM meta").fetchall()
+        return {r["key"]: r["value"] for r in rows}
