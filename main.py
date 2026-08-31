@@ -195,13 +195,45 @@ def build_arg_list(schema_args: list[dict], values: dict) -> list[str]:
     return result
 
 
+def _merge_output_lines(chunks: list[str]) -> list[str]:
+    """把原始输出块按终端语义合并为逻辑行：\r 覆盖当前行、\n（或 \r\n）换行。
+
+    保留 ANSI 转义序列（历史详情前端做 ANSI 渲染）。支持 pty 块与管道行混排。
+    """
+    text = "".join(chunks)
+    lines: list[str] = []
+    buf = ""
+    i, n = 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch == "\r":
+            if i + 1 < n and text[i + 1] == "\n":
+                lines.append(buf)
+                buf = ""
+                i += 2
+                continue
+            buf = ""
+            i += 1
+            continue
+        if ch == "\n":
+            lines.append(buf)
+            buf = ""
+            i += 1
+            continue
+        buf += ch
+        i += 1
+    if buf:
+        lines.append(buf)
+    return lines
+
+
 async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emit: Callable) -> dict:
     """后台执行任务，流式输出，结束后写库。"""
-    await emit("info", "· 环境检查中…")
+    await emit("info", "· 环境检查中…\n")
     env = executor.inspect_env(script_path)
     if not env["has_venv"]:
-        await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」")
-    await emit("info", "$ uv run --project " + str(Path(script_path).parent) + " python " + Path(script_path).name + " " + " ".join(arg_list))
+        await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」\n")
+    await emit("info", "$ uv run --project " + str(Path(script_path).parent) + " python " + Path(script_path).name + " " + " ".join(arg_list) + "\n")
 
     result = await executor.run_script(exec_id, script_path, arg_list, emit)
     terminated = result.get("terminated", False)
@@ -213,9 +245,10 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
     else:
         status = "failed"
 
-    lines = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
+    chunks = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
+    lines = _merge_output_lines(chunks)
     db.finish_execution(exec_id, status, result.get("exit_code"), lines)
-    await emit("info", f"· 执行结束：{status}（退出码 {result.get('exit_code')}）")
+    await emit("info", f"· 执行结束：{status}（退出码 {result.get('exit_code')}）\n")
     result["status"] = status
     return result
 

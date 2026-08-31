@@ -932,35 +932,76 @@ async function run() {
   }
 }
 
+/* ================= 控制台（流式终端模拟） =================
+   pty 模式下后端推送原始字节块（含 \r \r\n ANSI 转义），这里做终端语义还原：
+   - \r 覆盖当前行（进度条单行刷新）
+   - \n / \r\n 换行（提交一行）
+   - ANSI SGR 颜色码渲染为彩色文本 */
+
 function clearConsole() {
   $("#console").innerHTML = "";
   $("#console-placeholder").style.display = "flex";
   state.lineCount = 0;
+  termState.buf = "";
+  termState.cur = null;
+  termState.crPending = false;
 }
 
-function appendLine(stream, text) {
-  const consoleEl = $("#console");
-  $("#console-placeholder").style.display = "none";
+const termState = { buf: "", cur: null, crPending: false, streamCls: "" };
 
-  // 进度条场景：行内含 \r（同一行刷新）→ 更新最后一行，与终端行为一致
-  if (text.includes("\r")) {
-    const parts = text.split("\r");
-    let clean = parts[parts.length - 1];
-    if (clean === "" && parts.length > 1) clean = parts[parts.length - 2];
-    const last = consoleEl.querySelector(".console-line:last-child");
-    if (last) {
-      last.querySelector(".line-text").textContent = clean;
-      last.className = "console-line" + (stream === "stderr" ? " stderr" : stream === "info" ? " info" : "");
-      if ($("#opt-autoscroll").checked) {
-        $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
-      }
-      return; // 不新增行、不递增行号
+// ANSI SGR 颜色映射（适配浅色控制台）
+const ANSI_FG = { 30: "#1a1a1a", 31: "#c62828", 32: "#2e7d32", 33: "#9e7d00", 34: "#1565c0", 35: "#8e24aa", 36: "#00796b", 37: "#424242" };
+const ANSI_FG_BRIGHT = { 90: "#757575", 91: "#e53935", 92: "#43a047", 93: "#c0a000", 94: "#1e88e5", 95: "#d81b60", 96: "#00acc1", 97: "#212121" };
+const ANSI_BG = { 40: "#1a1a1a", 41: "#c62828", 42: "#2e7d32", 43: "#9e7d00", 44: "#1565c0", 45: "#8e24aa", 46: "#00796b", 47: "#dddddd" };
+
+function stripAnsi(s) {
+  return String(s).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
+}
+
+function ansiToHtml(text) {
+  const re = /\x1b\[([0-9;]*)m/g;
+  let html = "";
+  let last = 0;
+  let fg = "", bg = "", bold = false;
+  const push = (t) => {
+    if (!t) return;
+    const st = [];
+    if (fg) st.push("color:" + fg);
+    if (bg) st.push("background:" + bg);
+    if (bold) st.push("font-weight:700");
+    html += st.length ? `<span style="${st.join(";")}">${t}</span>` : t;
+  };
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    push(escapeHtml(text.slice(last, m.index)));
+    const codes = m[1] ? m[1].split(";") : [];
+    for (const c of codes) {
+      const n = parseInt(c, 10);
+      if (Number.isNaN(n)) continue;
+      if (n === 0) { fg = ""; bg = ""; bold = false; }
+      else if (n === 1) bold = true;
+      else if (n === 22) bold = false;
+      else if (n >= 30 && n <= 37) fg = ANSI_FG[n];
+      else if (n >= 90 && n <= 97) fg = ANSI_FG_BRIGHT[n];
+      else if (n >= 40 && n <= 47) bg = ANSI_BG[n];
     }
-    text = clean; // 无最后一行时作为新行创建
+    last = m.index + m[0].length;
   }
-  const lineNo = state.lineCount + 1; // 记录渲染时的行号
+  push(escapeHtml(text.slice(last)));
+  return html;
+}
+
+function autoscrollConsole() {
+  if ($("#opt-autoscroll").checked) {
+    $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
+  }
+}
+
+function ensureTermLine() {
+  if (termState.cur) return;
+  const lineNo = state.lineCount + 1;
   const line = document.createElement("div");
-  line.className = "console-line" + (stream === "stderr" ? " stderr" : stream === "info" ? " info" : "");
+  line.className = "console-line" + (termState.streamCls ? " " + termState.streamCls : "");
   const no = document.createElement("div");
   no.className = "line-no";
   no.textContent = lineNo;
@@ -969,22 +1010,66 @@ function appendLine(stream, text) {
   btn.textContent = "复制";
   btn.onclick = async (e) => {
     e.stopPropagation();
-    if (await copyText(text)) toast("已复制第 " + lineNo + " 行");
+    const txt = line.querySelector(".line-text").textContent || "";
+    if (await copyText(stripAnsi(txt))) toast("已复制第 " + lineNo + " 行");
   };
   no.appendChild(btn);
   const txt = document.createElement("div");
   txt.className = "line-text";
-  txt.textContent = text;
   line.append(no, txt);
-  consoleEl.appendChild(line);
+  $("#console").appendChild(line);
   state.lineCount++;
-
+  termState.cur = line;
   // 控制控制台体量：最多保留 5000 行
+  const consoleEl = $("#console");
   while (consoleEl.children.length > 5000) consoleEl.removeChild(consoleEl.firstChild);
+}
 
-  if ($("#opt-autoscroll").checked) {
-    $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
+function updateTermLine() {
+  if (!termState.buf && !termState.cur) return;
+  ensureTermLine();
+  termState.cur.querySelector(".line-text").innerHTML = ansiToHtml(termState.buf);
+  autoscrollConsole();
+}
+
+function flushTermLine() {
+  ensureTermLine();
+  termState.cur.querySelector(".line-text").innerHTML = ansiToHtml(termState.buf);
+  termState.cur = null;
+  termState.buf = "";
+  autoscrollConsole();
+}
+
+function appendStream(stream, chunk) {
+  $("#console-placeholder").style.display = "none";
+  termState.streamCls = stream === "info" ? "info" : stream === "stderr" ? "stderr" : "";
+  let i = 0;
+  const len = chunk.length;
+  while (i < len) {
+    const ch = chunk[i];
+    // 上一个块以 \r 结尾：先结算（下个字符决定是覆盖还是换行）
+    if (termState.crPending) {
+      termState.crPending = false;
+      if (ch === "\n") { flushTermLine(); i++; continue; }
+      termState.buf = ""; // \r 覆盖当前行
+    }
+    if (ch === "\r") {
+      if (i + 1 < len) {
+        if (chunk[i + 1] === "\n") { flushTermLine(); i += 2; continue; }
+        termState.buf = ""; // 单行进度条刷新
+        i++;
+        continue;
+      }
+      termState.crPending = true;
+      i++;
+      continue;
+    }
+    if (ch === "\n") { flushTermLine(); i++; continue; }
+    termState.buf += ch;
+    i++;
   }
+  // 块尾统一刷新当前行（进度条实时可见；\r 结尾时留待下块决定）
+  if (termState.buf && !termState.crPending) updateTermLine();
 }
 
 async function connectWs(path, { envInit = false, scriptId = null } = {}) {
@@ -994,7 +1079,7 @@ async function connectWs(path, { envInit = false, scriptId = null } = {}) {
   ws.onmessage = async (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "line") {
-      appendLine(m.stream, m.line);
+      appendStream(m.stream, m.line);
     } else if (m.type === "done") {
       const r = m.result || {};
       if (envInit) {
@@ -1252,7 +1337,7 @@ async function showHistoryDetail(id, itemEl) {
 
   const out = document.createElement("div");
   out.className = "hd-output";
-  out.textContent = rec.output || "（无输出）";
+  out.innerHTML = rec.output ? ansiToHtml(rec.output) : "（无输出）";
   const truncated = document.createElement("div");
   truncated.className = "hd-truncated";
   truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";

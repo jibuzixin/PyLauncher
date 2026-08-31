@@ -9,12 +9,16 @@ import os
 import platform
 import shutil
 import signal
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
 # 运行中的进程句柄：execution_id -> 进程控制对象
 _RUNNING: dict[int, dict[str, Any]] = {}
+
+# 伪终端模式：macOS / Linux 使用 pty 获得完整终端体验（\r 进度条、ANSI 颜色），Windows 自动退回管道
+USE_PTY = os.name != "nt"
 
 UV_INSTALL_HINTS = {
     "mac": "brew install uv",
@@ -101,7 +105,15 @@ async def _stream_proc(
     new_group: bool = True,
     proc_holder: Optional[dict] = None,
 ) -> tuple[int, asyncio.subprocess.Process]:
-    """运行命令并流式回调 on_line(stream, line)，返回 (exit_code, proc)。"""
+    """运行命令并流式回调 on_line(stream, text)。
+
+    macOS/Linux 使用伪终端（pty）运行：子进程 isatty()=True，完整支持 \r 单行进度条与 ANSI 颜色；
+    Windows 退回管道模式。回调收到的是原始字节块（可能含 \r\n、ANSI 转义、跨行）。
+    """
+    if USE_PTY:
+        return await _stream_proc_pty(cmd, cwd, on_line, env_extra, proc_holder)
+
+    # ---- Windows / 管道模式：按行读取 ----
     kwargs: dict[str, Any] = {"cwd": cwd, "stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE}
     env = dict(os.environ)
     env.setdefault("PYTHONUNBUFFERED", "1")
@@ -129,13 +141,83 @@ async def _stream_proc(
                 line = raw.decode("utf-8", errors="replace")
             except Exception:  # noqa: BLE001
                 line = raw.decode("latin-1", errors="replace")
-            # 去掉结尾换行但保留 \r（进度条场景）
-            if line.endswith("\n"):
-                line = line[:-1]
+            # 保留结尾 \n，与 pty 模式统一为"原始块"语义，供前端流式解析与历史合并
             await on_line(name, line)
 
     await asyncio.gather(pump(proc.stdout, "stdout"), pump(proc.stderr, "stderr"))
     code = await proc.wait()
+    return code, proc
+
+
+async def _stream_proc_pty(
+    cmd: list[str],
+    cwd: str,
+    on_line: Callable[[str, str], Awaitable[None]],
+    env_extra: Optional[dict] = None,
+    proc_holder: Optional[dict] = None,
+) -> tuple[int, asyncio.subprocess.Process]:
+    """伪终端模式：stdout/stderr 合并到同一个 pty，按原始字节块流式回调。"""
+    import fcntl
+    import pty
+    import struct
+    import termios
+    import threading
+
+    master, slave = pty.openpty()
+    # 设置终端尺寸（宽 120 列，进度条有足够空间）
+    try:
+        fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 30, 120, 0, 0))
+    except Exception:  # noqa: BLE001
+        pass
+
+    env = dict(os.environ)
+    env.setdefault("PYTHONUNBUFFERED", "1")
+    env.setdefault("PYTHONIOENCODING", "utf-8")
+    if env_extra:
+        env.update(env_extra)
+
+    proc = subprocess.Popen(
+        cmd, cwd=cwd, stdin=slave, stdout=slave, stderr=slave,
+        env=env, close_fds=True, preexec_fn=os.setsid,
+    )
+    os.close(slave)
+    if proc_holder is not None:
+        proc_holder["proc"] = proc
+
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue()
+
+    def _reader() -> None:
+        try:
+            while True:
+                try:
+                    data = os.read(master, 8192)
+                except OSError:
+                    break
+                if not data:
+                    break
+                try:
+                    text = data.decode("utf-8", errors="replace")
+                except Exception:  # noqa: BLE001
+                    text = data.decode("latin-1", errors="replace")
+                loop.call_soon_threadsafe(queue.put_nowait, text)
+        finally:
+            loop.call_soon_threadsafe(queue.put_nowait, None)
+
+    t = threading.Thread(target=_reader, daemon=True)
+    t.start()
+
+    while True:
+        text = await queue.get()
+        if text is None:
+            break
+        await on_line("stdout", text)
+
+    code = await asyncio.to_thread(proc.wait)
+    try:
+        os.close(master)
+    except OSError:
+        pass
     return code, proc
 
 
@@ -151,19 +233,19 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
 
     # 1. 创建 venv
     if not venv_py.exists():
-        await on_line("info", f"→ 创建虚拟环境: uv venv --directory {project_dir}")
+        await on_line("info", f"→ 创建虚拟环境: uv venv --directory {project_dir}\n")
         code, _ = await _stream_proc(["uv", "venv", "--directory", str(project_dir)], str(project_dir), on_line)
         if code != 0:
             return {"ok": False, "step": "venv", "message": "uv venv 创建失败（退出码 %s）" % code}
         steps.append("venv")
     else:
-        await on_line("info", "· 虚拟环境已存在，跳过创建")
+        await on_line("info", "· 虚拟环境已存在，跳过创建\n")
 
     # 2. 安装依赖文件（显式 deps_path 优先，否则目录下 requirements.txt / pyproject.toml）
     kind, dep_file = _resolve_deps(deps_path, project_dir)
     if dep_file is not None:
         if kind == "pyproject":
-            await on_line("info", f"→ 安装项目依赖: uv sync --project {project_dir}")
+            await on_line("info", f"→ 安装项目依赖: uv sync --project {project_dir}\n")
             code, _ = await _stream_proc(
                 ["uv", "sync", "--project", str(project_dir), "--python", str(venv_py)],
                 str(project_dir),
@@ -172,7 +254,7 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
             if code != 0:
                 return {"ok": False, "step": "deps", "message": "uv sync 失败（退出码 %s）" % code}
         else:
-            await on_line("info", f"→ 安装依赖: uv pip install -r {dep_file}")
+            await on_line("info", f"→ 安装依赖: uv pip install -r {dep_file}\n")
             code, _ = await _stream_proc(
                 ["uv", "pip", "install", "-r", str(dep_file), "--python", str(venv_py)],
                 str(project_dir),
