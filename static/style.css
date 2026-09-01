@@ -707,6 +707,5 @@ select.f-input { appearance: none; padding-right: 28px;
 .sc-builder-opts .f-input.sc-num, .sc-builder-opts .f-input.sc-time { height: 30px; padding: 0 8px; font-size: 12px; }
 .sc-num { width: 74px; }
 .sc-time { width: 110px; }
-.sc-builder-apply { align-self: flex-start; }
 .sc-wd { user-select: none; }
 .sc-hint { font-size: 10.5px; color: var(--faint); width: 100%; }

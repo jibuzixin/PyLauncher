@@ -714,7 +714,6 @@ select.f-input { appearance: none; padding-right: 28px;
 .sc-builder-opts .f-input.sc-num, .sc-builder-opts .f-input.sc-time { height: 30px; padding: 0 8px; font-size: 12px; }
 .sc-num { width: 74px; }
 .sc-time { width: 110px; }
-.sc-builder-apply { align-self: flex-start; }
 .sc-wd { user-select: none; }
 .sc-hint { font-size: 10.5px; color: var(--faint); width: 100%; }
 
@@ -728,7 +727,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.11</span>
+    <span class="badge">v0.0.12</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -2637,7 +2636,7 @@ async function scheduleModal(sched) {
         </div>
       </div>
       <div class="m-field">
-        <div class="m-label">可视化构建</div>
+        <div class="m-label">可视化构建（修改后自动写入 cron）</div>
         <div class="sc-builder">
           <select class="f-input" id="sc-freq">
             <option value="minute">每 N 分钟</option>
@@ -2647,7 +2646,6 @@ async function scheduleModal(sched) {
             <option value="monthly">每月固定日期</option>
           </select>
           <div class="sc-builder-opts" id="sc-builder-opts"></div>
-          <button class="btn mini primary" id="sc-builder-apply">应用到 cron</button>
         </div>
       </div>
       <div class="m-field">
@@ -2694,15 +2692,22 @@ async function scheduleModal(sched) {
         b.addEventListener("click", () => { cronInp.value = b.dataset.cron; updatePreview(); });
       });
 
-      // 可视化构建器
-      renderBuilderOpts($("#sc-freq", mask).value, mask);
-      $("#sc-freq", mask).addEventListener("change", (e) => renderBuilderOpts(e.target.value, mask));
-      $("#sc-builder-apply", mask).addEventListener("click", () => {
-        const cron = buildCronFromBuilder($("#sc-freq", mask).value, mask);
-        if (!cron) { toast("请至少选择一个星期", true); return; }
-        cronInp.value = cron;
-        updatePreview();
+      // 可视化构建器：打开时按现有 cron 回填；控件变化实时写入 cron 输入框
+      const freqSel = $("#sc-freq", mask);
+      renderBuilderOpts(freqSel.value, mask);
+      parseCronToBuilder(cronInp.value.trim(), mask);
+      const syncBuilder = () => {
+        const c = buildCronFromBuilder(freqSel.value, mask);
+        if (c) { cronInp.value = c; updatePreview(); }
+        else { toast("请至少选择一个星期", true); }
+      };
+      freqSel.addEventListener("change", () => {
+        renderBuilderOpts(freqSel.value, mask);
+        syncBuilder();
       });
+      const builderOpts = $("#sc-builder-opts", mask);
+      builderOpts.addEventListener("input", syncBuilder);
+      builderOpts.addEventListener("change", syncBuilder);
 
       // 参数来源：选预设后填充参数表单
       const presetSel = $("#sc-preset", mask);
@@ -2796,6 +2801,34 @@ function buildCronFromBuilder(freq, mask) {
     return `${m} ${h} ${d} * *`;
   }
   return null;
+}
+
+// 把已有 cron 表达式解析回填到可视化构建器（编辑时让修改立即可见）
+function parseCronToBuilder(cron, mask) {
+  if (!cron) return;
+  const parts = cron.trim().split(/\s+/);
+  if (parts.length !== 5) return;
+  const [mi, ho, dom, mon, dow] = parts;
+  const pad = (n) => String(n).padStart(2, "0");
+  const time = `${pad(ho)}:${pad(mi)}`;
+  const freq = $("#sc-freq", mask);
+  const render = (f) => { freq.value = f; renderBuilderOpts(f, mask); };
+  if (mi.startsWith("*/") && ho === "*" && dom === "*" && mon === "*" && dow === "*") {
+    render("minute"); $("#sc-n", mask).value = mi.slice(2);
+  } else if (ho.startsWith("*/") && dom === "*" && mon === "*" && dow === "*") {
+    render("hour"); $("#sc-nh", mask).value = ho.slice(2); $("#sc-mh", mask).value = mi;
+  } else if (dom === "*" && mon === "*" && dow === "*") {
+    render("daily"); $("#sc-time", mask).value = time;
+  } else if (dom === "*" && mon === "*") {
+    render("weekly"); $("#sc-time", mask).value = time;
+    const days = dow.split(",").map((x) => x.trim());
+    for (let i = 0; i < 7; i++) {
+      const v = i === 6 ? 0 : i + 1;
+      $("#sc-wd" + i, mask).checked = days.includes(String(v));
+    }
+  } else if (mon === "*" && dow === "*") {
+    render("monthly"); $("#sc-md", mask).value = dom; $("#sc-time", mask).value = time;
+  }
 }
 
 $("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
