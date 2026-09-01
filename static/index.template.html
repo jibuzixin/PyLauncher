@@ -14,7 +14,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.6</span>
+    <span class="badge">v0.0.7</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -94,6 +94,10 @@
       <div class="fields" id="fields"></div>
 
       <div class="run-bar">
+        <button class="btn ghost big" id="btn-copy-command" title="复制当前参数对应的 uv run 命令">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>复制命令</span>
+        </button>
         <button class="btn primary big" id="btn-run">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
           <span>执行</span>
@@ -115,8 +119,6 @@
       </div>
       <div class="console-actions">
         <button id="btn-terminate" class="btn mini danger" hidden>终止</button>
-        <button id="btn-copy-cmd" class="btn mini ghost" title="复制本次执行的 uv run 命令" disabled>复制命令</button>
-        <button id="btn-clear-console" class="btn mini ghost">清屏</button>
       </div>
     </div>
     <div class="panel-body">

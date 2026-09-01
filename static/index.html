@@ -100,6 +100,10 @@ svg { flex-shrink: 0; }
 }
 .btn.primary:hover { background: #333; }
 .btn.primary:disabled { opacity: 0.45; cursor: not-allowed; }
+/* 运行中：黄色呼吸灯 */
+.btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; }
+.btn.run-active:hover { background: #f59e0b !important; }
+@keyframes runPulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 .btn.big { height: 38px; padding: 0 20px; font-size: 14px; border-radius: var(--radius-sm); }
 .btn.mini { height: 26px; padding: 0 8px; font-size: 12px; }
 .btn.mini svg { width: 13px; height: 13px; }
@@ -275,6 +279,11 @@ svg { flex-shrink: 0; }
 .preset-chip:hover { background: var(--bg-hover); }
 .preset-chip .x { color: var(--faint); font-size: 11px; }
 .preset-chip .x:hover { color: var(--danger); }
+/* 保存预设弹窗：覆盖目标标签（第一次点击后红色提醒） */
+.preset-overwrite-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.preset-overwrite-chips .preset-chip { cursor: pointer; }
+.preset-overwrite-chips .preset-chip.cover-target { color: var(--danger); border-color: var(--danger); background: #fef2f2; font-weight: 600; }
+.preset-overwrite-tip { margin-top: 8px; font-size: 12px; color: var(--danger); font-weight: 500; }
 
 /* fields */
 .fields-toolbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
@@ -288,7 +297,7 @@ svg { flex-shrink: 0; }
 .field .f-label .f-kind { font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 15px; font-weight: 400; }
 .field .f-label .f-kind.req { color: var(--danger); border-color: var(--danger); background: #fef2f2; }
 .field .f-label .f-type { font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 4px; font-weight: 500; }
-.f-type.str { color: #6e6e6e; background: #f2f2f2; border: 1px solid #ddd; }
+.f-type.str { color: #92400e; background: #fef9c3; border: 1px solid #fde68a; }
 .f-type.int { color: #1d4ed8; background: #eef2ff; border: 1px solid #c7d2fe; }
 .f-type.float { color: #0e7490; background: #ecfeff; border: 1px solid #a5f3fc; }
 .f-type.bool { color: #6d28d9; background: #f5f3ff; border: 1px solid #ddd6fe; }
@@ -669,7 +678,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.6</span>
+    <span class="badge">v0.0.7</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -749,6 +758,10 @@ select.f-input { appearance: none; padding-right: 28px;
       <div class="fields" id="fields"></div>
 
       <div class="run-bar">
+        <button class="btn ghost big" id="btn-copy-command" title="复制当前参数对应的 uv run 命令">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+          <span>复制命令</span>
+        </button>
         <button class="btn primary big" id="btn-run">
           <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
           <span>执行</span>
@@ -770,8 +783,6 @@ select.f-input { appearance: none; padding-right: 28px;
       </div>
       <div class="console-actions">
         <button id="btn-terminate" class="btn mini danger" hidden>终止</button>
-        <button id="btn-copy-cmd" class="btn mini ghost" title="复制本次执行的 uv run 命令" disabled>复制命令</button>
-        <button id="btn-clear-console" class="btn mini ghost">清屏</button>
       </div>
     </div>
     <div class="panel-body">
@@ -821,7 +832,6 @@ const state = {
   script: null,          // 当前脚本详情（含 schema / presets / env）
   activePresetId: null,
   currentExecId: null,
-  currentCmd: "",       // 最近一次执行的 uv run 命令（可复制）
   lineCount: 0,
   ws: null,
   running: false,
@@ -1454,34 +1464,51 @@ function renderPresets(presets) {
 
 async function saveAsPreset() {
   const values = collectValues();
+  const presets = state.script.presets || [];
   openModal({
     title: "保存为预设",
     bodyHTML: `
       <div class="m-field">
-        <div class="m-label">预设名称</div>
-        <input class="f-input" id="preset-name" placeholder="例如：生产环境 / 调试模式" autocomplete="off">
+        <div class="m-label">预设名称（新建）</div>
+        <input class="f-input" id="preset-name" placeholder="输入新名称保存新预设" autocomplete="off">
+      </div>
+      <div class="m-field">
+        <div class="m-label">已有预设 · 点击标签两次覆盖</div>
+        <div class="preset-overwrite-chips" id="preset-overwrite-chips"></div>
+        <div class="preset-overwrite-tip" id="preset-overwrite-tip" hidden></div>
       </div>`,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="preset-save">保存</button>`,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="preset-save">保存为新预设</button>`,
     onMount: (mask) => {
       $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      const chips = $("#preset-overwrite-chips", mask);
+      const tip = $("#preset-overwrite-tip", mask);
+      let pending = null; // 第一次点击待覆盖的预设名
+      for (const p of presets) {
+        const chip = document.createElement("span");
+        chip.className = "preset-chip";
+        chip.textContent = p.name;
+        chip.title = "第一次点击进入覆盖确认，再次点击同一标签完成覆盖";
+        chip.onclick = () => {
+          if (pending === p.name) {
+            // 第二次点击同一标签：覆盖保存
+            api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name: p.name, args: values } })
+              .then(() => { toast(`已覆盖预设「${p.name}」`); closeModal(); reloadDetail(); })
+              .catch((e) => toast("覆盖失败：" + e.message, true));
+            return;
+          }
+          pending = p.name;
+          $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
+          chip.classList.add("cover-target");
+          tip.hidden = false;
+          tip.textContent = `⚠ 再次点击「${p.name}」将覆盖该预设`;
+        };
+        chips.appendChild(chip);
+      }
       $("#preset-save", mask).addEventListener("click", async () => {
         const name = $("#preset-name", mask).value.trim();
         if (!name) return toast("请输入预设名称", true);
-        // 同名预设：二次确认后覆盖
-        const existing = (state.script.presets || []).find((p) => p.name === name);
-        if (existing) {
-          confirmModal({
-            title: "覆盖预设",
-            message: `已存在同名预设「${name}」，确定用当前参数覆盖它吗？`,
-            confirmText: "覆盖",
-            onConfirm: async () => {
-              await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
-              closeModal();
-              toast("预设已覆盖");
-              reloadDetail();
-            },
-          });
-          return;
+        if (presets.some((p) => p.name === name)) {
+          return toast("已存在同名预设，请点击下方标签两次覆盖，或换个名称", true);
         }
         await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
         closeModal();
@@ -1718,15 +1745,74 @@ async function reloadDetail() {
 
 /* ================= 执行 ================= */
 
+function applyRunState() {
+  const btn = $("#btn-run");
+  if (!btn) return;
+  const running = !!state.running;
+  btn.disabled = running;
+  btn.classList.toggle("run-active", running);
+  const span = btn.querySelector("span");
+  if (span) span.textContent = running ? "运行中…" : "执行";
+  $("#btn-terminate").hidden = !running;
+}
+
 function setRunning(running) {
   state.running = running;
-  const btn = $("#btn-run");
-  btn.disabled = running;
-  btn.querySelector("span").textContent = running ? "运行中…" : "执行";
-  $("#btn-terminate").hidden = !running;
   if (!running) {
     state.currentExecId = null;
   }
+  applyRunState();
+}
+
+/* 构建当前表单对应的 uv run 命令（与后端 build_arg_list / _build_command_text 保持一致） */
+function buildArgList(schema, values) {
+  const result = [];
+  const positionals = (schema || []).filter((a) => a.kind === "positional");
+  const optionals = (schema || []).filter((a) => a.kind === "optional");
+  for (const a of positionals) {
+    const v = values[a.dest];
+    if (v === undefined || v === null || v === "") continue;
+    result.push(String(v));
+  }
+  for (const a of optionals) {
+    const flag = a.name;
+    const v = values[a.dest];
+    if (a.is_flag) {
+      const on = v === true || v === "true" || v === 1 || v === "1" || v === "on";
+      if (a.action === "store_true" && on) result.push(flag);
+      else if (a.action === "store_false" && !on) result.push(flag);
+      continue;
+    }
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      if (!v.length) continue;
+      if (a.action === "append") { for (const it of v) result.push(flag, String(it)); }
+      else { result.push(flag); for (const it of v) result.push(String(it)); }
+      continue;
+    }
+    const s = String(v);
+    if (s === "") { if (a.required) result.push(flag, ""); continue; }
+    result.push(flag, s);
+  }
+  return result;
+}
+
+function shq(s) {
+  s = String(s);
+  if (s && /^[A-Za-z0-9_\-./@:=+%]+$/.test(s)) return s;
+  return "'" + s.replace(/'/g, "'\\''") + "'";
+}
+
+function buildCommandText() {
+  const s = state.script;
+  if (!s || !s.path) return "";
+  const argList = buildArgList(s.args_schema || [], collectValues());
+  const idx = s.path.lastIndexOf("/");
+  const dir = idx >= 0 ? s.path.slice(0, idx) : s.path;
+  const file = idx >= 0 ? s.path.slice(idx + 1) : s.path;
+  const parts = ["uv", "run", "--project", shq(dir), "python", shq(file)];
+  for (const a of argList) parts.push(shq(a));
+  return parts.join(" ");
 }
 
 async function run() {
@@ -1753,9 +1839,6 @@ async function run() {
       body: { script_id: state.script.id, args: values, preset_id: state.activePresetId },
     });
     state.currentExecId = res.execution_id;
-    state.currentCmd = res.command || "";
-    const copyBtn = $("#btn-copy-cmd");
-    if (copyBtn) copyBtn.disabled = !state.currentCmd;
     connectWs(`/ws/run/${res.execution_id}`, {});
   } catch (e) {
     setRunning(false);
@@ -1950,10 +2033,11 @@ $("#btn-terminate").addEventListener("click", async () => {
 
 /* ================= 控制台工具 ================= */
 
-$("#btn-clear-console").addEventListener("click", clearConsole);
-$("#btn-copy-cmd").addEventListener("click", async () => {
-  if (!state.currentCmd) return toast("请先执行一次脚本", true);
-  if (await copyText(state.currentCmd)) toast("已复制执行命令");
+$("#btn-copy-command").addEventListener("click", async () => {
+  if (!state.script) return toast("请先选择一个脚本", true);
+  const cmd = buildCommandText();
+  if (!cmd) return toast("当前无脚本可复制", true);
+  if (await copyText(cmd)) toast("已复制 uv run 命令");
 });
 $("#opt-mono").addEventListener("change", (e) => {
   $("#console").classList.toggle("mono", e.target.checked);
@@ -2198,6 +2282,7 @@ function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
+  applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
 }
 document.addEventListener("click", (e) => {
   const t = e.target.closest(".tab");
