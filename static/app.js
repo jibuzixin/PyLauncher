@@ -1456,14 +1456,14 @@ async function rerunExecution(rec) {
 
 /* ================= 定时任务 ================= */
 
-async function renderSchedules() {
+async function renderSchedules(silent) {
   const wrap = $("#schedule-list");
   if (!wrap) return;
   let list;
   try {
     list = await api("/api/schedules");
   } catch (e) {
-    wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
+    if (!silent) wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
     return;
   }
   if (!list.length) {
@@ -1927,7 +1927,16 @@ function switchTab(name) {
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
   $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
-  if (name === "schedules") renderSchedules();
+  if (name === "schedules") {
+    renderSchedules();
+    // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
+    if (!window._schedRefreshTimer) {
+      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 5000);
+    }
+  } else if (window._schedRefreshTimer) {
+    clearInterval(window._schedRefreshTimer);
+    window._schedRefreshTimer = null;
+  }
   applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
 }
 document.addEventListener("click", (e) => {

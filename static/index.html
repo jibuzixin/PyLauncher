@@ -728,7 +728,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.10</span>
+    <span class="badge">v0.0.11</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -2336,14 +2336,14 @@ async function rerunExecution(rec) {
 
 /* ================= 定时任务 ================= */
 
-async function renderSchedules() {
+async function renderSchedules(silent) {
   const wrap = $("#schedule-list");
   if (!wrap) return;
   let list;
   try {
     list = await api("/api/schedules");
   } catch (e) {
-    wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
+    if (!silent) wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
     return;
   }
   if (!list.length) {
@@ -2807,7 +2807,16 @@ function switchTab(name) {
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
   $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
-  if (name === "schedules") renderSchedules();
+  if (name === "schedules") {
+    renderSchedules();
+    // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
+    if (!window._schedRefreshTimer) {
+      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 5000);
+    }
+  } else if (window._schedRefreshTimer) {
+    clearInterval(window._schedRefreshTimer);
+    window._schedRefreshTimer = null;
+  }
   applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
 }
 document.addEventListener("click", (e) => {

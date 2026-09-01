@@ -149,6 +149,7 @@ async def _run_in_session(session_id: int, coro: Callable[[Callable], Any]) -> N
     sess["done"] = True
     async with sess["cond"]:
         sess["cond"].notify_all()
+    return result
 
 
 def _new_session(session_id: int) -> None:
