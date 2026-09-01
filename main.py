@@ -320,6 +320,20 @@ def _cron_next(expr: str, base: datetime) -> datetime:
     return croniter(expr, base).get_next(datetime)
 
 
+def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
+    """cron 或启停变化后：清空旧计划，并按新 cron 立即重算 next_run。
+
+    这样前端保存/创建后无需等调度器 tick（最长 10 秒）即可拿到正确的下次执行时间。
+    """
+    db.set_schedule_runtime(schedule_id, clear_next_run=True, last_status=None)
+    if enabled:
+        try:
+            nr = _cron_next(cron, datetime.now().astimezone())
+            db.set_schedule_runtime(schedule_id, next_run=_iso(nr))
+        except Exception as e:  # noqa: BLE001
+            db.set_schedule_runtime(schedule_id, last_status=f"cron 无效: {e}")
+
+
 async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str]) -> None:
     """定时触发的一次执行：走标准 session 流程并落库，结束后回写 last_status。"""
     async def coro(emit: Callable) -> dict:
@@ -436,6 +450,8 @@ async def create_schedule(req: ScheduleReq):
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
     s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled)
+    _refresh_schedule_plan(s["id"], cron, bool(req.enabled))
+    s = db.get_schedule(s["id"])
     return {"ok": True, "schedule": s}
 
 
@@ -452,9 +468,11 @@ async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
     s = db.update_schedule(
         schedule_id, name=req.name, cron=req.cron, args=req.args, enabled=req.enabled
     )
-    # 表达式或启停变化后，下次执行时间由调度器重新计算
+    # 表达式或启停变化后：清空旧计划并立即重算 next_run，前端保存后即刻看到新时间
     if req.cron is not None or req.enabled is not None:
-        db.set_schedule_runtime(schedule_id, next_run=None)
+        cur_cron = req.cron if req.cron is not None else s.get("cron")
+        _refresh_schedule_plan(schedule_id, cur_cron, bool(s.get("enabled", 0)))
+        s = db.get_schedule(schedule_id)
     return {"ok": True, "schedule": s}
 
 

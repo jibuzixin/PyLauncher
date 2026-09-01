@@ -354,8 +354,11 @@ def set_schedule_runtime(
     next_run: Optional[str] = None,
     last_run: Optional[str] = None,
     last_status: Optional[str] = None,
+    clear_next_run: bool = False,
 ) -> None:
     sets, vals = [], []
+    if clear_next_run:
+        sets.append("next_run=NULL")
     if next_run is not None:
         sets.append("next_run=?"); vals.append(next_run)
     if last_run is not None:

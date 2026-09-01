@@ -1474,36 +1474,87 @@ async function renderSchedules() {
   for (const s of list) {
     const row = document.createElement("div");
     row.className = "schedule-item";
+
+    // 头部：名称 + 状态徽章 + 启用开关
     const head = document.createElement("div");
     head.className = "si-head";
     const name = document.createElement("span");
     name.className = "si-name";
     name.textContent = s.name;
+    const headRight = document.createElement("div");
+    headRight.className = "si-head-right";
     const status = document.createElement("span");
     status.className = "si-status " + (s.enabled ? "on" : "off");
     status.textContent = s.enabled ? "已启用" : "已停用";
-    head.append(name, status);
+    const sw = document.createElement("label");
+    sw.className = "switch";
+    sw.title = "启用 / 停用";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!s.enabled;
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    cb.addEventListener("change", async () => {
+      try {
+        await api(`/api/schedules/${s.id}`, { method: "PUT", body: { enabled: cb.checked } });
+        toast(cb.checked ? "已启用" : "已停用");
+        renderSchedules();
+      } catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
+    });
+    sw.append(cb, slider);
+    headRight.append(status, sw);
+    head.append(name, headRight);
 
-    const body = document.createElement("div");
-    body.className = "si-body";
-    const scriptNm = document.createElement("span");
-    scriptNm.className = "si-script";
-    scriptNm.textContent = (s.script_name || "脚本已删除") + (s.script_id ? "" : "（已删除）");
-    const cron = document.createElement("span");
-    cron.className = "si-cron mono";
+    // cron 表达式 + 下次执行
+    const cronRow = document.createElement("div");
+    cronRow.className = "si-cron-row";
+    const cron = document.createElement("code");
+    cron.className = "si-cron";
     cron.textContent = s.cron;
-    const next = document.createElement("span");
+    const next = document.createElement("div");
     next.className = "si-next";
-    next.textContent = s.next_run ? "下次 " + fmtTime(s.next_run) : "待计算";
-    const last = document.createElement("span");
-    last.className = "si-last";
-    last.textContent = s.last_run ? "上次 " + fmtTime(s.last_run) + (s.last_status ? " · " + s.last_status : "") : "尚未执行";
-    body.append(scriptNm, cron, next, last);
+    const nextLabel = document.createElement("span");
+    nextLabel.className = "si-next-label";
+    nextLabel.textContent = "下次执行";
+    const nextTime = document.createElement("span");
+    nextTime.className = "si-next-time";
+    if (s.enabled && s.next_run) {
+      nextTime.textContent = fmtTime(s.next_run);
+      const rel = document.createElement("span");
+      rel.className = "si-next-rel";
+      rel.textContent = relTime(s.next_run);
+      next.append(nextLabel, nextTime, rel);
+    } else {
+      nextTime.textContent = s.enabled ? "待计算" : "已停用，无计划";
+      next.append(nextLabel, nextTime);
+    }
+    cronRow.append(cron, next);
 
+    // 元信息：脚本 + 上次执行
+    const meta = document.createElement("div");
+    meta.className = "si-meta";
+    const scriptNm = document.createElement("span");
+    scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
+    const last = document.createElement("span");
+    last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
+    if (s.last_status) {
+      const st = document.createElement("span");
+      const ls = s.last_status.toLowerCase();
+      let cls = "info";
+      if (ls.includes("running")) cls = "run";
+      else if (ls.includes("success") || ls.includes("完成")) cls = "succ";
+      else if (ls.includes("fail") || ls.includes("error") || ls.includes("terminated") || ls.includes("无效") || ls.includes("不存在")) cls = "fail";
+      st.className = "si-last-status " + cls;
+      st.textContent = " · " + s.last_status;
+      last.appendChild(st);
+    }
+    meta.append(scriptNm, last);
+
+    // 操作按钮
     const ops = document.createElement("div");
     ops.className = "si-ops";
     const runBtn = document.createElement("button");
-    runBtn.className = "btn mini ghost";
+    runBtn.className = "btn mini primary";
     runBtn.textContent = "立即运行";
     runBtn.onclick = async () => {
       try {
@@ -1529,26 +1580,23 @@ async function renderSchedules() {
         renderSchedules();
       },
     });
-    const sw = document.createElement("label");
-    sw.className = "switch";
-    sw.title = "启用 / 停用";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = !!s.enabled;
-    const slider = document.createElement("span");
-    slider.className = "slider";
-    cb.addEventListener("change", async () => {
-      try {
-        await api(`/api/schedules/${s.id}`, { method: "PUT", body: { enabled: cb.checked } });
-        toast(cb.checked ? "已启用" : "已停用");
-        renderSchedules();
-      } catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
-    });
-    sw.append(cb, slider);
-    ops.append(runBtn, editBtn, delBtn, sw);
-    row.append(head, body, ops);
+    ops.append(runBtn, editBtn, delBtn);
+    row.append(head, cronRow, meta, ops);
     wrap.appendChild(row);
   }
+}
+
+// 下次执行的相对倒计时文案
+function relTime(iso) {
+  const diff = new Date(iso).getTime() - Date.now();
+  if (diff <= 0) return "即将执行";
+  const min = Math.floor(diff / 60000);
+  if (min < 1) return "即将执行";
+  if (min < 60) return `约 ${min} 分钟后`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `约 ${h} 小时后`;
+  const d = Math.floor(h / 24);
+  return `约 ${d} 天后`;
 }
 
 function fmtTime(iso) {
