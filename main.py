@@ -11,9 +11,12 @@ import subprocess
 import sys
 import time
 import webbrowser
+from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
 
+from croniter import croniter
 from fastapi import FastAPI, File, Form, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -26,7 +29,18 @@ import scanner
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
-app = FastAPI(title="Tool Launcher", docs_url=None, redoc_url=None)
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    # 定时任务调度循环（服务生命周期内常驻）
+    task = asyncio.create_task(_schedule_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+
+
+app = FastAPI(title="Tool Launcher", docs_url=None, redoc_url=None, lifespan=_lifespan)
 
 # ---------------- 数据模型 ----------------
 
@@ -81,6 +95,25 @@ class ClearReq(BaseModel):
 
 class OpenDirReq(BaseModel):
     path: str
+
+
+class ScheduleReq(BaseModel):
+    script_id: int
+    name: str
+    cron: str
+    args: dict = {}
+    enabled: bool = True
+
+
+class ScheduleUpdateReq(BaseModel):
+    name: Optional[str] = None
+    cron: Optional[str] = None
+    args: Optional[dict] = None
+    enabled: Optional[bool] = None
+
+
+class CronPreviewReq(BaseModel):
+    cron: str
 
 
 class MetaReq(BaseModel):
@@ -268,6 +301,83 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
     return result
 
 
+# ---------------- 定时任务调度 ----------------
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="seconds")
+
+
+def _parse_iso(s: Optional[str]) -> Optional[datetime]:
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(s)
+    except (ValueError, TypeError):
+        return None
+
+
+def _cron_next(expr: str, base: datetime) -> datetime:
+    return croniter(expr, base).get_next(datetime)
+
+
+async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str]) -> None:
+    """定时触发的一次执行：走标准 session 流程并落库，结束后回写 last_status。"""
+    async def coro(emit: Callable) -> dict:
+        return await _execute_task(exec_id, script_path, arg_list, emit)
+    result = await _run_in_session(exec_id, coro)
+    db.set_schedule_runtime(sched["id"], last_status=result.get("status", "unknown"))
+
+
+async def _fire_schedule(sched: dict, base: datetime) -> None:
+    """到点触发一次定时任务：创建执行记录 + 后台执行 + 更新 next_run/last_run。"""
+    now = datetime.now().astimezone()
+    try:
+        nr = _cron_next(sched["cron"], base)
+    except Exception:  # noqa: BLE001
+        nr = _cron_next("0 0 1 1 *", base)  # 表达式异常时退化为一年一次，避免空转
+    rec = db.get_script(sched["script_id"])
+    if not rec:
+        db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="脚本不存在")
+        return
+    schema = json.loads(rec.get("args_schema") or "[]")
+    args = json.loads(sched.get("args") or "{}")
+    arg_list = build_arg_list(schema, args)
+    exec_row = db.add_execution(rec["id"], args, None)
+    exec_id = exec_row["id"]
+    _new_session(exec_id)
+    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list))
+    db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
+
+
+async def _tick_schedules() -> None:
+    now = datetime.now().astimezone()
+    for sched in db.list_schedules(only_enabled=True):
+        try:
+            next_run = _parse_iso(sched.get("next_run"))
+            if next_run is None:
+                # 首次启用 / 表达式变更：计算下次执行时间
+                try:
+                    nr = _cron_next(sched["cron"], now)
+                    db.set_schedule_runtime(sched["id"], next_run=_iso(nr))
+                except Exception as e:  # noqa: BLE001
+                    db.set_schedule_runtime(sched["id"], last_status=f"cron 无效: {e}")
+                continue
+            if now >= next_run:
+                await _fire_schedule(sched, next_run)
+        except Exception as e:  # noqa: BLE001
+            print(f"[schedule {sched['id']}] tick 失败: {e}", file=sys.stderr)
+
+
+async def _schedule_loop() -> None:
+    """调度主循环：每 10 秒检查一次 cron 到点。"""
+    while True:
+        try:
+            await _tick_schedules()
+        except Exception as e:  # noqa: BLE001
+            print(f"[scheduler] 循环异常: {e}", file=sys.stderr)
+        await asyncio.sleep(10)
+
+
 # ---------------- REST API ----------------
 
 @app.get("/api/export")
@@ -306,6 +416,73 @@ async def get_meta():
 async def set_meta(req: MetaReq):
     db.meta_set(req.key, req.value)
     return {"ok": True}
+
+
+# ---------- schedules（定时任务） ----------
+
+@app.get("/api/schedules")
+async def list_schedules_api():
+    return db.list_schedules()
+
+
+@app.post("/api/schedules")
+async def create_schedule(req: ScheduleReq):
+    name = req.name.strip()
+    cron = req.cron.strip()
+    if not name or not cron:
+        return JSONResponse({"ok": False, "error": "名称与 cron 表达式不能为空"}, status_code=400)
+    try:
+        _cron_next(cron, datetime.now().astimezone())
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
+    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled)
+    return {"ok": True, "schedule": s}
+
+
+@app.put("/api/schedules/{schedule_id}")
+async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
+    if req.cron is not None:
+        try:
+            _cron_next(req.cron.strip(), datetime.now().astimezone())
+        except Exception as e:  # noqa: BLE001
+            return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
+        req.cron = req.cron.strip()
+    if req.name is not None:
+        req.name = req.name.strip()
+    s = db.update_schedule(
+        schedule_id, name=req.name, cron=req.cron, args=req.args, enabled=req.enabled
+    )
+    # 表达式或启停变化后，下次执行时间由调度器重新计算
+    if req.cron is not None or req.enabled is not None:
+        db.set_schedule_runtime(schedule_id, next_run=None)
+    return {"ok": True, "schedule": s}
+
+
+@app.post("/api/schedules/{schedule_id}/run")
+async def run_schedule_now(schedule_id: int):
+    """手动立即触发一次定时任务（不改变 cron 计划）。"""
+    sched = db.get_schedule(schedule_id)
+    if not sched:
+        return JSONResponse({"ok": False, "error": "定时任务不存在"}, status_code=404)
+    base = datetime.now().astimezone()
+    await _fire_schedule(sched, base)
+    return {"ok": True}
+
+
+@app.delete("/api/schedules/{schedule_id}")
+async def delete_schedule_api(schedule_id: int):
+    db.delete_schedule(schedule_id)
+    return {"ok": True}
+
+
+@app.post("/api/schedules/preview")
+async def preview_cron(req: CronPreviewReq):
+    """根据 cron 表达式计算下次执行时间（前端实时预览用）。"""
+    try:
+        nr = _cron_next(req.cron.strip(), datetime.now().astimezone())
+        return {"ok": True, "next": _iso(nr)}
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
 
 
 # ---------- scripts ----------

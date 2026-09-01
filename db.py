@@ -67,6 +67,21 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
+CREATE TABLE IF NOT EXISTS schedules (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    cron TEXT NOT NULL,
+    args TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    next_run TEXT,
+    last_run TEXT,
+    last_status TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
+
 CREATE INDEX IF NOT EXISTS idx_scripts_path ON scripts(path);
 CREATE INDEX IF NOT EXISTS idx_exec_script ON executions(script_id);
 CREATE INDEX IF NOT EXISTS idx_exec_status ON executions(status);
@@ -272,6 +287,86 @@ def delete_preset(preset_id: int) -> bool:
     with _lock, _conn() as conn:
         cur = conn.execute("DELETE FROM presets WHERE id=?", (preset_id,))
         return cur.rowcount > 0
+
+
+# ---------- schedules（定时任务） ----------
+
+def list_schedules(only_enabled: bool = False) -> list[dict]:
+    sql = (
+        "SELECT s.*, sc.name AS script_name FROM schedules s "
+        "LEFT JOIN scripts sc ON s.script_id=sc.id"
+    )
+    if only_enabled:
+        sql += " WHERE s.enabled=1"
+    sql += " ORDER BY s.id DESC"
+    with _conn() as conn:
+        return [dict(r) for r in conn.execute(sql).fetchall()]
+
+
+def get_schedule(schedule_id: int) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM schedules WHERE id=?", (schedule_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True) -> dict:
+    now = now_iso()
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO schedules(script_id, name, cron, args, enabled, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (script_id, name, cron, _dumps(args), 1 if enabled else 0, now, now),
+        )
+        return dict(conn.execute("SELECT * FROM schedules WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def update_schedule(
+    schedule_id: int,
+    name: Optional[str] = None,
+    cron: Optional[str] = None,
+    args: Optional[dict] = None,
+    enabled: Optional[bool] = None,
+) -> dict:
+    fields, vals = [], []
+    if name is not None:
+        fields.append("name=?"); vals.append(name)
+    if cron is not None:
+        fields.append("cron=?"); vals.append(cron)
+    if args is not None:
+        fields.append("args=?"); vals.append(_dumps(args))
+    if enabled is not None:
+        fields.append("enabled=?"); vals.append(1 if enabled else 0)
+    fields.append("updated_at=?"); vals.append(now_iso())
+    vals.append(schedule_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE schedules SET {', '.join(fields)} WHERE id=?", vals)
+        return dict(conn.execute("SELECT * FROM schedules WHERE id=?", (schedule_id,)).fetchone())
+
+
+def delete_schedule(schedule_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM schedules WHERE id=?", (schedule_id,))
+        return cur.rowcount > 0
+
+
+def set_schedule_runtime(
+    schedule_id: int,
+    next_run: Optional[str] = None,
+    last_run: Optional[str] = None,
+    last_status: Optional[str] = None,
+) -> None:
+    sets, vals = [], []
+    if next_run is not None:
+        sets.append("next_run=?"); vals.append(next_run)
+    if last_run is not None:
+        sets.append("last_run=?"); vals.append(last_run)
+    if last_status is not None:
+        sets.append("last_status=?"); vals.append(last_status)
+    if not sets:
+        return
+    vals.append(schedule_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE schedules SET {', '.join(sets)} WHERE id=?", vals)
 
 
 # ---------- executions ----------

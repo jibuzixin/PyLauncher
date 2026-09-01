@@ -14,7 +14,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.7</span>
+    <span class="badge">v0.0.8</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -111,6 +111,7 @@
     <div class="panel-tabs">
       <button class="tab" data-tab="console">控制台</button>
       <button class="tab active" data-tab="history">执行记录</button>
+      <button class="tab" data-tab="schedules">定时任务</button>
     </div>
     <div class="panel-toolbar">
       <div class="console-opts">
@@ -134,6 +135,13 @@
         </div>
         <div class="history-list" id="history-list"></div>
         <div class="history-detail" id="history-detail" hidden></div>
+      </div>
+      <div class="schedule-wrap" id="schedule-wrap" style="display:none">
+        <div class="schedule-toolbar">
+          <button class="btn mini primary" id="btn-new-schedule">+ 新建定时任务</button>
+          <span class="schedule-hint">cron 表达式：分 时 日 月 周（如 <code>*/10 * * * *</code> 每 10 分钟）</span>
+        </div>
+        <div class="schedule-list" id="schedule-list"></div>
       </div>
     </div>
     <div class="copy-float" id="copy-float" hidden></div>

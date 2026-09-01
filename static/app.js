@@ -1454,12 +1454,315 @@ async function rerunExecution(rec) {
   toast("已载入该次执行参数，确认后点击「执行」即可重跑");
 }
 
+/* ================= 定时任务 ================= */
+
+async function renderSchedules() {
+  const wrap = $("#schedule-list");
+  if (!wrap) return;
+  let list;
+  try {
+    list = await api("/api/schedules");
+  } catch (e) {
+    wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
+    return;
+  }
+  if (!list.length) {
+    wrap.innerHTML = `<div class="schedule-empty">还没有定时任务，点击右上角「新建定时任务」添加</div>`;
+    return;
+  }
+  wrap.innerHTML = "";
+  for (const s of list) {
+    const row = document.createElement("div");
+    row.className = "schedule-item";
+    const head = document.createElement("div");
+    head.className = "si-head";
+    const name = document.createElement("span");
+    name.className = "si-name";
+    name.textContent = s.name;
+    const status = document.createElement("span");
+    status.className = "si-status " + (s.enabled ? "on" : "off");
+    status.textContent = s.enabled ? "已启用" : "已停用";
+    head.append(name, status);
+
+    const body = document.createElement("div");
+    body.className = "si-body";
+    const scriptNm = document.createElement("span");
+    scriptNm.className = "si-script";
+    scriptNm.textContent = (s.script_name || "脚本已删除") + (s.script_id ? "" : "（已删除）");
+    const cron = document.createElement("span");
+    cron.className = "si-cron mono";
+    cron.textContent = s.cron;
+    const next = document.createElement("span");
+    next.className = "si-next";
+    next.textContent = s.next_run ? "下次 " + fmtTime(s.next_run) : "待计算";
+    const last = document.createElement("span");
+    last.className = "si-last";
+    last.textContent = s.last_run ? "上次 " + fmtTime(s.last_run) + (s.last_status ? " · " + s.last_status : "") : "尚未执行";
+    body.append(scriptNm, cron, next, last);
+
+    const ops = document.createElement("div");
+    ops.className = "si-ops";
+    const runBtn = document.createElement("button");
+    runBtn.className = "btn mini ghost";
+    runBtn.textContent = "立即运行";
+    runBtn.onclick = async () => {
+      try {
+        await api(`/api/schedules/${s.id}/run`, { method: "POST" });
+        toast("已触发「" + s.name + "」");
+        renderSchedules();
+      } catch (e) { toast(e.message, true); }
+    };
+    const editBtn = document.createElement("button");
+    editBtn.className = "btn mini ghost";
+    editBtn.textContent = "编辑";
+    editBtn.onclick = () => scheduleModal(s);
+    const delBtn = document.createElement("button");
+    delBtn.className = "btn mini danger";
+    delBtn.textContent = "删除";
+    delBtn.onclick = () => confirmModal({
+      title: "删除定时任务",
+      message: `确定删除定时任务「${s.name}」吗？`,
+      confirmText: "删除",
+      onConfirm: async () => {
+        await api(`/api/schedules/${s.id}`, { method: "DELETE" });
+        toast("已删除");
+        renderSchedules();
+      },
+    });
+    const sw = document.createElement("label");
+    sw.className = "switch";
+    sw.title = "启用 / 停用";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = !!s.enabled;
+    const slider = document.createElement("span");
+    slider.className = "slider";
+    cb.addEventListener("change", async () => {
+      try {
+        await api(`/api/schedules/${s.id}`, { method: "PUT", body: { enabled: cb.checked } });
+        toast(cb.checked ? "已启用" : "已停用");
+        renderSchedules();
+      } catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
+    });
+    sw.append(cb, slider);
+    ops.append(runBtn, editBtn, delBtn, sw);
+    row.append(head, body, ops);
+    wrap.appendChild(row);
+  }
+}
+
+function fmtTime(iso) {
+  try {
+    const d = new Date(iso);
+    const p = (n) => String(n).padStart(2, "0");
+    return `${d.getMonth() + 1}-${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  } catch { return iso; }
+}
+
+function renderSchedFields(container, schema, saved) {
+  container.innerHTML = "";
+  if (!schema || !schema.length) {
+    container.innerHTML = `<div class="form-empty" style="height:auto;padding:12px">该脚本没有定义命令行参数</div>`;
+    return;
+  }
+  for (const a of schema) {
+    const field = document.createElement("div");
+    field.className = "field" + (a.is_flag ? " field-switch" : "");
+    field.dataset.dest = a.dest;
+    const label = document.createElement("div");
+    label.className = "f-label";
+    const nm = document.createElement("span");
+    nm.textContent = a.dest;
+    const kind = document.createElement("span");
+    kind.className = "f-kind" + (a.required ? " req" : "");
+    kind.textContent = a.required ? "必填" : "可选";
+    const tl = typeLabelOf(a);
+    label.append(nm, kind);
+    if (tl) {
+      const t = document.createElement("span");
+      t.className = "f-type " + tl.cls;
+      t.textContent = tl.text;
+      label.appendChild(t);
+    }
+    field.appendChild(label);
+    const savedVal = saved ? saved[a.dest] : undefined;
+    const defVal = a.default;
+    const value = savedVal !== undefined && savedVal !== null ? savedVal : defVal;
+    let input;
+    if (a.is_flag) {
+      const ctrl = document.createElement("div");
+      ctrl.className = "f-control";
+      const sw = document.createElement("label");
+      sw.className = "switch";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = !!value;
+      const slider = document.createElement("span");
+      slider.className = "slider";
+      sw.append(cb, slider);
+      const val = document.createElement("span");
+      val.className = "sw-val";
+      val.textContent = cb.checked ? "开启" : "关闭";
+      cb.addEventListener("change", () => { val.textContent = cb.checked ? "开启" : "关闭"; });
+      ctrl.append(sw, val);
+      field.appendChild(ctrl);
+      input = cb;
+    } else if (a.choices && a.choices.length) {
+      input = document.createElement("select");
+      input.className = "f-input";
+      const empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = a.required ? "请选择…" : "（不传）";
+      input.appendChild(empty);
+      for (const c of a.choices) {
+        const opt = document.createElement("option");
+        opt.value = String(c);
+        opt.textContent = String(c);
+        input.appendChild(opt);
+      }
+      input.value = value !== undefined && value !== null ? String(value) : "";
+      field.appendChild(input);
+    } else {
+      input = document.createElement("input");
+      input.className = "f-input mono";
+      if (a.type === "int" || a.type === "float") {
+        input.type = "number";
+        if (a.type === "int") input.step = "1";
+      } else {
+        input.type = "text";
+      }
+      if (a.nargs || a.action === "append") input.placeholder = "多个值用英文逗号分隔";
+      if (value !== undefined && value !== null) input.value = Array.isArray(value) ? value.join(",") : String(value);
+      field.appendChild(input);
+    }
+    container.appendChild(field);
+  }
+}
+
+function collectSchedFields(container, schema) {
+  const values = {};
+  for (const a of (schema || [])) {
+    const field = container.querySelector(`[data-dest="${CSS.escape(a.dest)}"]`);
+    if (!field) continue;
+    const el = field.querySelector("input,select");
+    if (!el) continue;
+    if (a.is_flag) {
+      values[a.dest] = el.checked;
+      continue;
+    }
+    let raw = el.value;
+    if (raw === "" && !a.required) continue; // 空值且非必填不传
+    if (a.nargs || a.action === "append") {
+      const items = raw.split(",").map((s) => s.trim()).filter(Boolean);
+      if (!items.length && a.required) { values[a.dest] = []; continue; }
+      if (items.length) values[a.dest] = a.type === "int" ? items.map(Number) : a.type === "float" ? items.map(Number) : items;
+      continue;
+    }
+    if (a.type === "int") values[a.dest] = raw === "" ? null : parseInt(raw, 10);
+    else if (a.type === "float") values[a.dest] = raw === "" ? null : parseFloat(raw);
+    else values[a.dest] = raw;
+  }
+  return values;
+}
+
+async function scheduleModal(sched) {
+  const scripts = await api("/api/scripts").catch(() => []);
+  const editing = !!sched;
+  const selId = sched ? sched.script_id : (state.script ? state.script.id : (scripts[0] && scripts[0].id));
+  let schema = [];
+  let savedArgs = sched ? (typeof sched.args === "string" ? JSON.parse(sched.args || "{}") : (sched.args || {})) : {};
+  if (selId) {
+    const rec = await api(`/api/scripts/${selId}`).catch(() => null);
+    if (rec) schema = rec.args_schema || [];
+  }
+  openModal({
+    title: editing ? "编辑定时任务" : "新建定时任务",
+    bodyHTML: `
+      <div class="m-field">
+        <div class="m-label">任务名称</div>
+        <input class="f-input" id="sc-name" placeholder="例如：每日备份 / 每 10 分钟巡检" value="${escapeHtml(sched ? sched.name : "")}" autocomplete="off">
+      </div>
+      <div class="m-field">
+        <div class="m-label">执行脚本</div>
+        <select class="f-input" id="sc-script">
+          ${scripts.map((s) => `<option value="${s.id}" ${s.id === selId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="m-field">
+        <div class="m-label">cron 表达式</div>
+        <input class="f-input mono" id="sc-cron" placeholder="分 时 日 月 周，如 */10 * * * *" value="${escapeHtml(sched ? sched.cron : "")}" autocomplete="off">
+        <div class="sc-preview" id="sc-preview">输入 cron 后自动显示下次执行时间</div>
+      </div>
+      <div class="m-field">
+        <div class="m-label">参数</div>
+        <div class="sc-fields" id="sc-fields"></div>
+      </div>
+      <div class="m-field">
+        <label class="chk"><input type="checkbox" id="sc-enabled" ${!sched || sched.enabled ? "checked" : ""}> 启用该定时任务</label>
+      </div>`,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="sc-save">${editing ? "保存修改" : "创建"}</button>`,
+    onMount: async (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      renderSchedFields($("#sc-fields", mask), schema, savedArgs);
+      const cronInp = $("#sc-cron", mask);
+      const preview = $("#sc-preview", mask);
+      let previewTimer = null;
+      const updatePreview = async () => {
+        const cron = cronInp.value.trim();
+        if (!cron) { preview.textContent = "输入 cron 后自动显示下次执行时间"; return; }
+        try {
+          const r = await api("/api/schedules/preview", { method: "POST", body: { cron } });
+          preview.textContent = "下次执行：" + fmtTime(r.next);
+          preview.className = "sc-preview ok";
+        } catch (e) {
+          preview.textContent = e.message;
+          preview.className = "sc-preview err";
+        }
+      };
+      cronInp.addEventListener("input", () => {
+        clearTimeout(previewTimer);
+        previewTimer = setTimeout(updatePreview, 400);
+      });
+      const scriptSel = $("#sc-script", mask);
+      scriptSel.addEventListener("change", async () => {
+        const sid = parseInt(scriptSel.value, 10);
+        const rec = await api(`/api/scripts/${sid}`).catch(() => null);
+        schema = rec ? (rec.args_schema || []) : [];
+        renderSchedFields($("#sc-fields", mask), schema, {});
+      });
+      if (cronInp.value.trim()) updatePreview();
+      $("#sc-save", mask).addEventListener("click", async () => {
+        const name = $("#sc-name", mask).value.trim();
+        const cron = cronInp.value.trim();
+        const enabled = $("#sc-enabled", mask).checked;
+        if (!name) return toast("请输入任务名称", true);
+        if (!cron) return toast("请输入 cron 表达式", true);
+        const args = collectSchedFields($("#sc-fields", mask), schema);
+        const body = { name, cron, enabled, args };
+        if (editing) {
+          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args } });
+          toast("已保存修改");
+        } else {
+          await api("/api/schedules", { method: "POST", body: { ...body, script_id: parseInt(scriptSel.value, 10) } });
+          toast("定时任务已创建");
+        }
+        closeModal();
+        renderSchedules();
+      });
+    },
+  });
+}
+
+$("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
+
 /* ================= Tab ================= */
 
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
+  $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
+  if (name === "schedules") renderSchedules();
   applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
 }
 document.addEventListener("click", (e) => {
