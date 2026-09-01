@@ -483,7 +483,11 @@ function renderEnvBar(env) {
   }
 
   const venvSpan = document.createElement("span");
-  if (env.has_venv) {
+  if (env.has_inline_meta) {
+    const depsN = (env.inline_deps || []).length;
+    venvSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">PEP 723 内联脚本${depsN ? " · 内联依赖 " + depsN + " 个" : ""}</span>`;
+    venvSpan.title = "uv 自动创建临时环境并安装内联依赖，无需初始化";
+  } else if (env.has_venv) {
     venvSpan.innerHTML = '<span class="dot ok"></span><span class="env-text ok">venv 已就绪</span>';
   } else {
     venvSpan.innerHTML = '<span class="dot warn"></span><span class="env-text warn">未初始化虚拟环境</span>';
@@ -521,6 +525,7 @@ function renderEnvBar(env) {
   depInstall.textContent = "安装依赖";
   depInstall.onclick = () => initEnvDeps(depInput.value.trim());
   depRow.append(depDot, depLbl, depInput, depInstall);
+  if (env.has_inline_meta) depRow.style.display = "none"; // PEP 723 内联脚本无需依赖文件
   bar.append(...parts, depRow);
 }
 
@@ -985,6 +990,12 @@ function buildCommandText() {
   const s = state.script;
   if (!s || !s.path) return "";
   const argList = buildArgList(s.args_schema || [], collectValues());
+  if (s.has_inline_meta) {
+    // PEP 723 内联脚本：uv run --script <path> <args...>
+    const parts = ["uv", "run", "--script", shq(s.path)];
+    for (const a of argList) parts.push(shq(a));
+    return parts.join(" ");
+  }
   const idx = s.path.lastIndexOf("/");
   const dir = idx >= 0 ? s.path.slice(0, idx) : s.path;
   const file = idx >= 0 ? s.path.slice(idx + 1) : s.path;

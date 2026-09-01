@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS scripts (
     description TEXT NOT NULL DEFAULT '',
     deps_path TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
+    has_inline_meta INTEGER NOT NULL DEFAULT 0,
     folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -100,6 +101,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE scripts ADD COLUMN deps_path TEXT NOT NULL DEFAULT ''")
     if "tags" not in cols:
         conn.execute("ALTER TABLE scripts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
+    if "has_inline_meta" not in cols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN has_inline_meta INTEGER NOT NULL DEFAULT 0")
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
@@ -143,7 +146,7 @@ def _loads(s: str, default: Any = None) -> Any:
 
 # ---------- scripts ----------
 
-def add_script(name: str, path: str, args_schema: list[dict], description: str = "") -> Optional[dict]:
+def add_script(name: str, path: str, args_schema: list[dict], description: str = "", has_inline_meta: bool = False) -> Optional[dict]:
     """注册脚本。路径重复则更新 schema；用户改过的名称/描述不被扫描覆盖。"""
     ts = now_iso()
     with _lock, _conn() as conn:
@@ -154,13 +157,13 @@ def add_script(name: str, path: str, args_schema: list[dict], description: str =
             # 描述：用户已填则保留，否则用 argparse description 填充
             final_desc = existing["description"] if existing["description"] else (description or "")
             conn.execute(
-                "UPDATE scripts SET name=?, args_schema=?, description=?, updated_at=? WHERE id=?",
-                (final_name, _dumps(args_schema), final_desc, ts, existing["id"]),
+                "UPDATE scripts SET name=?, args_schema=?, description=?, has_inline_meta=?, updated_at=? WHERE id=?",
+                (final_name, _dumps(args_schema), final_desc, 1 if has_inline_meta else 0, ts, existing["id"]),
             )
             return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (existing["id"],)).fetchone())
         cur = conn.execute(
-            "INSERT INTO scripts(name, path, args_schema, description, created_at, updated_at) VALUES(?,?,?,?,?,?)",
-            (name, path, _dumps(args_schema), description or "", ts, ts),
+            "INSERT INTO scripts(name, path, args_schema, description, has_inline_meta, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (name, path, _dumps(args_schema), description or "", 1 if has_inline_meta else 0, ts, ts),
         )
         return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -192,16 +195,16 @@ def update_script(script_id: int, name: str | None = None, description: str | No
         return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
 
 
-def update_script_schema(script_id: int, args_schema: list[dict], description: str) -> Optional[dict]:
-    """重新加载：只更新参数 schema 与描述，保留用户名称/描述自定义。"""
+def update_script_schema(script_id: int, args_schema: list[dict], description: str, has_inline_meta: bool = False) -> Optional[dict]:
+    """重新加载：只更新参数 schema、描述与内联脚本标记，保留用户名称/描述自定义。"""
     with _lock, _conn() as conn:
         existing = conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone()
         if not existing:
             return None
         final_desc = existing["description"] if existing["description"] else (description or "")
         conn.execute(
-            "UPDATE scripts SET args_schema=?, description=?, updated_at=? WHERE id=?",
-            (_dumps(args_schema), final_desc, now_iso(), script_id),
+            "UPDATE scripts SET args_schema=?, description=?, has_inline_meta=?, updated_at=? WHERE id=?",
+            (_dumps(args_schema), final_desc, 1 if has_inline_meta else 0, now_iso(), script_id),
         )
         return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
 

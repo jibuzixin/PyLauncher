@@ -75,6 +75,42 @@ def _resolve_deps(deps_path: str, project_dir: Path) -> tuple[Optional[str], Opt
     return None, None
 
 
+def pep723_metadata(script_path: str) -> Optional[dict]:
+    """读取脚本开头的 PEP 723 内联元数据（# /// script ... # ///），返回 [script] 段 dict。
+
+    解析失败或不存在时返回 None。只读取文件开头一小段，避免大文件开销。
+    """
+    try:
+        with open(script_path, "r", encoding="utf-8") as f:
+            head = f.read(8192)
+    except Exception:  # noqa: BLE001
+        return None
+    lines = head.splitlines()
+    start = end = -1
+    for i, line in enumerate(lines):
+        s = line.lstrip()
+        if start == -1 and s.startswith("# /// script"):
+            start = i
+        elif start != -1 and s.startswith("# ///"):
+            end = i
+            break
+    if start == -1 or end == -1:
+        return None
+    toml_lines = []
+    for i in range(start + 1, end):
+        s = lines[i].lstrip()
+        if s.startswith("#"):
+            s = s[1:].lstrip()
+        toml_lines.append(s)
+    try:
+        import tomllib
+        data = tomllib.loads("\n".join(toml_lines))
+        # PEP 723 的内联元数据即 [script] 段本身（无表头），直接作为 script 表返回
+        return data or None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
     """检查脚本所在目录的环境状态。deps_path 为可选的自定义依赖文件。"""
     script = Path(script_path)
@@ -82,6 +118,8 @@ def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
     venv_py = _venv_python(project_dir)
     has_venv = venv_py.exists()
     kind, dep_file = _resolve_deps(deps_path, project_dir)
+    meta = pep723_metadata(script_path)
+    deps = meta.get("dependencies") or [] if meta else []
     return {
         "project_dir": str(project_dir),
         "has_venv": has_venv,
@@ -92,6 +130,9 @@ def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
         "deps_name": dep_file.name if dep_file else None,
         "requirements_path": str(dep_file) if dep_file else None,
         "has_requirements": dep_file is not None and kind == "requirements",  # 兼容旧字段
+        "has_inline_meta": meta is not None,
+        "inline_deps": deps,
+        "inline_requires_python": (meta.get("requires-python") if meta else None),
         "uv_ok": uv_available()[0],
         "uv_version": uv_available()[1] if uv_available()[0] else None,
     }
@@ -272,8 +313,18 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
 # ---------------- 执行脚本 ----------------
 
 def build_command(script_path: str, args: list[str], extra_args: list[str] | None = None) -> list[str]:
-    """拼接 uv 执行命令：uv run --project <dir> python <script> <args...>"""
+    """拼接 uv 执行命令。
+
+    PEP 723 内联脚本：uv run --script <script> [-- args...]（uv 自动创建临时环境安装内联依赖）；
+    普通项目：uv run --project <dir> python <script> <args...>。
+    """
     script = Path(script_path)
+    if pep723_metadata(script_path):
+        # uv run --script 之后的参数直接传给脚本（无需 -- 分隔，-- 会被原样传给脚本）
+        cmd = ["uv", "run", "--script", str(script)] + args
+        if extra_args:
+            cmd += extra_args
+        return cmd
     cmd = ["uv", "run", "--project", str(script.parent), "python", "-u", str(script)]
     cmd += args
     if extra_args:

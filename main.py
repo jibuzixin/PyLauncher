@@ -272,6 +272,9 @@ def _shq(s: str) -> str:
 def _build_command_text(script_path: str, arg_list: list[str]) -> str:
     """生成可直接复制执行的 uv run 命令（含 shell 转义）。"""
     p = Path(script_path)
+    if executor.pep723_metadata(script_path):
+        parts = ["uv", "run", "--script", _shq(str(p))] + [_shq(a) for a in arg_list]
+        return " ".join(parts)
     parts = ["uv", "run", "--project", _shq(str(p.parent)), "python", _shq(p.name)] + [_shq(a) for a in arg_list]
     return " ".join(parts)
 
@@ -280,7 +283,9 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
     """后台执行任务，流式输出，结束后写库。"""
     await emit("info", "· 环境检查中…\n")
     env = executor.inspect_env(script_path)
-    if not env["has_venv"]:
+    if env.get("has_inline_meta"):
+        await emit("info", "· PEP 723 内联脚本，uv 自动管理依赖\n")
+    elif not env["has_venv"]:
         await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」\n")
     await emit("info", "$ " + _build_command_text(script_path, arg_list) + "\n")
 
@@ -517,6 +522,7 @@ async def scan_scripts(req: ScanReq):
             rec = db.add_script(
                 info["name"], info["path"], info["schema"]["args"],
                 description=info["schema"].get("description") or "",
+                has_inline_meta=executor.pep723_metadata(info["path"]) is not None,
             )
             imported.append(rec)
         else:
@@ -538,7 +544,10 @@ async def import_script(req: ScriptImportReq):
         return JSONResponse({"ok": False, "error": info["error"]}, status_code=400)
     name = (req.name or "").strip() or info["name"]
     desc = req.description if req.description is not None else (info["schema"].get("description") or "")
-    rec = db.add_script(name, info["path"], info["schema"]["args"], description=desc or "")
+    rec = db.add_script(
+        name, info["path"], info["schema"]["args"], description=desc or "",
+        has_inline_meta=executor.pep723_metadata(info["path"]) is not None,
+    )
     return {"ok": True, "script": rec, "schema": info["schema"]}
 
 
@@ -571,6 +580,7 @@ async def upload_script(file: UploadFile = File(...), name: Optional[str] = Form
     rec = db.add_script(
         script_name, str(target), info["schema"]["args"],
         description=info["schema"].get("description") or "",
+        has_inline_meta=executor.pep723_metadata(str(target)) is not None,
     )
     return {"ok": True, "script": rec, "schema": info["schema"]}
 
@@ -592,7 +602,10 @@ async def reload_script(script_id: int):
     info = scanner.analyze_script(rec["path"])
     if not info["ok"]:
         return JSONResponse({"ok": False, "error": info["error"]}, status_code=400)
-    updated = db.update_script_schema(script_id, info["schema"]["args"], info["schema"].get("description") or "")
+    updated = db.update_script_schema(
+        script_id, info["schema"]["args"], info["schema"].get("description") or "",
+        has_inline_meta=executor.pep723_metadata(rec["path"]) is not None,
+    )
     return {"ok": True, "script": updated, "schema": info["schema"]}
 
 
