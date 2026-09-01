@@ -1670,10 +1670,11 @@ async function scheduleModal(sched) {
   const editing = !!sched;
   const selId = sched ? sched.script_id : (state.script ? state.script.id : (scripts[0] && scripts[0].id));
   let schema = [];
+  let presets = [];
   let savedArgs = sched ? (typeof sched.args === "string" ? JSON.parse(sched.args || "{}") : (sched.args || {})) : {};
   if (selId) {
     const rec = await api(`/api/scripts/${selId}`).catch(() => null);
-    if (rec) schema = rec.args_schema || [];
+    if (rec) { schema = rec.args_schema || []; presets = rec.presets || []; }
   }
   openModal({
     title: editing ? "编辑定时任务" : "新建定时任务",
@@ -1694,6 +1695,41 @@ async function scheduleModal(sched) {
         <div class="sc-preview" id="sc-preview">输入 cron 后自动显示下次执行时间</div>
       </div>
       <div class="m-field">
+        <div class="m-label">快速选择（无需懂 cron）</div>
+        <div class="sc-quick" id="sc-quick">
+          <button class="btn mini ghost" data-cron="* * * * *">每分钟</button>
+          <button class="btn mini ghost" data-cron="*/5 * * * *">每5分钟</button>
+          <button class="btn mini ghost" data-cron="*/10 * * * *">每10分钟</button>
+          <button class="btn mini ghost" data-cron="0 * * * *">每小时</button>
+          <button class="btn mini ghost" data-cron="0 */2 * * *">每2小时</button>
+          <button class="btn mini ghost" data-cron="0 9 * * *">每天9点</button>
+          <button class="btn mini ghost" data-cron="0 9 * * 1-5">工作日9点</button>
+          <button class="btn mini ghost" data-cron="0 9 * * 0">每周日9点</button>
+          <button class="btn mini ghost" data-cron="0 9 1 * *">每月1号9点</button>
+        </div>
+      </div>
+      <div class="m-field">
+        <div class="m-label">可视化构建</div>
+        <div class="sc-builder">
+          <select class="f-input" id="sc-freq">
+            <option value="minute">每 N 分钟</option>
+            <option value="hour">每 N 小时</option>
+            <option value="daily">每天固定时间</option>
+            <option value="weekly">每周固定时间</option>
+            <option value="monthly">每月固定日期</option>
+          </select>
+          <div class="sc-builder-opts" id="sc-builder-opts"></div>
+          <button class="btn mini primary" id="sc-builder-apply">应用到 cron</button>
+        </div>
+      </div>
+      <div class="m-field">
+        <div class="m-label">参数来源</div>
+        <select class="f-input" id="sc-preset">
+          <option value="">手动填写</option>
+          ${presets.map((p) => `<option value="${p.id}" data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("")}
+        </select>
+      </div>
+      <div class="m-field">
         <div class="m-label">参数</div>
         <div class="sc-fields" id="sc-fields"></div>
       </div>
@@ -1701,15 +1737,16 @@ async function scheduleModal(sched) {
         <label class="chk"><input type="checkbox" id="sc-enabled" ${!sched || sched.enabled ? "checked" : ""}> 启用该定时任务</label>
       </div>`,
     footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="sc-save">${editing ? "保存修改" : "创建"}</button>`,
-    onMount: async (mask) => {
+    onMount: (mask) => {
       $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      renderSchedFields($("#sc-fields", mask), schema, savedArgs);
+      const fieldsBox = $("#sc-fields", mask);
+      renderSchedFields(fieldsBox, schema, savedArgs);
       const cronInp = $("#sc-cron", mask);
       const preview = $("#sc-preview", mask);
       let previewTimer = null;
       const updatePreview = async () => {
         const cron = cronInp.value.trim();
-        if (!cron) { preview.textContent = "输入 cron 后自动显示下次执行时间"; return; }
+        if (!cron) { preview.textContent = "输入 cron 后自动显示下次执行时间"; preview.className = "sc-preview"; return; }
         try {
           const r = await api("/api/schedules/preview", { method: "POST", body: { cron } });
           preview.textContent = "下次执行：" + fmtTime(r.next);
@@ -1723,13 +1760,42 @@ async function scheduleModal(sched) {
         clearTimeout(previewTimer);
         previewTimer = setTimeout(updatePreview, 400);
       });
+
+      // 快速预设：点击直接填充 cron
+      $$("[data-cron]", $("#sc-quick", mask)).forEach((b) => {
+        b.addEventListener("click", () => { cronInp.value = b.dataset.cron; updatePreview(); });
+      });
+
+      // 可视化构建器
+      renderBuilderOpts($("#sc-freq", mask).value, mask);
+      $("#sc-freq", mask).addEventListener("change", (e) => renderBuilderOpts(e.target.value, mask));
+      $("#sc-builder-apply", mask).addEventListener("click", () => {
+        const cron = buildCronFromBuilder($("#sc-freq", mask).value, mask);
+        if (!cron) { toast("请至少选择一个星期", true); return; }
+        cronInp.value = cron;
+        updatePreview();
+      });
+
+      // 参数来源：选预设后填充参数表单
+      const presetSel = $("#sc-preset", mask);
+      presetSel.addEventListener("change", () => {
+        const opt = presetSel.selectedOptions[0];
+        const args = opt && opt.dataset.args ? JSON.parse(opt.dataset.args) : {};
+        renderSchedFields(fieldsBox, schema, args);
+      });
+
       const scriptSel = $("#sc-script", mask);
-      scriptSel.addEventListener("change", async () => {
+      const reloadScript = async () => {
         const sid = parseInt(scriptSel.value, 10);
         const rec = await api(`/api/scripts/${sid}`).catch(() => null);
         schema = rec ? (rec.args_schema || []) : [];
-        renderSchedFields($("#sc-fields", mask), schema, {});
-      });
+        presets = rec ? (rec.presets || []) : [];
+        presetSel.innerHTML = `<option value="">手动填写</option>` +
+          presets.map((p) => `<option value="${p.id}" data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("");
+        renderSchedFields(fieldsBox, schema, {});
+      };
+      scriptSel.addEventListener("change", reloadScript);
+
       if (cronInp.value.trim()) updatePreview();
       $("#sc-save", mask).addEventListener("click", async () => {
         const name = $("#sc-name", mask).value.trim();
@@ -1737,7 +1803,7 @@ async function scheduleModal(sched) {
         const enabled = $("#sc-enabled", mask).checked;
         if (!name) return toast("请输入任务名称", true);
         if (!cron) return toast("请输入 cron 表达式", true);
-        const args = collectSchedFields($("#sc-fields", mask), schema);
+        const args = collectSchedFields(fieldsBox, schema);
         const body = { name, cron, enabled, args };
         if (editing) {
           await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args } });
@@ -1751,6 +1817,57 @@ async function scheduleModal(sched) {
       });
     },
   });
+}
+
+// 可视化 cron 构建器：渲染频率对应的控件
+function renderBuilderOpts(freq, mask) {
+  const el = $("#sc-builder-opts", mask);
+  const week = ["一", "二", "三", "四", "五", "六", "日"]; // 值 1..6,0
+  const timeInp = `<input type="time" class="f-input sc-time" id="sc-time" value="09:00">`;
+  if (freq === "minute") {
+    el.innerHTML = `每 <input type="number" class="f-input sc-num" id="sc-n" min="1" max="59" value="5"> 分钟执行一次`;
+  } else if (freq === "hour") {
+    el.innerHTML = `每 <input type="number" class="f-input sc-num" id="sc-nh" min="1" max="23" value="1"> 小时，在第 <input type="number" class="f-input sc-num" id="sc-mh" min="0" max="59" value="0"> 分执行`;
+  } else if (freq === "daily") {
+    el.innerHTML = `每天 <input type="time" class="f-input sc-time" id="sc-time" value="09:00"> 执行`;
+  } else if (freq === "weekly") {
+    el.innerHTML = `每周 ${timeInp} 执行，选择星期：` +
+      week.map((d, i) => `<label class="chk sc-wd"><input type="checkbox" id="sc-wd${i}" value="${i === 6 ? 0 : i + 1}">${d}</label>`).join("") +
+      `<div class="sc-hint">周一至周六选中的天执行；周日对应 cron 的 0</div>`;
+  } else if (freq === "monthly") {
+    el.innerHTML = `每月第 <input type="number" class="f-input sc-num" id="sc-md" min="1" max="31" value="1"> 号，${timeInp} 执行`;
+  }
+}
+
+// 根据可视化选择生成 cron 表达式
+function buildCronFromBuilder(freq, mask) {
+  const get = (id) => $(id, mask).value;
+  const num = (id, d) => parseInt(get(id), 10) || d;
+  if (freq === "minute") {
+    return `*/${Math.min(59, Math.max(1, num("sc-n", 5)))} * * * *`;
+  }
+  if (freq === "hour") {
+    const h = Math.min(23, Math.max(1, num("sc-nh", 1)));
+    const m = Math.min(59, Math.max(0, num("sc-mh", 0)));
+    return `${m} */${h} * * *`;
+  }
+  if (freq === "daily") {
+    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
+    return `${m} ${h} * * *`;
+  }
+  if (freq === "weekly") {
+    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
+    const dow = [];
+    for (let i = 0; i < 7; i++) if ($("#sc-wd" + i, mask).checked) dow.push(i === 6 ? 0 : i + 1);
+    if (!dow.length) return null;
+    return `${m} ${h} * * ${dow.join(",")}`;
+  }
+  if (freq === "monthly") {
+    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
+    const d = Math.min(31, Math.max(1, num("sc-md", 1)));
+    return `${m} ${h} ${d} * *`;
+  }
+  return null;
 }
 
 $("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
