@@ -1841,7 +1841,7 @@ function renderBuilderOpts(freq, mask) {
 
 // 根据可视化选择生成 cron 表达式
 function buildCronFromBuilder(freq, mask) {
-  const get = (id) => $(id, mask).value;
+  const get = (id) => $("#" + id, mask).value;
   const num = (id, d) => parseInt(get(id), 10) || d;
   if (freq === "minute") {
     return `*/${Math.min(59, Math.max(1, num("sc-n", 5)))} * * * *`;
