@@ -227,13 +227,28 @@ def _merge_output_lines(chunks: list[str]) -> list[str]:
     return lines
 
 
+def _shq(s: str) -> str:
+    """POSIX shell 单引号转义：仅含安全字符时原样返回，否则用单引号包裹。"""
+    s = str(s)
+    if s and all(c.isalnum() or c in "-_./@:=+%" for c in s):
+        return s
+    return "'" + s.replace("'", "'\\''") + "'"
+
+
+def _build_command_text(script_path: str, arg_list: list[str]) -> str:
+    """生成可直接复制执行的 uv run 命令（含 shell 转义）。"""
+    p = Path(script_path)
+    parts = ["uv", "run", "--project", _shq(str(p.parent)), "python", _shq(p.name)] + [_shq(a) for a in arg_list]
+    return " ".join(parts)
+
+
 async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emit: Callable) -> dict:
     """后台执行任务，流式输出，结束后写库。"""
     await emit("info", "· 环境检查中…\n")
     env = executor.inspect_env(script_path)
     if not env["has_venv"]:
         await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」\n")
-    await emit("info", "$ uv run --project " + str(Path(script_path).parent) + " python " + Path(script_path).name + " " + " ".join(arg_list) + "\n")
+    await emit("info", "$ " + _build_command_text(script_path, arg_list) + "\n")
 
     result = await executor.run_script(exec_id, script_path, arg_list, emit)
     terminated = result.get("terminated", False)
@@ -446,10 +461,16 @@ async def save_auto_args(script_id: int, req: SaveArgsReq):
 
 @app.post("/api/scripts/{script_id}/presets")
 async def create_preset(script_id: int, req: PresetReq):
-    if not req.name.strip():
+    name = req.name.strip()
+    if not name:
         return JSONResponse({"ok": False, "error": "预设名称不能为空"}, status_code=400)
-    p = db.add_preset(script_id, req.name.strip(), req.args)
-    return {"ok": True, "preset": p}
+    existing = db.find_preset_by_name(script_id, name)
+    if existing:
+        # 同名预设：覆盖其参数
+        p = db.update_preset(existing["id"], req.args)
+        return {"ok": True, "preset": p, "overwritten": True}
+    p = db.add_preset(script_id, name, req.args)
+    return {"ok": True, "preset": p, "overwritten": False}
 
 
 @app.delete("/api/presets/{preset_id}")
@@ -492,13 +513,14 @@ async def execute(req: ExecuteReq):
         return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
     schema = json.loads(rec.get("args_schema") or "[]")
     arg_list = build_arg_list(schema, req.args)
+    command = _build_command_text(rec["path"], arg_list)
     exec_row = db.add_execution(req.script_id, req.args, req.preset_id)
     exec_id = exec_row["id"]
     _new_session(exec_id)
     asyncio.create_task(
         _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit))
     )
-    return {"ok": True, "execution_id": exec_id}
+    return {"ok": True, "execution_id": exec_id, "command": command}
 
 
 @app.get("/api/executions")

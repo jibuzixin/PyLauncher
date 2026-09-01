@@ -10,6 +10,7 @@ const state = {
   script: null,          // 当前脚本详情（含 schema / presets / env）
   activePresetId: null,
   currentExecId: null,
+  currentCmd: "",       // 最近一次执行的 uv run 命令（可复制）
   lineCount: 0,
   ws: null,
   running: false,
@@ -655,6 +656,22 @@ async function saveAsPreset() {
       $("#preset-save", mask).addEventListener("click", async () => {
         const name = $("#preset-name", mask).value.trim();
         if (!name) return toast("请输入预设名称", true);
+        // 同名预设：二次确认后覆盖
+        const existing = (state.script.presets || []).find((p) => p.name === name);
+        if (existing) {
+          confirmModal({
+            title: "覆盖预设",
+            message: `已存在同名预设「${name}」，确定用当前参数覆盖它吗？`,
+            confirmText: "覆盖",
+            onConfirm: async () => {
+              await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
+              closeModal();
+              toast("预设已覆盖");
+              reloadDetail();
+            },
+          });
+          return;
+        }
         await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
         closeModal();
         toast("预设已保存");
@@ -714,8 +731,8 @@ function renderFields(schema, saved) {
       label.appendChild(req);
     }
     const kind = document.createElement("span");
-    kind.className = "f-kind";
-    kind.textContent = a.kind === "positional" ? "位置" : "可选";
+    kind.className = "f-kind" + (a.required ? " req" : "");
+    kind.textContent = a.required ? "必填" : "可选";
     label.appendChild(nm);
     label.appendChild(kind);
     const tl = typeLabelOf(a);
@@ -925,6 +942,9 @@ async function run() {
       body: { script_id: state.script.id, args: values, preset_id: state.activePresetId },
     });
     state.currentExecId = res.execution_id;
+    state.currentCmd = res.command || "";
+    const copyBtn = $("#btn-copy-cmd");
+    if (copyBtn) copyBtn.disabled = !state.currentCmd;
     connectWs(`/ws/run/${res.execution_id}`, {});
   } catch (e) {
     setRunning(false);
@@ -1120,6 +1140,10 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-clear-console").addEventListener("click", clearConsole);
+$("#btn-copy-cmd").addEventListener("click", async () => {
+  if (!state.currentCmd) return toast("请先执行一次脚本", true);
+  if (await copyText(state.currentCmd)) toast("已复制执行命令");
+});
 $("#opt-mono").addEventListener("change", (e) => {
   $("#console").classList.toggle("mono", e.target.checked);
   savePrefs();

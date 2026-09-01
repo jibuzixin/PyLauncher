@@ -243,6 +243,23 @@ def add_preset(script_id: int, name: str, args: dict) -> dict:
         return dict(conn.execute("SELECT * FROM presets WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
+def find_preset_by_name(script_id: int, name: str) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM presets WHERE script_id=? AND name=?", (script_id, name)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_preset(preset_id: int, args: dict) -> dict:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE presets SET args=? WHERE id=?",
+            (_dumps(args), preset_id),
+        )
+        return dict(conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone())
+
+
 def list_presets(script_id: int) -> list[dict]:
     with _conn() as conn:
         rows = conn.execute(

@@ -286,6 +286,7 @@ svg { flex-shrink: 0; }
 .field .f-label { display: flex; align-items: center; gap: 6px; font-weight: 550; font-size: 12.5px; }
 .field .f-label .req { color: var(--danger); font-weight: 700; }
 .field .f-label .f-kind { font-size: 10px; color: var(--faint); border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; line-height: 15px; font-weight: 400; }
+.field .f-label .f-kind.req { color: var(--danger); border-color: var(--danger); background: #fef2f2; }
 .field .f-label .f-type { font-size: 10px; line-height: 15px; padding: 0 5px; border-radius: 4px; font-weight: 500; }
 .f-type.str { color: #6e6e6e; background: #f2f2f2; border: 1px solid #ddd; }
 .f-type.int { color: #1d4ed8; background: #eef2ff; border: 1px solid #c7d2fe; }
@@ -668,7 +669,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.5</span>
+    <span class="badge">v0.0.6</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -769,6 +770,7 @@ select.f-input { appearance: none; padding-right: 28px;
       </div>
       <div class="console-actions">
         <button id="btn-terminate" class="btn mini danger" hidden>终止</button>
+        <button id="btn-copy-cmd" class="btn mini ghost" title="复制本次执行的 uv run 命令" disabled>复制命令</button>
         <button id="btn-clear-console" class="btn mini ghost">清屏</button>
       </div>
     </div>
@@ -819,6 +821,7 @@ const state = {
   script: null,          // 当前脚本详情（含 schema / presets / env）
   activePresetId: null,
   currentExecId: null,
+  currentCmd: "",       // 最近一次执行的 uv run 命令（可复制）
   lineCount: 0,
   ws: null,
   running: false,
@@ -1464,6 +1467,22 @@ async function saveAsPreset() {
       $("#preset-save", mask).addEventListener("click", async () => {
         const name = $("#preset-name", mask).value.trim();
         if (!name) return toast("请输入预设名称", true);
+        // 同名预设：二次确认后覆盖
+        const existing = (state.script.presets || []).find((p) => p.name === name);
+        if (existing) {
+          confirmModal({
+            title: "覆盖预设",
+            message: `已存在同名预设「${name}」，确定用当前参数覆盖它吗？`,
+            confirmText: "覆盖",
+            onConfirm: async () => {
+              await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
+              closeModal();
+              toast("预设已覆盖");
+              reloadDetail();
+            },
+          });
+          return;
+        }
         await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
         closeModal();
         toast("预设已保存");
@@ -1523,8 +1542,8 @@ function renderFields(schema, saved) {
       label.appendChild(req);
     }
     const kind = document.createElement("span");
-    kind.className = "f-kind";
-    kind.textContent = a.kind === "positional" ? "位置" : "可选";
+    kind.className = "f-kind" + (a.required ? " req" : "");
+    kind.textContent = a.required ? "必填" : "可选";
     label.appendChild(nm);
     label.appendChild(kind);
     const tl = typeLabelOf(a);
@@ -1734,6 +1753,9 @@ async function run() {
       body: { script_id: state.script.id, args: values, preset_id: state.activePresetId },
     });
     state.currentExecId = res.execution_id;
+    state.currentCmd = res.command || "";
+    const copyBtn = $("#btn-copy-cmd");
+    if (copyBtn) copyBtn.disabled = !state.currentCmd;
     connectWs(`/ws/run/${res.execution_id}`, {});
   } catch (e) {
     setRunning(false);
@@ -1929,6 +1951,10 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-clear-console").addEventListener("click", clearConsole);
+$("#btn-copy-cmd").addEventListener("click", async () => {
+  if (!state.currentCmd) return toast("请先执行一次脚本", true);
+  if (await copyText(state.currentCmd)) toast("已复制执行命令");
+});
 $("#opt-mono").addEventListener("change", (e) => {
   $("#console").classList.toggle("mono", e.target.checked);
   savePrefs();
