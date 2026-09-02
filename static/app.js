@@ -1524,6 +1524,9 @@ async function renderSchedules(silent) {
     const cron = document.createElement("code");
     cron.className = "si-cron";
     cron.textContent = s.cron;
+    cron.title = "点击编辑执行时间";
+    cron.style.cursor = "pointer";
+    cron.onclick = () => inlineEditCron(row, cron, s);
     const next = document.createElement("div");
     next.className = "si-next";
     const nextLabel = document.createElement("span");
@@ -1551,6 +1554,9 @@ async function renderSchedules(silent) {
     const cnt = document.createElement("span");
     cnt.textContent = s.max_runs ? `次数：${s.run_count || 0}/${s.max_runs}` : "次数：不限";
     if (s.max_runs) cnt.style.color = "#2e7d32";
+    cnt.title = "点击编辑执行次数上限";
+    cnt.style.cursor = "pointer";
+    cnt.onclick = () => inlineEditRuns(cnt, s);
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -1602,17 +1608,104 @@ async function renderSchedules(silent) {
   }
 }
 
-// 下次执行的相对倒计时文案
+// 下次执行的相对倒计时（精确到分/秒）
 function relTime(iso) {
   const diff = new Date(iso).getTime() - Date.now();
   if (diff <= 0) return "即将执行";
-  const min = Math.floor(diff / 60000);
-  if (min < 1) return "即将执行";
-  if (min < 60) return `约 ${min} 分钟后`;
+  const sec = Math.floor(diff / 1000);
+  if (sec < 60) return `${sec} 秒后`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} 分 ${sec % 60} 秒后`;
   const h = Math.floor(min / 60);
-  if (h < 24) return `约 ${h} 小时后`;
+  if (h < 24) return `${h} 小时 ${min % 60} 分后`;
   const d = Math.floor(h / 24);
-  return `约 ${d} 天后`;
+  return `${d} 天 ${h % 24} 小时后`;
+}
+
+// 卡片内联编辑：执行时间（cron）
+function inlineEditCron(row, cronEl, s) {
+  const holder = document.createElement("span");
+  holder.className = "si-edit-cron";
+  holder.innerHTML = `
+    <input class="f-input mono si-edit-cron-input" value="${escapeHtml(s.cron)}" autocomplete="off" spellcheck="false">
+    <div class="si-edit-chips">
+      <button class="btn mini ghost" data-c="*/5 * * * *">每5分钟</button>
+      <button class="btn mini ghost" data-c="0 * * * *">每小时</button>
+      <button class="btn mini ghost" data-c="0 9 * * *">每天9点</button>
+      <button class="btn mini ghost" data-c="0 9 * * 1-5">工作日9点</button>
+      <button class="btn mini ghost" data-c="0 9 * * 0">每周日</button>
+    </div>
+    <div class="si-edit-row">
+      <span class="si-edit-label">固定每天时间</span>
+      <input type="time" class="f-input si-time" value="${dailyTimeOf(s.cron)}">
+      <button class="btn mini ghost" id="si-time-apply">应用</button>
+    </div>
+    <div class="si-edit-ops">
+      <button class="btn mini primary" id="si-cron-save">保存</button>
+      <button class="btn mini ghost" id="si-cron-cancel">取消</button>
+    </div>`;
+  cronEl.replaceWith(holder);
+  const input = holder.querySelector(".si-edit-cron-input");
+  const timeInp = holder.querySelector(".si-time");
+  holder.querySelector("#si-time-apply").onclick = () => {
+    const [h, m] = (timeInp.value || "09:00").split(":").map(Number);
+    input.value = `${m} ${h} * * *`;
+  };
+  holder.querySelectorAll("[data-c]").forEach((b) => {
+    b.onclick = () => { input.value = b.dataset.c; };
+  });
+  holder.querySelector("#si-cron-save").onclick = async () => {
+    const cron = input.value.trim();
+    if (!cron) return toast("cron 不能为空", true);
+    try {
+      await api(`/api/schedules/${s.id}`, { method: "PUT", body: { cron } });
+      toast("执行时间已更新");
+      renderSchedules();
+    } catch (e) { toast(e.message, true); }
+  };
+  holder.querySelector("#si-cron-cancel").onclick = () => { holder.replaceWith(cronEl); };
+  input.focus();
+  input.select();
+}
+
+function dailyTimeOf(cron) {
+  const p = (cron || "").trim().split(/\s+/);
+  if (p.length === 5 && p[2] === "*" && p[3] === "*" && p[4] === "*") {
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(p[1])}:${pad(p[0])}`;
+  }
+  return "09:00";
+}
+
+// 卡片内联编辑：执行次数上限
+function inlineEditRuns(cnt, s) {
+  const holder = document.createElement("span");
+  holder.className = "si-edit-runs";
+  holder.innerHTML = `
+    <input type="number" class="f-input si-edit-runs-input" min="1" placeholder="不限" value="${s.max_runs || ""}" autocomplete="off">
+    <button class="btn mini primary" id="si-runs-save">保存</button>
+    <button class="btn mini ghost" id="si-runs-cancel">取消</button>`;
+  cnt.replaceWith(holder);
+  const input = holder.querySelector(".si-edit-runs-input");
+  holder.querySelector("#si-runs-save").onclick = async () => {
+    const raw = input.value.trim();
+    let maxRuns = null;
+    if (raw) {
+      maxRuns = parseInt(raw, 10);
+      if (isNaN(maxRuns) || maxRuns < 1) return toast("执行次数需为不小于 1 的整数", true);
+    }
+    try {
+      await api(`/api/schedules/${s.id}`, { method: "PUT", body: { max_runs: maxRuns } });
+      toast(maxRuns ? `执行次数上限已设为 ${maxRuns}` : "已取消次数上限（不限次数）");
+      if (!s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs) {
+        toast("该任务已达上限停用，重新启用后将从 0 重新计数", true);
+      }
+      renderSchedules();
+    } catch (e) { toast(e.message, true); }
+  };
+  holder.querySelector("#si-runs-cancel").onclick = () => { holder.replaceWith(cnt); };
+  input.focus();
+  input.select();
 }
 
 function fmtTime(iso) {
@@ -1759,6 +1852,10 @@ async function scheduleModal(sched) {
         <div class="sc-preview" id="sc-preview">输入 cron 后自动显示下次执行时间</div>
       </div>
       <div class="m-field">
+        <div class="m-label">执行次数上限（留空表示不限）</div>
+        <input type="number" class="f-input" id="sc-max-runs" min="1" placeholder="例如 3：执行满 3 次后自动停用，重新启用时重置" value="${sched && sched.max_runs ? sched.max_runs : ""}" autocomplete="off">
+      </div>
+      <div class="m-field">
         <div class="m-label">快速选择（无需懂 cron）</div>
         <div class="sc-quick" id="sc-quick">
           <button class="btn mini ghost" data-cron="* * * * *">每分钟</button>
@@ -1795,10 +1892,6 @@ async function scheduleModal(sched) {
       <div class="m-field">
         <div class="m-label">参数</div>
         <div class="sc-fields" id="sc-fields"></div>
-      </div>
-      <div class="m-field">
-        <div class="m-label">执行次数上限（留空表示不限）</div>
-        <input type="number" class="f-input" id="sc-max-runs" min="1" placeholder="例如 3：执行满 3 次后自动停用，重新启用时重置" value="${sched && sched.max_runs ? sched.max_runs : ""}" autocomplete="off">
       </div>
       <div class="m-field">
         <label class="chk"><input type="checkbox" id="sc-enabled" ${!sched || sched.enabled ? "checked" : ""}> 启用该定时任务</label>

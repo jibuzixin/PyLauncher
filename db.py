@@ -20,6 +20,9 @@ OUTPUT_KEEP_LINES = 1000
 
 _lock = threading.Lock()
 
+# 用于区分 update 时“未传”与“显式传 None（清除）”
+_UNSET = object()
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scripts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -337,7 +340,7 @@ def update_schedule(
     cron: Optional[str] = None,
     args: Optional[dict] = None,
     enabled: Optional[bool] = None,
-    max_runs: Optional[int] = None,
+    max_runs=_UNSET,
 ) -> dict:
     fields, vals = [], []
     if name is not None:
@@ -348,7 +351,7 @@ def update_schedule(
         fields.append("args=?"); vals.append(_dumps(args))
     if enabled is not None:
         fields.append("enabled=?"); vals.append(1 if enabled else 0)
-    if max_runs is not None:
+    if max_runs is not _UNSET:
         fields.append("max_runs=?"); vals.append(max_runs)
     fields.append("updated_at=?"); vals.append(now_iso())
     vals.append(schedule_id)

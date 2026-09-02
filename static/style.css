@@ -711,3 +711,17 @@ select.f-input { appearance: none; padding-right: 28px;
 .sc-hint { font-size: 10.5px; color: var(--faint); width: 100%; }
 
 .si-status.done { color: #2e7d32; background: #e8f5e9; font-weight: 600; }
+
+/* ===== 定时任务卡片内联编辑 ===== */
+.si-cron { cursor: pointer; }
+.si-cron:hover { border-color: var(--border-strong); }
+.si-edit-cron { display: flex; flex-direction: column; gap: 8px; min-width: 260px; }
+.si-edit-cron-input { width: 300px; font-family: var(--mono); }
+.si-edit-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.si-edit-chips .btn { height: 24px; }
+.si-edit-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.si-edit-label { white-space: nowrap; }
+.si-edit-row .si-time { width: 110px; height: 28px; }
+.si-edit-ops { display: flex; gap: 6px; }
+.si-edit-runs { display: inline-flex; align-items: center; gap: 6px; }
+.si-edit-runs-input { width: 80px; height: 26px; font-size: 12px; padding: 0 8px; }

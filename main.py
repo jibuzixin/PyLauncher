@@ -494,7 +494,12 @@ async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
     old = db.get_schedule(schedule_id)
     was_enabled = bool(old and old.get("enabled"))
     s = db.update_schedule(
-        schedule_id, name=req.name, cron=req.cron, args=req.args, enabled=req.enabled, max_runs=req.max_runs
+        schedule_id,
+        name=req.name,
+        cron=req.cron,
+        args=req.args,
+        enabled=req.enabled,
+        max_runs=req.max_runs if "max_runs" in req.model_fields_set else db._UNSET,
     )
     # 表达式或启停变化后：清空旧计划并立即重算 next_run，前端保存后即刻看到新时间
     if req.cron is not None or req.enabled is not None or req.max_runs is not None:
