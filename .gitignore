@@ -16,3 +16,5 @@ imported/
 # static/index.html 由 index.template.html + app.js + style.css 生成
 # 如需提交构建产物可删除下面这行
 # static/index.html
+
+.idea/
