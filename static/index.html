@@ -782,7 +782,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.18</span>
+    <span class="badge">v0.0.19</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -2404,6 +2404,13 @@ async function rerunExecution(rec) {
 async function renderSchedules(silent) {
   const wrap = $("#schedule-list");
   if (!wrap) return;
+  // 静默轮询时，若正在编辑定时任务输入框（cron/次数），跳过本次重建，避免打断输入
+  if (silent) {
+    const ae = document.activeElement;
+    if (ae && wrap.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) {
+      return;
+    }
+  }
   let list;
   try {
     list = await api("/api/schedules");
@@ -3016,7 +3023,7 @@ function switchTab(name) {
     renderSchedules();
     // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
     if (!window._schedRefreshTimer) {
-      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 2000);
+      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 3000);
     }
   } else if (window._schedRefreshTimer) {
     clearInterval(window._schedRefreshTimer);

@@ -1470,6 +1470,13 @@ async function rerunExecution(rec) {
 async function renderSchedules(silent) {
   const wrap = $("#schedule-list");
   if (!wrap) return;
+  // 静默轮询时，若正在编辑定时任务输入框（cron/次数），跳过本次重建，避免打断输入
+  if (silent) {
+    const ae = document.activeElement;
+    if (ae && wrap.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) {
+      return;
+    }
+  }
   let list;
   try {
     list = await api("/api/schedules");
@@ -2082,7 +2089,7 @@ function switchTab(name) {
     renderSchedules();
     // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
     if (!window._schedRefreshTimer) {
-      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 2000);
+      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 3000);
     }
   } else if (window._schedRefreshTimer) {
     clearInterval(window._schedRefreshTimer);
