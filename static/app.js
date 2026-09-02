@@ -1518,7 +1518,7 @@ async function renderSchedules(silent) {
     headRight.append(status, sw);
     head.append(name, headRight);
 
-    // cron 表达式 + 下次执行
+    // cron 表达式 + 执行次数 + 下次执行
     const cronRow = document.createElement("div");
     cronRow.className = "si-cron-row";
     const cron = document.createElement("input");
@@ -1527,6 +1527,20 @@ async function renderSchedules(silent) {
     cron.title = "编辑 cron 表达式：失焦或回车保存，Esc 取消";
     cron.spellcheck = false;
     bindCronInline(cron, s);
+    // 执行次数（可编辑，加粗，与 cron 并列）
+    const runsBlock = document.createElement("span");
+    runsBlock.className = "si-runs-block";
+    const runsLabel = document.createElement("span");
+    runsLabel.textContent = "次数";
+    const cnt = document.createElement("input");
+    cnt.type = "number";
+    cnt.className = "si-runs-in";
+    cnt.min = -1;
+    cnt.value = s.max_runs ? s.max_runs : -1;
+    cnt.title = "执行次数上限，-1 表示不限；失焦或回车保存，Esc 取消";
+    if (s.max_runs) cnt.style.color = "#2e7d32";
+    bindRunsInline(cnt, s);
+    runsBlock.append(runsLabel, cnt);
     const next = document.createElement("div");
     next.className = "si-next";
     const nextLabel = document.createElement("span");
@@ -1544,24 +1558,13 @@ async function renderSchedules(silent) {
       nextTime.textContent = s.enabled ? "待计算" : "已停用，无计划";
       next.append(nextLabel, nextTime);
     }
-    cronRow.append(cron, next);
+    cronRow.append(cron, runsBlock, next);
 
     // 元信息：脚本 + 上次执行
     const meta = document.createElement("div");
     meta.className = "si-meta";
     const scriptNm = document.createElement("span");
     scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
-    const runsLabel = document.createElement("span");
-    runsLabel.className = "si-meta-label";
-    runsLabel.textContent = "次数：";
-    const cnt = document.createElement("input");
-    cnt.type = "number";
-    cnt.className = "si-runs-in";
-    cnt.min = -1;
-    cnt.value = s.max_runs ? s.max_runs : -1;
-    cnt.title = "执行次数上限，-1 表示不限；失焦或回车保存，Esc 取消";
-    if (s.max_runs) cnt.style.color = "#2e7d32";
-    bindRunsInline(cnt, s);
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -1575,7 +1578,7 @@ async function renderSchedules(silent) {
       st.textContent = " · " + s.last_status;
       last.appendChild(st);
     }
-    meta.append(scriptNm, runsLabel, cnt, last);
+    meta.append(scriptNm, last);
 
     // 操作按钮
     const ops = document.createElement("div");
