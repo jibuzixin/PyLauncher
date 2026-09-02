@@ -1477,6 +1477,13 @@ async function renderSchedules(silent) {
     if (!silent) wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
     return;
   }
+  // 应用本地补丁（乐观 running 等），让执行状态即时可见
+  if (window._schedPatch) {
+    for (const s of list) {
+      const p = window._schedPatch[s.id];
+      if (p) Object.assign(s, p);
+    }
+  }
   if (!list.length) {
     wrap.innerHTML = `<div class="schedule-empty">还没有定时任务，点击右上角「新建定时任务」添加</div>`;
     return;
@@ -1527,11 +1534,18 @@ async function renderSchedules(silent) {
     cron.title = "编辑 cron 表达式：失焦或回车保存，Esc 取消";
     cron.spellcheck = false;
     bindCronInline(cron, s);
-    // 执行次数（可编辑，加粗，与 cron 并列）
+    // 执行次数：已执行/上限（可编辑上限，加粗，与 cron 并列）
     const runsBlock = document.createElement("span");
     runsBlock.className = "si-runs-block";
     const runsLabel = document.createElement("span");
     runsLabel.textContent = "次数";
+    const runsCur = document.createElement("span");
+    runsCur.className = "si-runs-cur";
+    runsCur.textContent = String(s.run_count || 0);
+    runsCur.title = "已执行次数";
+    const runsSep = document.createElement("span");
+    runsSep.className = "si-runs-sep";
+    runsSep.textContent = "/";
     const cnt = document.createElement("input");
     cnt.type = "number";
     cnt.className = "si-runs-in";
@@ -1540,7 +1554,7 @@ async function renderSchedules(silent) {
     cnt.title = "执行次数上限，-1 表示不限；失焦或回车保存，Esc 取消";
     if (s.max_runs) cnt.style.color = "#2e7d32";
     bindRunsInline(cnt, s);
-    runsBlock.append(runsLabel, cnt);
+    runsBlock.append(runsLabel, runsCur, runsSep, cnt);
     const next = document.createElement("div");
     next.className = "si-next";
     const nextLabel = document.createElement("span");
@@ -1587,11 +1601,19 @@ async function renderSchedules(silent) {
     runBtn.className = "btn mini primary";
     runBtn.textContent = "立即运行";
     runBtn.onclick = async () => {
+      // 乐观更新：立即显示 running 状态，避免毫秒级脚本 running 一闪而过
+      window._schedPatch = window._schedPatch || {};
+      window._schedPatch[s.id] = Object.assign(window._schedPatch[s.id] || {}, { last_status: "running" });
+      renderSchedules();
       try {
         await api(`/api/schedules/${s.id}/run`, { method: "POST" });
         toast("已触发「" + s.name + "」");
-        renderSchedules();
       } catch (e) { toast(e.message, true); }
+      // 3 秒后清除补丁，让真实状态（轮询）接管
+      setTimeout(() => {
+        if (window._schedPatch) delete window._schedPatch[s.id];
+        renderSchedules(true);
+      }, 3000);
     };
     const editBtn = document.createElement("button");
     editBtn.className = "btn mini ghost";
@@ -2060,7 +2082,7 @@ function switchTab(name) {
     renderSchedules();
     // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
     if (!window._schedRefreshTimer) {
-      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 5000);
+      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 2000);
     }
   } else if (window._schedRefreshTimer) {
     clearInterval(window._schedRefreshTimer);

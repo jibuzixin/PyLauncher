@@ -760,3 +760,7 @@ select.f-input { appearance: none; padding-right: 28px;
 .si-runs-in:hover { border-color: var(--border-strong); }
 .si-runs-in:focus { background: var(--bg); border-color: var(--text); outline: none; box-shadow: 0 0 0 3px rgba(0,0,0,0.08); }
 .si-meta-label { color: var(--muted); }
+
+/* 执行次数进度：已执行/上限 */
+.si-runs-cur { font-size: 16px; font-weight: 700; color: var(--success); min-width: 14px; text-align: right; }
+.si-runs-sep { font-size: 16px; font-weight: 700; color: var(--muted); }
