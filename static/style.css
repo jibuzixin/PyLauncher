@@ -725,3 +725,12 @@ select.f-input { appearance: none; padding-right: 28px;
 .si-edit-ops { display: flex; gap: 6px; }
 .si-edit-runs { display: inline-flex; align-items: center; gap: 6px; }
 .si-edit-runs-input { width: 80px; height: 26px; font-size: 12px; padding: 0 8px; }
+
+/* ===== 定时任务卡片常驻编辑输入 ===== */
+.si-cron-in { width: 168px; height: 26px; font-family: var(--mono); font-size: 12px; background: transparent; border: 1px solid transparent; padding: 0 6px; border-radius: 6px; color: var(--fg); }
+.si-cron-in:hover { border-color: var(--border); }
+.si-cron-in:focus { background: var(--bg); border-color: var(--border-strong); outline: none; }
+.si-runs-in { width: 56px; height: 22px; font-size: 12px; border: 1px solid transparent; background: transparent; border-radius: 6px; text-align: center; color: var(--fg); }
+.si-runs-in:hover { border-color: var(--border); }
+.si-runs-in:focus { border-color: var(--border-strong); outline: none; }
+.si-meta-label { color: var(--muted); }

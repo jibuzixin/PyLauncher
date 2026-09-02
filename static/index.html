@@ -733,6 +733,15 @@ select.f-input { appearance: none; padding-right: 28px;
 .si-edit-runs { display: inline-flex; align-items: center; gap: 6px; }
 .si-edit-runs-input { width: 80px; height: 26px; font-size: 12px; padding: 0 8px; }
 
+/* ===== 定时任务卡片常驻编辑输入 ===== */
+.si-cron-in { width: 168px; height: 26px; font-family: var(--mono); font-size: 12px; background: transparent; border: 1px solid transparent; padding: 0 6px; border-radius: 6px; color: var(--fg); }
+.si-cron-in:hover { border-color: var(--border); }
+.si-cron-in:focus { background: var(--bg); border-color: var(--border-strong); outline: none; }
+.si-runs-in { width: 56px; height: 22px; font-size: 12px; border: 1px solid transparent; background: transparent; border-radius: 6px; text-align: center; color: var(--fg); }
+.si-runs-in:hover { border-color: var(--border); }
+.si-runs-in:focus { border-color: var(--border-strong); outline: none; }
+.si-meta-label { color: var(--muted); }
+
 </style>
 </head>
 <body>
@@ -743,7 +752,7 @@ select.f-input { appearance: none; padding-right: 28px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.15</span>
+    <span class="badge">v0.0.16</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -2416,12 +2425,12 @@ async function renderSchedules(silent) {
     // cron 表达式 + 下次执行
     const cronRow = document.createElement("div");
     cronRow.className = "si-cron-row";
-    const cron = document.createElement("code");
-    cron.className = "si-cron";
-    cron.textContent = s.cron;
-    cron.title = "点击编辑执行时间";
-    cron.style.cursor = "pointer";
-    cron.onclick = () => inlineEditCron(row, cron, s);
+    const cron = document.createElement("input");
+    cron.className = "f-input mono si-cron-in";
+    cron.value = s.cron;
+    cron.title = "编辑 cron 表达式：失焦或回车保存，Esc 取消";
+    cron.spellcheck = false;
+    bindCronInline(cron, s);
     const next = document.createElement("div");
     next.className = "si-next";
     const nextLabel = document.createElement("span");
@@ -2446,12 +2455,17 @@ async function renderSchedules(silent) {
     meta.className = "si-meta";
     const scriptNm = document.createElement("span");
     scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
-    const cnt = document.createElement("span");
-    cnt.textContent = s.max_runs ? `次数：${s.run_count || 0}/${s.max_runs}` : "次数：不限";
+    const runsLabel = document.createElement("span");
+    runsLabel.className = "si-meta-label";
+    runsLabel.textContent = "次数：";
+    const cnt = document.createElement("input");
+    cnt.type = "number";
+    cnt.className = "si-runs-in";
+    cnt.min = -1;
+    cnt.value = s.max_runs ? s.max_runs : -1;
+    cnt.title = "执行次数上限，-1 表示不限；失焦或回车保存，Esc 取消";
     if (s.max_runs) cnt.style.color = "#2e7d32";
-    cnt.title = "点击编辑执行次数上限";
-    cnt.style.cursor = "pointer";
-    cnt.onclick = () => inlineEditRuns(cnt, s);
+    bindRunsInline(cnt, s);
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -2465,7 +2479,7 @@ async function renderSchedules(silent) {
       st.textContent = " · " + s.last_status;
       last.appendChild(st);
     }
-    meta.append(scriptNm, cnt, last);
+    meta.append(scriptNm, runsLabel, cnt, last);
 
     // 操作按钮
     const ops = document.createElement("div");
@@ -2517,90 +2531,58 @@ function relTime(iso) {
   return `${d} 天 ${h % 24} 小时后`;
 }
 
-// 卡片内联编辑：执行时间（cron）
-function inlineEditCron(row, cronEl, s) {
-  const holder = document.createElement("span");
-  holder.className = "si-edit-cron";
-  holder.innerHTML = `
-    <input class="f-input mono si-edit-cron-input" value="${escapeHtml(s.cron)}" autocomplete="off" spellcheck="false">
-    <div class="si-edit-chips">
-      <button class="btn mini ghost" data-c="*/5 * * * *">每5分钟</button>
-      <button class="btn mini ghost" data-c="0 * * * *">每小时</button>
-      <button class="btn mini ghost" data-c="0 9 * * *">每天9点</button>
-      <button class="btn mini ghost" data-c="0 9 * * 1-5">工作日9点</button>
-      <button class="btn mini ghost" data-c="0 9 * * 0">每周日</button>
-    </div>
-    <div class="si-edit-row">
-      <span class="si-edit-label">固定每天时间</span>
-      <input type="time" class="f-input si-time" value="${dailyTimeOf(s.cron)}">
-      <button class="btn mini ghost" id="si-time-apply">应用</button>
-    </div>
-    <div class="si-edit-ops">
-      <button class="btn mini primary" id="si-cron-save">保存</button>
-      <button class="btn mini ghost" id="si-cron-cancel">取消</button>
-    </div>`;
-  cronEl.replaceWith(holder);
-  const input = holder.querySelector(".si-edit-cron-input");
-  const timeInp = holder.querySelector(".si-time");
-  holder.querySelector("#si-time-apply").onclick = () => {
-    const [h, m] = (timeInp.value || "09:00").split(":").map(Number);
-    input.value = `${m} ${h} * * *`;
-  };
-  holder.querySelectorAll("[data-c]").forEach((b) => {
-    b.onclick = () => { input.value = b.dataset.c; };
-  });
-  holder.querySelector("#si-cron-save").onclick = async () => {
+// 卡片常驻输入：cron 表达式（失焦/回车保存，Esc 取消）
+function bindCronInline(input, s) {
+  let saving = false;
+  input.addEventListener("blur", async () => {
+    if (saving) return;
     const cron = input.value.trim();
-    if (!cron) return toast("cron 不能为空", true);
+    if (cron === s.cron) return;
+    if (!cron) { input.value = s.cron; return toast("cron 不能为空", true); }
+    saving = true;
     try {
       await api(`/api/schedules/${s.id}`, { method: "PUT", body: { cron } });
       toast("执行时间已更新");
       renderSchedules();
-    } catch (e) { toast(e.message, true); }
-  };
-  holder.querySelector("#si-cron-cancel").onclick = () => { holder.replaceWith(cronEl); };
-  input.focus();
-  input.select();
+    } catch (e) {
+      input.value = s.cron;
+      toast(e.message, true);
+      saving = false;
+    }
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") input.blur();
+    else if (ev.key === "Escape") { input.value = s.cron; input.blur(); }
+  });
 }
 
-function dailyTimeOf(cron) {
-  const p = (cron || "").trim().split(/\s+/);
-  if (p.length === 5 && p[2] === "*" && p[3] === "*" && p[4] === "*") {
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(p[1])}:${pad(p[0])}`;
-  }
-  return "09:00";
-}
-
-// 卡片内联编辑：执行次数上限
-function inlineEditRuns(cnt, s) {
-  const holder = document.createElement("span");
-  holder.className = "si-edit-runs";
-  holder.innerHTML = `
-    <input type="number" class="f-input si-edit-runs-input" min="1" placeholder="不限" value="${s.max_runs || ""}" autocomplete="off">
-    <button class="btn mini primary" id="si-runs-save">保存</button>
-    <button class="btn mini ghost" id="si-runs-cancel">取消</button>`;
-  cnt.replaceWith(holder);
-  const input = holder.querySelector(".si-edit-runs-input");
-  holder.querySelector("#si-runs-save").onclick = async () => {
+// 卡片常驻输入：执行次数上限（-1 表示不限；失焦/回车保存，Esc 取消）
+function bindRunsInline(input, s) {
+  let saving = false;
+  input.addEventListener("blur", async () => {
+    if (saving) return;
+    const shown = s.max_runs ? s.max_runs : -1;
     const raw = input.value.trim();
     let maxRuns = null;
-    if (raw) {
+    if (raw && raw !== "-1") {
       maxRuns = parseInt(raw, 10);
-      if (isNaN(maxRuns) || maxRuns < 1) return toast("执行次数需为不小于 1 的整数", true);
+      if (isNaN(maxRuns) || maxRuns < 1) { input.value = shown; return toast("执行次数需为不小于 1 的整数或 -1（不限）", true); }
     }
+    const next = maxRuns === null ? -1 : maxRuns;
+    if (next === shown) return;
+    saving = true;
     try {
       await api(`/api/schedules/${s.id}`, { method: "PUT", body: { max_runs: maxRuns } });
-      toast(maxRuns ? `执行次数上限已设为 ${maxRuns}` : "已取消次数上限（不限次数）");
       if (!s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs) {
         toast("该任务已达上限停用，重新启用后将从 0 重新计数", true);
       }
       renderSchedules();
-    } catch (e) { toast(e.message, true); }
-  };
-  holder.querySelector("#si-runs-cancel").onclick = () => { holder.replaceWith(cnt); };
-  input.focus();
-  input.select();
+    } catch (e) { toast(e.message, true); saving = false; }
+  });
+  input.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") input.blur();
+    else if (ev.key === "Escape") { input.value = s.max_runs ? s.max_runs : -1; input.blur(); }
+  });
 }
 
 function fmtTime(iso) {
