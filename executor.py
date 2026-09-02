@@ -358,8 +358,14 @@ async def run_script(
 
 
 def terminate_execution(exec_id: int) -> bool:
-    """终止运行中的执行（进程组）。"""
+    """终止运行中的执行（进程组）。
+
+    实测 macOS 下 uv run 对其子进程会屏蔽 SIGTERM（直接 kill -SIGTERM 子进程也不退出），
+    因此先发 SIGTERM 进程组给脚本优雅退出的机会，后台 2 秒后若仍存活则 SIGKILL 进程组强制终止。
+    """
     import subprocess
+    import threading
+    import time
 
     info = _RUNNING.get(exec_id)
     if not info:
@@ -368,17 +374,19 @@ def terminate_execution(exec_id: int) -> bool:
     if proc is None or proc.returncode is not None:
         return False
     info["terminated"] = True
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+        )
+        return True
     try:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
-                capture_output=True,
-            )
-        else:
-            try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-            except ProcessLookupError:
-                proc.terminate()
+        pgid = os.getpgid(proc.pid)
+    except ProcessLookupError:
+        return True
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except ProcessLookupError:
         return True
     except Exception:  # noqa: BLE001
         try:
@@ -386,3 +394,20 @@ def terminate_execution(exec_id: int) -> bool:
         except Exception:  # noqa: BLE001
             return False
         return True
+
+    # 后台兜底：SIGTERM 后若进程仍未退出，SIGKILL 进程组强制终止
+    def _escalate() -> None:
+        time.sleep(2)
+        p = _RUNNING.get(exec_id, {}).get("proc")
+        if p is None or p.poll() is not None:
+            return
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        except Exception:  # noqa: BLE001
+            try:
+                p.kill()
+            except Exception:  # noqa: BLE001
+                pass
+
+    threading.Thread(target=_escalate, daemon=True).start()
+    return True
