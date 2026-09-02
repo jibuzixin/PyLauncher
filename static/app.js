@@ -113,7 +113,7 @@ function closeModal() { $("#modal").hidden = true; }
 $("#modal-close").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
-/** 删除等危险操作的二次确认弹窗（保留：弹窗内辅助确认场景） */
+/** 删除等危险操作的二次确认弹窗 */
 function confirmModal({ title = "确认操作", message, confirmText = "删除", onConfirm } = {}) {
   openModal({
     title,
@@ -127,37 +127,6 @@ function confirmModal({ title = "确认操作", message, confirmText = "删除",
       });
     },
   });
-}
-
-/**
- * 双态确认（无弹窗打断）：
- * 第一次点击 → 进入警告态（onArm 视觉，3s 窗口）；窗口内再次点击 → 执行 onConfirm；
- * 3s 超时或点击页面其他区域 → 恢复常态（onDisarm）。
- * 状态与计时器挂在元素属性上，避免重渲染干扰。
- */
-function twoStep(el, { onArm, onDisarm, onConfirm, timeout = 3000 } = {}) {
-  const armed = () => !!el.__tsArmed;
-  const disarm = () => {
-    if (!el.__tsArmed) return;
-    el.__tsArmed = false;
-    clearTimeout(el.__tsTimer);
-    if (onDisarm) onDisarm();
-  };
-  el.addEventListener("click", async (ev) => {
-    ev.stopPropagation();
-    if (armed()) {
-      disarm();
-      try { await onConfirm(ev); } catch (e) { toast(e.message, true); }
-      return;
-    }
-    el.__tsArmed = true;
-    if (onArm) onArm();
-    el.__tsTimer = setTimeout(disarm, timeout);
-  });
-  document.addEventListener("click", (ev) => {
-    if (armed() && !el.contains(ev.target)) disarm();
-  }, true);
-  return { disarm };
 }
 
 /* ================= 顶部：导入 / 扫描 ================= */
@@ -409,19 +378,9 @@ function renderScriptHead(rec) {
     if (await copyText(rec.path)) toast("路径已复制");
   };
   $("#btn-reload").onclick = reloadScript;
-  twoStep($("#btn-delete-script"), {
-    onArm() {
-      const b = $("#btn-delete-script");
-      b.classList.add("ts-armed-danger");
-      const span = b.querySelector("span");
-      if (span) span.textContent = "再次点击删除";
-    },
-    onDisarm() {
-      const b = $("#btn-delete-script");
-      b.classList.remove("ts-armed-danger");
-      const span = b.querySelector("span");
-      if (span) span.textContent = "删除";
-    },
+  $("#btn-delete-script").onclick = () => confirmModal({
+    title: "删除脚本",
+    message: `确定删除脚本「${rec.name}」吗？该脚本的预设与执行记录会一并删除，脚本文件本身不受影响。`,
     onConfirm: async () => {
       await api(`/api/scripts/${rec.id}`, { method: "DELETE" });
       toast("脚本已删除");
@@ -662,29 +621,19 @@ function renderPresets(presets) {
     const x = document.createElement("span");
     x.className = "x";
     x.textContent = "✕";
-    x.title = "删除预设（连点两次）";
-    twoStep(x, {
-      onArm() {
-        const chip = x.closest(".preset-chip");
-        if (!chip) return;
-        chip.dataset.origName = p.name;
-        chip.classList.add("ts-armed-danger");
-        chip.innerHTML = `${escapeHtml(p.name)} · 再次点击删除`;
-      },
-      onDisarm() {
-        const chip = x.closest(".preset-chip");
-        if (!chip) return;
-        chip.classList.remove("ts-armed-danger");
-        chip.textContent = chip.dataset.origName || p.name;
-        chip.appendChild(x);
-        x.style.display = "";
-      },
-      onConfirm: async () => {
-        await api(`/api/presets/${p.id}`, { method: "DELETE" });
-        toast("预设已删除");
-        reloadDetail();
-      },
-    });
+    x.title = "删除预设";
+    x.onclick = async (e) => {
+      e.stopPropagation();
+      confirmModal({
+        title: "删除预设",
+        message: `确定删除预设「${p.name}」吗？`,
+        onConfirm: async () => {
+          await api(`/api/presets/${p.id}`, { method: "DELETE" });
+          toast("预设已删除");
+          reloadDetail();
+        },
+      });
+    };
     chip.appendChild(x);
     chips.appendChild(chip);
   }
@@ -716,29 +665,26 @@ async function saveAsPreset() {
       $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
       const chips = $("#preset-overwrite-chips", mask);
       const tip = $("#preset-overwrite-tip", mask);
+      let pending = null; // 第一次点击待覆盖的预设名
       for (const p of presets) {
         const chip = document.createElement("span");
         chip.className = "preset-chip";
         chip.textContent = p.name;
         chip.title = "第一次点击进入覆盖确认，再次点击同一标签完成覆盖";
-        twoStep(chip, {
-          onArm() {
-            $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
-            chip.classList.add("cover-target");
-            tip.hidden = false;
-            tip.textContent = `⚠ 再次点击「${p.name}」将覆盖该预设`;
-          },
-          onDisarm() {
-            chip.classList.remove("cover-target");
-            tip.hidden = true;
-          },
-          onConfirm: async () => {
-            await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name: p.name, args: values } });
-            toast(`已覆盖预设「${p.name}」`);
-            closeModal();
-            reloadDetail();
-          },
-        });
+        chip.onclick = () => {
+          if (pending === p.name) {
+            // 第二次点击同一标签：覆盖保存
+            api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name: p.name, args: values } })
+              .then(() => { toast(`已覆盖预设「${p.name}」`); closeModal(); reloadDetail(); })
+              .catch((e) => toast("覆盖失败：" + e.message, true));
+            return;
+          }
+          pending = p.name;
+          $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
+          chip.classList.add("cover-target");
+          tip.hidden = false;
+          tip.textContent = `⚠ 再次点击「${p.name}」将覆盖该预设`;
+        };
         chips.appendChild(chip);
       }
       $("#preset-save", mask).addEventListener("click", async () => {
@@ -991,14 +937,6 @@ function applyRunState() {
   const span = btn.querySelector("span");
   if (span) span.textContent = running ? "运行中…" : "执行";
   $("#btn-terminate").hidden = !running;
-  // 运行状态切换时重置终止按钮的双态（防止残留警告态）
-  const tb = $("#btn-terminate");
-  if (tb.__tsArmed) {
-    tb.__tsArmed = false;
-    clearTimeout(tb.__tsTimer);
-    tb.classList.remove("ts-armed-warn");
-    tb.textContent = "终止";
-  }
 }
 
 function setRunning(running) {
@@ -1272,26 +1210,14 @@ async function connectWs(path, { envInit = false, scriptId = null } = {}) {
 
 /* ================= 终止 ================= */
 
-twoStep($("#btn-terminate"), {
-  onArm() {
-    const b = $("#btn-terminate");
-    b.classList.add("ts-armed-warn");
-    b.textContent = "再次点击终止";
-  },
-  onDisarm() {
-    const b = $("#btn-terminate");
-    b.classList.remove("ts-armed-warn");
-    b.textContent = "终止";
-  },
-  onConfirm: async () => {
-    if (!state.currentExecId) return;
-    try {
-      await api(`/api/executions/${state.currentExecId}/terminate`, { method: "POST" });
-      toast("已发送终止信号");
-    } catch (e) {
-      toast(e.message, true);
-    }
-  },
+$("#btn-terminate").addEventListener("click", async () => {
+  if (!state.currentExecId) return;
+  try {
+    await api(`/api/executions/${state.currentExecId}/terminate`, { method: "POST" });
+    toast("已发送终止信号");
+  } catch (e) {
+    toast(e.message, true);
+  }
 });
 
 /* ================= 控制台工具 ================= */
@@ -1465,16 +1391,17 @@ async function showHistoryDetail(id, itemEl) {
   const del = document.createElement("button");
   del.className = "btn mini danger";
   del.textContent = "删除";
-  del.title = "连点两次删除";
-  twoStep(del, {
-    onArm() { del.classList.add("ts-armed-danger"); del.textContent = "再次点击删除"; },
-    onDisarm() { del.classList.remove("ts-armed-danger"); del.textContent = "删除"; },
-    onConfirm: async () => {
-      await api(`/api/executions/${rec.id}`, { method: "DELETE" });
-      detail.hidden = true;
-      refreshHistory();
-    },
-  });
+  del.onclick = async () => {
+    confirmModal({
+      title: "删除执行记录",
+      message: `确定删除这条执行记录（${rec.script_name || "脚本"} · ${formatTime(rec.started_at)}）吗？`,
+      onConfirm: async () => {
+        await api(`/api/executions/${rec.id}`, { method: "DELETE" });
+        detail.hidden = true;
+        refreshHistory();
+      },
+    });
+  };
   head.append(info, rerun, del);
 
   const tagsRow = document.createElement("div");
@@ -1670,23 +1597,10 @@ async function renderSchedules(silent) {
     const delBtn = document.createElement("button");
     delBtn.className = "btn mini danger";
     delBtn.textContent = "删除";
-    delBtn.title = "连点两次删除";
-    twoStep(delBtn, {
-      onArm() {
-        row.classList.add("ts-armed-danger");
-        const prog = document.createElement("div");
-        prog.className = "ts-progress";
-        row.appendChild(prog);
-        row.__prog = prog;
-        delBtn.classList.add("ts-armed-danger");
-        delBtn.textContent = "再次点击删除";
-      },
-      onDisarm() {
-        row.classList.remove("ts-armed-danger");
-        if (row.__prog) { row.__prog.remove(); row.__prog = null; }
-        delBtn.classList.remove("ts-armed-danger");
-        delBtn.textContent = "删除";
-      },
+    delBtn.onclick = () => confirmModal({
+      title: "删除定时任务",
+      message: `确定删除定时任务「${s.name}」吗？`,
+      confirmText: "删除",
       onConfirm: async () => {
         await api(`/api/schedules/${s.id}`, { method: "DELETE" });
         toast("已删除");
@@ -2211,24 +2125,17 @@ $("#btn-history-scope").addEventListener("click", () => {
   refreshHistory();
   savePrefs();
 });
-twoStep($("#btn-clear-history"), {
-  onArm() {
-    const b = $("#btn-clear-history");
-    b.classList.add("ts-armed-danger");
-    const span = b.querySelector("span");
-    if (span) span.textContent = "再次点击清空";
-  },
-  onDisarm() {
-    const b = $("#btn-clear-history");
-    b.classList.remove("ts-armed-danger");
-    const span = b.querySelector("span");
-    if (span) span.textContent = "清空历史";
-  },
-  onConfirm: async () => {
-    const r = await api("/api/executions/clear", { method: "POST", body: {} });
-    toast("已清空 " + r.deleted + " 条记录");
-    refreshHistory();
-  },
+$("#btn-clear-history").addEventListener("click", () => {
+  confirmModal({
+    title: "清空全部执行记录",
+    message: "确定清空全部执行记录吗？此操作不可恢复。",
+    confirmText: "清空",
+    onConfirm: async () => {
+      const r = await api("/api/executions/clear", { method: "POST", body: {} });
+      toast("已清空 " + r.deleted + " 条记录");
+      refreshHistory();
+    },
+  });
 });
 $("#btn-export").addEventListener("click", exportData);
 $("#btn-import-config").addEventListener("click", () => {
@@ -2300,80 +2207,5 @@ selectScript = async function (id) {
   localStorage.setItem("last_script_id", String(id));
   return origSelect(id);
 };
-
-/* ================= 面板拖拽（桌面宽度 / 平板·小屏高度） ================= */
-(function initDrag() {
-  const layout = document.querySelector(".layout");
-  const panel = document.querySelector(".panel");
-  if (!layout || !panel) return;
-  const savedW = localStorage.getItem("panel_w");
-  if (savedW && window.innerWidth >= 1024) panel.style.setProperty("--panel-w", savedW + "px");
-  const savedH = localStorage.getItem("panel_h");
-  if (savedH && window.innerWidth < 1024) panel.style.setProperty("--panel-h", savedH + "px");
-
-  // 垂直分隔条：调整面板宽度（桌面/大屏）
-  const gutter = document.getElementById("gutter");
-  if (gutter) {
-    let dragging = false;
-    gutter.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      dragging = true;
-      gutter.classList.add("dragging");
-      document.body.style.cursor = "col-resize";
-      document.body.style.userSelect = "none";
-      const startX = e.clientX;
-      const startW = panel.getBoundingClientRect().width;
-      const move = (ev) => {
-        if (!dragging) return;
-        const layoutW = layout.getBoundingClientRect().width;
-        let w = startW + (startX - ev.clientX);
-        w = Math.max(320, Math.min(layoutW * 0.7, w));
-        panel.style.setProperty("--panel-w", w + "px");
-      };
-      const up = () => {
-        dragging = false;
-        gutter.classList.remove("dragging");
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        localStorage.setItem("panel_w", Math.round(panel.getBoundingClientRect().width));
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-  }
-
-  // 平板/小屏：底部抽屉顶部把手调整高度
-  const handle = document.getElementById("panel-handle");
-  if (handle) {
-    let dragging = false;
-    handle.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      dragging = true;
-      document.body.style.cursor = "row-resize";
-      document.body.style.userSelect = "none";
-      const startY = e.clientY;
-      const startH = panel.getBoundingClientRect().height;
-      const move = (ev) => {
-        if (!dragging) return;
-        const vh = window.innerHeight;
-        let h = startH + (startY - ev.clientY);
-        h = Math.max(140, Math.min(vh * 0.85, h));
-        panel.style.setProperty("--panel-h", h + "px");
-      };
-      const up = () => {
-        dragging = false;
-        document.body.style.cursor = "";
-        document.body.style.userSelect = "";
-        localStorage.setItem("panel_h", Math.round(panel.getBoundingClientRect().height));
-        document.removeEventListener("mousemove", move);
-        document.removeEventListener("mouseup", up);
-      };
-      document.addEventListener("mousemove", move);
-      document.addEventListener("mouseup", up);
-    });
-  }
-})();
 
 init();
