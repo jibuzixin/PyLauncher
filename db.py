@@ -75,6 +75,8 @@ CREATE TABLE IF NOT EXISTS schedules (
     cron TEXT NOT NULL,
     args TEXT NOT NULL DEFAULT '{}',
     enabled INTEGER NOT NULL DEFAULT 1,
+    max_runs INTEGER,
+    run_count INTEGER NOT NULL DEFAULT 0,
     next_run TEXT,
     last_run TEXT,
     last_status TEXT,
@@ -103,6 +105,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE scripts ADD COLUMN tags TEXT NOT NULL DEFAULT '[]'")
     if "has_inline_meta" not in cols:
         conn.execute("ALTER TABLE scripts ADD COLUMN has_inline_meta INTEGER NOT NULL DEFAULT 0")
+    # schedules 表迁移
+    scols = {r[1] for r in conn.execute("PRAGMA table_info(schedules)")}
+    if "max_runs" not in scols:
+        conn.execute("ALTER TABLE schedules ADD COLUMN max_runs INTEGER")
+    if "run_count" not in scols:
+        conn.execute("ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0")
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
@@ -312,13 +320,13 @@ def get_schedule(schedule_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True) -> dict:
+def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True, max_runs: Optional[int] = None) -> dict:
     now = now_iso()
     with _lock, _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO schedules(script_id, name, cron, args, enabled, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?,?)",
-            (script_id, name, cron, _dumps(args), 1 if enabled else 0, now, now),
+            "INSERT INTO schedules(script_id, name, cron, args, enabled, max_runs, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?)",
+            (script_id, name, cron, _dumps(args), 1 if enabled else 0, max_runs, now, now),
         )
         return dict(conn.execute("SELECT * FROM schedules WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -329,6 +337,7 @@ def update_schedule(
     cron: Optional[str] = None,
     args: Optional[dict] = None,
     enabled: Optional[bool] = None,
+    max_runs: Optional[int] = None,
 ) -> dict:
     fields, vals = [], []
     if name is not None:
@@ -339,6 +348,8 @@ def update_schedule(
         fields.append("args=?"); vals.append(_dumps(args))
     if enabled is not None:
         fields.append("enabled=?"); vals.append(1 if enabled else 0)
+    if max_runs is not None:
+        fields.append("max_runs=?"); vals.append(max_runs)
     fields.append("updated_at=?"); vals.append(now_iso())
     vals.append(schedule_id)
     with _lock, _conn() as conn:
@@ -357,6 +368,8 @@ def set_schedule_runtime(
     next_run: Optional[str] = None,
     last_run: Optional[str] = None,
     last_status: Optional[str] = None,
+    run_count: Optional[int] = None,
+    enabled: Optional[bool] = None,
     clear_next_run: bool = False,
 ) -> None:
     sets, vals = [], []
@@ -368,6 +381,10 @@ def set_schedule_runtime(
         sets.append("last_run=?"); vals.append(last_run)
     if last_status is not None:
         sets.append("last_status=?"); vals.append(last_status)
+    if run_count is not None:
+        sets.append("run_count=?"); vals.append(run_count)
+    if enabled is not None:
+        sets.append("enabled=?"); vals.append(1 if enabled else 0)
     if not sets:
         return
     vals.append(schedule_id)

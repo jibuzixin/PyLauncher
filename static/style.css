@@ -709,3 +709,5 @@ select.f-input { appearance: none; padding-right: 28px;
 .sc-time { width: 110px; }
 .sc-wd { user-select: none; }
 .sc-hint { font-size: 10.5px; color: var(--faint); width: 100%; }
+
+.si-status.done { color: #2e7d32; background: #e8f5e9; font-weight: 600; }

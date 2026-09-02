@@ -103,6 +103,7 @@ class ScheduleReq(BaseModel):
     cron: str
     args: dict = {}
     enabled: bool = True
+    max_runs: Optional[int] = None
 
 
 class ScheduleUpdateReq(BaseModel):
@@ -110,6 +111,7 @@ class ScheduleUpdateReq(BaseModel):
     cron: Optional[str] = None
     args: Optional[dict] = None
     enabled: Optional[bool] = None
+    max_runs: Optional[int] = None
 
 
 class CronPreviewReq(BaseModel):
@@ -345,7 +347,16 @@ async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list
     async def coro(emit: Callable) -> dict:
         return await _execute_task(exec_id, script_path, arg_list, emit)
     result = await _run_in_session(exec_id, coro)
-    db.set_schedule_runtime(sched["id"], last_status=result.get("status", "unknown"))
+    status = result.get("status", "unknown")
+    # 已达执行上限自动停用时，保留上限提示而不覆盖为 success/failed
+    cur = db.get_schedule(sched["id"])
+    if cur:
+        max_runs = cur.get("max_runs")
+        run_count = cur.get("run_count") or 0
+        if max_runs is not None and run_count >= max_runs:
+            db.set_schedule_runtime(sched["id"], last_status=f"已达执行上限 {max_runs} 次，已自动停用（最后一次：{status}）")
+            return
+    db.set_schedule_runtime(sched["id"], last_status=status)
 
 
 async def _fire_schedule(sched: dict, base: datetime) -> None:
@@ -367,6 +378,15 @@ async def _fire_schedule(sched: dict, base: datetime) -> None:
     _new_session(exec_id)
     asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list))
     db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
+
+    # 执行次数计数：达到上限后自动停用，等用户重新启用时重置
+    new_count = (sched.get("run_count") or 0) + 1
+    max_runs = sched.get("max_runs")
+    if max_runs is not None:
+        db.set_schedule_runtime(sched["id"], run_count=new_count)
+        if new_count >= max_runs:
+            db.set_schedule_runtime(sched["id"], enabled=False)
+            db.set_schedule_runtime(sched["id"], last_status=f"已达执行上限 {max_runs} 次，已自动停用")
 
 
 async def _tick_schedules() -> None:
@@ -455,7 +475,7 @@ async def create_schedule(req: ScheduleReq):
         _cron_next(cron, datetime.now().astimezone())
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
-    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled)
+    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs)
     _refresh_schedule_plan(s["id"], cron, bool(req.enabled))
     s = db.get_schedule(s["id"])
     return {"ok": True, "schedule": s}
@@ -471,13 +491,19 @@ async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
         req.cron = req.cron.strip()
     if req.name is not None:
         req.name = req.name.strip()
+    old = db.get_schedule(schedule_id)
+    was_enabled = bool(old and old.get("enabled"))
     s = db.update_schedule(
-        schedule_id, name=req.name, cron=req.cron, args=req.args, enabled=req.enabled
+        schedule_id, name=req.name, cron=req.cron, args=req.args, enabled=req.enabled, max_runs=req.max_runs
     )
     # 表达式或启停变化后：清空旧计划并立即重算 next_run，前端保存后即刻看到新时间
-    if req.cron is not None or req.enabled is not None:
+    if req.cron is not None or req.enabled is not None or req.max_runs is not None:
         cur_cron = req.cron if req.cron is not None else s.get("cron")
-        _refresh_schedule_plan(schedule_id, cur_cron, bool(s.get("enabled", 0)))
+        new_enabled = bool(s.get("enabled", 0))
+        # 重新启用时重置已执行次数（重新开始计数）
+        if req.enabled is not None and req.enabled and not was_enabled:
+            db.set_schedule_runtime(schedule_id, run_count=0)
+        _refresh_schedule_plan(schedule_id, cur_cron, new_enabled)
         s = db.get_schedule(schedule_id)
     return {"ok": True, "schedule": s}
 

@@ -1494,9 +1494,11 @@ async function renderSchedules(silent) {
     name.textContent = s.name;
     const headRight = document.createElement("div");
     headRight.className = "si-head-right";
+    const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
     const status = document.createElement("span");
-    status.className = "si-status " + (s.enabled ? "on" : "off");
-    status.textContent = s.enabled ? "已启用" : "已停用";
+    status.className = "si-status " + (autoDone ? "done" : (s.enabled ? "on" : "off"));
+    status.textContent = autoDone ? `已完成 ${s.run_count}/${s.max_runs} 次` : (s.enabled ? "已启用" : "已停用");
+    status.title = autoDone ? "已达执行上限自动停用，重新启用后从 0 重新计数" : "";
     const sw = document.createElement("label");
     sw.className = "switch";
     sw.title = "启用 / 停用";
@@ -1546,6 +1548,9 @@ async function renderSchedules(silent) {
     meta.className = "si-meta";
     const scriptNm = document.createElement("span");
     scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
+    const cnt = document.createElement("span");
+    cnt.textContent = s.max_runs ? `次数：${s.run_count || 0}/${s.max_runs}` : "次数：不限";
+    if (s.max_runs) cnt.style.color = "#2e7d32";
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -1559,7 +1564,7 @@ async function renderSchedules(silent) {
       st.textContent = " · " + s.last_status;
       last.appendChild(st);
     }
-    meta.append(scriptNm, last);
+    meta.append(scriptNm, cnt, last);
 
     // 操作按钮
     const ops = document.createElement("div");
@@ -1792,6 +1797,10 @@ async function scheduleModal(sched) {
         <div class="sc-fields" id="sc-fields"></div>
       </div>
       <div class="m-field">
+        <div class="m-label">执行次数上限（留空表示不限）</div>
+        <input type="number" class="f-input" id="sc-max-runs" min="1" placeholder="例如 3：执行满 3 次后自动停用，重新启用时重置" value="${sched && sched.max_runs ? sched.max_runs : ""}" autocomplete="off">
+      </div>
+      <div class="m-field">
         <label class="chk"><input type="checkbox" id="sc-enabled" ${!sched || sched.enabled ? "checked" : ""}> 启用该定时任务</label>
       </div>`,
     footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="sc-save">${editing ? "保存修改" : "创建"}</button>`,
@@ -1868,10 +1877,16 @@ async function scheduleModal(sched) {
         const enabled = $("#sc-enabled", mask).checked;
         if (!name) return toast("请输入任务名称", true);
         if (!cron) return toast("请输入 cron 表达式", true);
+        const maxRunsRaw = $("#sc-max-runs", mask).value.trim();
+        let maxRuns = null;
+        if (maxRunsRaw) {
+          maxRuns = parseInt(maxRunsRaw, 10);
+          if (isNaN(maxRuns) || maxRuns < 1) return toast("执行次数需为不小于 1 的整数", true);
+        }
         const args = collectSchedFields(fieldsBox, schema);
-        const body = { name, cron, enabled, args };
+        const body = { name, cron, enabled, args, max_runs: maxRuns };
         if (editing) {
-          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args } });
+          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args, max_runs: maxRuns } });
           toast("已保存修改");
         } else {
           await api("/api/schedules", { method: "POST", body: { ...body, script_id: parseInt(scriptSel.value, 10) } });
