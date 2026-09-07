@@ -1029,3 +1029,39 @@ select.f-input { appearance: none; padding-right: 30px;
   padding: 2px 0;
 }
 .hd-output { max-height: 46vh; }
+
+/* ================= 执行记录多选 / 单条删除 ================= */
+.history-multi-bar {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 12px 8px; padding: 7px 11px;
+  border: 1px solid rgba(0, 113, 227, 0.25);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 113, 227, 0.05);
+  font-size: 12px; color: var(--muted);
+}
+.history-multi-bar #hm-count { flex: 1; font-weight: 600; }
+#btn-history-multi.active {
+  color: var(--accent); border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.08);
+}
+.hist-item .hi-del {
+  display: none;
+  flex-shrink: 0;
+  width: 20px; height: 20px; line-height: 1;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--faint);
+  font-size: 11px; cursor: pointer; align-items: center; justify-content: center;
+  padding: 0;
+}
+.hist-item .hi-del:hover { background: var(--danger-bg, #fef2f2); color: var(--danger); }
+.hist-item:hover .hi-del { display: inline-flex; }
+.hist-item .hi-cb {
+  width: 14px; height: 14px; margin: 0; flex-shrink: 0;
+  accent-color: var(--accent); cursor: pointer;
+}
+.hist-item.selected {
+  border-color: var(--accent);
+  background: rgba(0, 113, 227, 0.06);
+  box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.1);
+}
+.hd-output .console-line { border-radius: 0; padding: 0; }

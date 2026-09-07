@@ -1567,6 +1567,7 @@ function renderHistoryError(msg) {
 function renderHistory(list) {
   const wrap = $("#history-list");
   wrap.innerHTML = "";
+  updateHistoryMultiBar();
   const kw = ($("#history-search").value || "").toLowerCase();
   const filtered = list.filter((h) => {
     if (historyScope === "script" && state.selectedId && h.script_id !== state.selectedId) return false;
@@ -1586,8 +1587,19 @@ function renderHistory(list) {
   for (const h of filtered) {
     const item = document.createElement("div");
     item.className = "hist-item";
+    if (historyMulti && selectedHistory.has(h.id)) item.classList.add("selected");
     const top = document.createElement("div");
     top.className = "hi-top";
+    // 多选模式复选框
+    if (historyMulti) {
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.className = "hi-cb";
+      cb.checked = selectedHistory.has(h.id);
+      cb.addEventListener("click", (e) => e.stopPropagation());
+      cb.addEventListener("change", () => toggleHistorySelect(h.id));
+      top.appendChild(cb);
+    }
     const nm = document.createElement("span");
     nm.className = "hi-name";
     nm.textContent = h.script_name || "（脚本已删除）";
@@ -1599,6 +1611,29 @@ function renderHistory(list) {
     tm.className = "hi-time";
     tm.textContent = formatTime(h.started_at);
     top.append(nm, st, tm);
+    // 单条快速删除（hover 显示）
+    const del = document.createElement("button");
+    del.className = "hi-del";
+    del.title = "删除这条记录";
+    del.textContent = "✕";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      confirmModal({
+        title: "删除执行记录",
+        message: `确定删除这条执行记录（${h.script_name || "脚本"} · ${formatTime(h.started_at)}）吗？`,
+        confirmText: "删除",
+        onConfirm: async () => {
+          await api(`/api/executions/${h.id}`, { method: "DELETE" });
+          refreshHistory();
+          if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
+          if (state.detailExec && state.detailExec.id === h.id) {
+            const d = $("#history-detail");
+            if (d) d.hidden = true;
+          }
+        },
+      });
+    });
+    top.appendChild(del);
 
     const argsLine = document.createElement("div");
     argsLine.className = "hi-args";
@@ -1617,9 +1652,87 @@ function renderHistory(list) {
 
     item.append(top, argsLine, tagsRow);
     item.dataset.id = h.id;
-    item.onclick = () => showHistoryDetail(h.id, item);
+    item.onclick = () => {
+      if (historyMulti) toggleHistorySelect(h.id);
+      else showHistoryDetail(h.id, item);
+    };
     wrap.appendChild(item);
   }
+}
+
+/* ================= 执行记录多选删除 ================= */
+
+let historyMulti = false;          // 多选模式开关
+let selectedHistory = new Set();   // 已选记录 id 集合
+
+function enterHistoryMulti() {
+  historyMulti = true;
+  $("#btn-history-multi").textContent = "取消多选";
+  $("#btn-history-multi").classList.add("active");
+  refreshHistory();
+}
+
+function exitHistoryMulti() {
+  historyMulti = false;
+  selectedHistory.clear();
+  const btn = $("#btn-history-multi");
+  if (btn) { btn.textContent = "多选"; btn.classList.remove("active"); }
+  refreshHistory();
+}
+
+function toggleHistorySelect(id) {
+  if (selectedHistory.has(id)) selectedHistory.delete(id);
+  else selectedHistory.add(id);
+  const item = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(id));
+  if (item) item.classList.toggle("selected", selectedHistory.has(id));
+  updateHistoryMultiBar();
+}
+
+function updateHistoryMultiBar() {
+  const bar = $("#history-multi-bar");
+  if (!bar) return;
+  if (!historyMulti) { bar.hidden = true; return; }
+  bar.hidden = false;
+  const count = $("#hm-count");
+  if (count) count.textContent = `已选 ${selectedHistory.size} 条`;
+  const all = $("#hm-select-all");
+  if (all) {
+    const items = $$("#history-list .hist-item");
+    all.textContent = items.length && selectedHistory.size === items.length ? "取消全选" : "全选";
+  }
+}
+
+function toggleSelectAll() {
+  const items = $$("#history-list .hist-item");
+  const allSelected = items.length > 0 && items.every((el) => selectedHistory.has(Number(el.dataset.id)));
+  if (allSelected) {
+    items.forEach((el) => selectedHistory.delete(Number(el.dataset.id)));
+  } else {
+    items.forEach((el) => selectedHistory.add(Number(el.dataset.id)));
+  }
+  refreshHistory();
+}
+
+async function deleteSelectedHistory() {
+  if (!selectedHistory.size) return toast("请先勾选要删除的记录", true);
+  const ids = [...selectedHistory];
+  confirmModal({
+    title: "批量删除执行记录",
+    message: `确定删除选中的 ${ids.length} 条执行记录吗？运行中的记录会自动跳过。`,
+    confirmText: "删除",
+    onConfirm: async () => {
+      const r = await api("/api/executions/delete", { method: "POST", body: { ids } });
+      selectedHistory.clear();
+      if (r.skipped_running && r.skipped_running.length) {
+        toast(`已删除 ${r.deleted} 条，跳过 ${r.skipped_running.length} 条运行中记录`);
+      } else {
+        toast(`已删除 ${r.deleted} 条记录`);
+      }
+      const d = $("#history-detail");
+      if (d) d.hidden = true;
+      refreshHistory();
+    },
+  });
 }
 
 function summarizeArgs(argsStr) {
@@ -1649,6 +1762,14 @@ async function showHistoryDetail(id, itemEl) {
   const detail = $("#history-detail");
   detail.hidden = false;
   detail.innerHTML = "";
+  // 静态输出行复制按钮（事件委托）
+  detail.onclick = (e) => {
+    const btn = e.target.closest(".copy-btn");
+    if (!btn) return;
+    const lineEl = btn.closest(".console-line");
+    const txt = lineEl ? lineEl.querySelector(".line-text").textContent : "";
+    copyText(stripAnsi(txt)).then((ok) => { if (ok) toast("已复制第 " + (btn.dataset.line || "") + " 行"); });
+  };
 
   // ===== 头部：名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
   const head = document.createElement("div");
@@ -1784,17 +1905,31 @@ async function showHistoryDetail(id, itemEl) {
     tip.className = "hd-truncated";
     tip.textContent = "· 实时输出 · 结束后仅保留最后 1000 行";
     detail.append(head, argsBlock, tagsRow, live, tip);
-    const renderer = createConsoleRenderer(cons, live, ph);
+    // 滚动容器传 cons（hd-live-console），"自动滚动"开关对所有控制台生效
+    const renderer = createConsoleRenderer(cons, cons, ph);
     state.detailWs = connectDetailWs(rec.id, renderer, id, itemEl);
   } else {
     const out = document.createElement("div");
     out.className = "hd-output";
-    out.innerHTML = rec.output ? ansiToHtml(rec.output) : "（无输出）";
+    const outputHtml = renderStaticOutput(rec.output);
+    out.innerHTML = outputHtml || "（无输出）";
     const truncated = document.createElement("div");
     truncated.className = "hd-truncated";
     truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
     detail.append(head, argsBlock, tagsRow, out, truncated);
   }
+}
+
+/* 静态输出渲染为带行号 + 复制按钮的行列表（与实时控制台风格一致） */
+function renderStaticOutput(text) {
+  if (!text) return "";
+  const lines = String(text).split("\n");
+  // 去掉末尾多余空行（最后一个 \n 产生的空串）
+  while (lines.length && lines[lines.length - 1] === "") lines.pop();
+  return lines.map((ln, i) => {
+    const no = i + 1;
+    return `<div class="console-line"><div class="line-no">${no}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
+  }).join("");
 }
 
 function connectDetailWs(execId, renderer, detailId, itemEl) {
@@ -2542,6 +2677,13 @@ $("#btn-history-scope").addEventListener("click", () => {
   refreshHistory();
   savePrefs();
 });
+$("#btn-history-multi").addEventListener("click", () => {
+  if (historyMulti) exitHistoryMulti();
+  else enterHistoryMulti();
+});
+$("#hm-select-all").addEventListener("click", toggleSelectAll);
+$("#hm-delete").addEventListener("click", deleteSelectedHistory);
+$("#hm-exit").addEventListener("click", exitHistoryMulti);
 $("#btn-clear-history").addEventListener("click", () => {
   confirmModal({
     title: "清空全部执行记录",

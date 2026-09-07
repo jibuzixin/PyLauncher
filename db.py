@@ -537,6 +537,26 @@ def delete_execution(exec_id: int) -> bool:
         return cur.rowcount > 0
 
 
+def delete_executions(ids: list[int]) -> tuple[int, list[int]]:
+    """批量删除执行记录；返回 (删除数, 跳过的 running 记录 id 列表)。"""
+    ids = [int(i) for i in ids if str(i).strip().isdigit()]
+    if not ids:
+        return 0, []
+    placeholders = ",".join("?" * len(ids))
+    with _lock, _conn() as conn:
+        running = [
+            r["id"] for r in conn.execute(
+                f"SELECT id FROM executions WHERE id IN ({placeholders}) AND status='running'", ids
+            ).fetchall()
+        ]
+        del_ids = [i for i in ids if i not in running]
+        if not del_ids:
+            return 0, running
+        dph = ",".join("?" * len(del_ids))
+        cur = conn.execute(f"DELETE FROM executions WHERE id IN ({dph})", del_ids)
+        return cur.rowcount, running
+
+
 def clear_executions(script_id: int | None = None) -> int:
     with _lock, _conn() as conn:
         if script_id is None:

@@ -838,6 +838,17 @@ async def clear_executions(req: ClearReq):
     return {"ok": True, "deleted": n}
 
 
+class DeleteExecsReq(BaseModel):
+    ids: list[int]
+
+
+@app.post("/api/executions/delete")
+async def delete_executions(req: DeleteExecsReq):
+    """批量删除执行记录；运行中的记录自动跳过。"""
+    deleted, skipped_running = db.delete_executions(req.ids)
+    return {"ok": True, "deleted": deleted, "skipped_running": skipped_running}
+
+
 @app.post("/api/executions/{exec_id}/terminate")
 async def terminate_execution(exec_id: int):
     ok = executor.terminate_execution(exec_id)
