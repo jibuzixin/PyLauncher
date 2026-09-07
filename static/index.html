@@ -650,23 +650,20 @@ select.f-input { appearance: none; padding-right: 30px;
 /* history */
 .history-wrap {
   position: absolute; inset: 0;
-  display: flex; flex-direction: row;
-  gap: 12px;
-  align-items: stretch;
-  overflow-x: auto;
-  overflow-y: hidden;
-  padding: 12px;
+  display: flex; flex-direction: column;
+  overflow: hidden;
+  padding: 0;
   min-height: 0;
 }
-/* 左列：筛选 + 列表（固定宽度，右卡宽度不变，超宽横向滑动） */
+/* 左列：筛选 + 列表 */
 .history-col {
-  flex: 0 0 400px;
+  flex: 1;
   display: flex; flex-direction: column;
   min-height: 0; min-width: 0;
 }
 .history-filter {
   display: flex; align-items: center; gap: 7px;
-  margin: 0 0 10px;
+  margin: 10px 12px;
   padding: 0 11px; height: 34px;
   border: 1px solid var(--hairline); border-radius: var(--radius-sm);
   background: var(--glass-strong);
@@ -676,7 +673,7 @@ select.f-input { appearance: none; padding-right: 30px;
 .history-filter:focus-within { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .history-filter svg { width: 13px; height: 13px; color: var(--faint); }
 .history-filter input { flex: 1; border: none; outline: none; background: transparent; }
-.history-list { flex: 1; overflow-y: auto; padding: 0 4px 10px; min-height: 0; }
+.history-list { flex: 1; overflow-y: auto; padding: 0 10px 14px; min-height: 0; }
 .hist-item {
   padding: 10px 12px;
   border: 1px solid var(--hairline);
@@ -707,16 +704,31 @@ select.f-input { appearance: none; padding-right: 30px;
 .tag .x:hover { color: var(--danger); }
 
 .history-detail {
-  flex: 0 0 560px;
-  min-width: 0;
+  position: absolute; inset: 0;
+  z-index: 5;
   overflow-y: auto;
   padding: 14px;
   display: flex; flex-direction: column; gap: 10px;
-  background: rgba(255, 255, 255, 0.5);
+  background: rgba(255, 255, 255, 0.62);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
   border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 12px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--shadow-md);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.32, 0.72, 0, 1);
 }
+.history-detail.open { transform: translateX(0); }
+.hd-back {
+  display: inline-flex; align-items: center; gap: 5px;
+  border: none; background: transparent;
+  color: var(--accent); font-size: 13px; font-weight: 600;
+  padding: 3px 8px 3px 4px; margin-right: 4px;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.hd-back:hover { background: rgba(0, 113, 227, 0.08); }
 .hd-head { display: flex; align-items: center; gap: 10px; }
 .hd-head .btn { flex-shrink: 0; }
 .hd-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -1127,7 +1139,7 @@ select.f-input { appearance: none; padding-right: 30px;
 /* ================= 执行记录多选 / 单条删除 ================= */
 .history-multi-bar {
   display: flex; align-items: center; gap: 8px;
-  margin: 0 0 8px; padding: 7px 11px;
+  margin: 0 12px 8px; padding: 7px 11px;
   border: 1px solid rgba(0, 113, 227, 0.25);
   border-radius: var(--radius-sm);
   background: rgba(0, 113, 227, 0.05);
@@ -1204,7 +1216,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.35</span>
+    <span class="badge">v0.0.36</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -2998,8 +3010,7 @@ function renderHistory(list) {
           refreshHistory();
           if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
           if (state.detailExec && state.detailExec.id === h.id) {
-            const d = $("#history-detail");
-            if (d) d.hidden = true;
+            closeHistoryDetail(true);
           }
         },
       });
@@ -3108,7 +3119,7 @@ async function deleteSelectedHistory() {
         toast(`已删除 ${r.deleted} 条记录`);
       }
       const d = $("#history-detail");
-      if (d) d.hidden = true;
+      if (d) closeHistoryDetail(true);
       refreshHistory();
     },
   });
@@ -3130,15 +3141,26 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/* 横向滚动：详情卡固定在右侧，列表与详情可左右滑动查看 */
-function scrollHistoryToDetail() {
-  const wrap = $("#history-wrap");
-  if (!wrap) return;
-  wrap.scrollTo({ left: wrap.scrollWidth, behavior: "smooth" });
+/* 详情页滑入/滑出（右滑进入、左滑返回） */
+function openHistoryDetail() {
+  const detail = $("#history-detail");
+  if (!detail) return;
+  detail.hidden = false;
+  detail.classList.remove("open");
+  // 双 rAF：先让浏览器渲染 translateX(100%) 初始帧，再加 open 触发右滑 transition
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => detail.classList.add("open"));
+  });
 }
-function scrollHistoryToStart() {
-  const wrap = $("#history-wrap");
-  if (wrap) wrap.scrollTo({ left: 0, behavior: "smooth" });
+function closeHistoryDetail(instant) {
+  const detail = $("#history-detail");
+  if (!detail) return;
+  const done = () => { detail.hidden = true; };
+  detail.classList.remove("open");
+  if (instant) { done(); return; }
+  // 等左滑动画结束后隐藏
+  detail._closeTimer && clearTimeout(detail._closeTimer);
+  detail._closeTimer = setTimeout(done, 320);
 }
 
 async function showHistoryDetail(id, itemEl) {
@@ -3152,7 +3174,7 @@ async function showHistoryDetail(id, itemEl) {
   const detail = $("#history-detail");
   detail.hidden = false;
   detail.innerHTML = "";
-  scrollHistoryToDetail(); // 详情卡片在右侧，自动横向滑过去
+  openHistoryDetail(); // 详情从右侧滑入
   // 静态输出行复制按钮（事件委托）
   detail.onclick = (e) => {
     const btn = e.target.closest(".copy-btn");
@@ -3162,9 +3184,14 @@ async function showHistoryDetail(id, itemEl) {
     copyText(stripAnsi(txt)).then((ok) => { if (ok) toast("已复制第 " + (btn.dataset.line || "") + " 行"); });
   };
 
-  // ===== 头部：名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
+  // ===== 头部：返回 + 名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
   const head = document.createElement("div");
   head.className = "hd-head";
+  const backBtn = document.createElement("button");
+  backBtn.className = "hd-back";
+  backBtn.innerHTML = "‹ 返回";
+  backBtn.title = "返回执行记录列表";
+  backBtn.onclick = () => closeHistoryDetail();
   const titleBox = document.createElement("div");
   titleBox.className = "hd-title";
   const nameRow = document.createElement("div");
@@ -3180,6 +3207,7 @@ async function showHistoryDetail(id, itemEl) {
   meta.textContent = `${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
   nameRow.append(nm, st);
   titleBox.append(nameRow, meta);
+  head.append(backBtn, titleBox);
 
   const actions = document.createElement("div");
   actions.className = "hd-actions";
@@ -3220,8 +3248,7 @@ async function showHistoryDetail(id, itemEl) {
       onConfirm: async () => {
         if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
         await api(`/api/executions/${rec.id}`, { method: "DELETE" });
-        detail.hidden = true;
-        scrollHistoryToStart(); // 详情卡关闭，横向滑回列表
+        closeHistoryDetail(true); // 详情已删除，直接回到列表
         refreshHistory();
       },
     });

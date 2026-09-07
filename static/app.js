@@ -1627,8 +1627,7 @@ function renderHistory(list) {
           refreshHistory();
           if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
           if (state.detailExec && state.detailExec.id === h.id) {
-            const d = $("#history-detail");
-            if (d) d.hidden = true;
+            closeHistoryDetail(true);
           }
         },
       });
@@ -1737,7 +1736,7 @@ async function deleteSelectedHistory() {
         toast(`已删除 ${r.deleted} 条记录`);
       }
       const d = $("#history-detail");
-      if (d) d.hidden = true;
+      if (d) closeHistoryDetail(true);
       refreshHistory();
     },
   });
@@ -1759,15 +1758,26 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/* 横向滚动：详情卡固定在右侧，列表与详情可左右滑动查看 */
-function scrollHistoryToDetail() {
-  const wrap = $("#history-wrap");
-  if (!wrap) return;
-  wrap.scrollTo({ left: wrap.scrollWidth, behavior: "smooth" });
+/* 详情页滑入/滑出（右滑进入、左滑返回） */
+function openHistoryDetail() {
+  const detail = $("#history-detail");
+  if (!detail) return;
+  detail.hidden = false;
+  detail.classList.remove("open");
+  // 双 rAF：先让浏览器渲染 translateX(100%) 初始帧，再加 open 触发右滑 transition
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => detail.classList.add("open"));
+  });
 }
-function scrollHistoryToStart() {
-  const wrap = $("#history-wrap");
-  if (wrap) wrap.scrollTo({ left: 0, behavior: "smooth" });
+function closeHistoryDetail(instant) {
+  const detail = $("#history-detail");
+  if (!detail) return;
+  const done = () => { detail.hidden = true; };
+  detail.classList.remove("open");
+  if (instant) { done(); return; }
+  // 等左滑动画结束后隐藏
+  detail._closeTimer && clearTimeout(detail._closeTimer);
+  detail._closeTimer = setTimeout(done, 320);
 }
 
 async function showHistoryDetail(id, itemEl) {
@@ -1781,7 +1791,7 @@ async function showHistoryDetail(id, itemEl) {
   const detail = $("#history-detail");
   detail.hidden = false;
   detail.innerHTML = "";
-  scrollHistoryToDetail(); // 详情卡片在右侧，自动横向滑过去
+  openHistoryDetail(); // 详情从右侧滑入
   // 静态输出行复制按钮（事件委托）
   detail.onclick = (e) => {
     const btn = e.target.closest(".copy-btn");
@@ -1791,9 +1801,14 @@ async function showHistoryDetail(id, itemEl) {
     copyText(stripAnsi(txt)).then((ok) => { if (ok) toast("已复制第 " + (btn.dataset.line || "") + " 行"); });
   };
 
-  // ===== 头部：名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
+  // ===== 头部：返回 + 名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
   const head = document.createElement("div");
   head.className = "hd-head";
+  const backBtn = document.createElement("button");
+  backBtn.className = "hd-back";
+  backBtn.innerHTML = "‹ 返回";
+  backBtn.title = "返回执行记录列表";
+  backBtn.onclick = () => closeHistoryDetail();
   const titleBox = document.createElement("div");
   titleBox.className = "hd-title";
   const nameRow = document.createElement("div");
@@ -1809,6 +1824,7 @@ async function showHistoryDetail(id, itemEl) {
   meta.textContent = `${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
   nameRow.append(nm, st);
   titleBox.append(nameRow, meta);
+  head.append(backBtn, titleBox);
 
   const actions = document.createElement("div");
   actions.className = "hd-actions";
@@ -1849,8 +1865,7 @@ async function showHistoryDetail(id, itemEl) {
       onConfirm: async () => {
         if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
         await api(`/api/executions/${rec.id}`, { method: "DELETE" });
-        detail.hidden = true;
-        scrollHistoryToStart(); // 详情卡关闭，横向滑回列表
+        closeHistoryDetail(true); // 详情已删除，直接回到列表
         refreshHistory();
       },
     });
