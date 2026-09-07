@@ -2739,10 +2739,77 @@ async function checkUv() {
   }
 }
 
+/* ================= 三栏拖拽调宽（可伸缩布局） ================= */
+
+const COLS_KEY = "launcher_cols";
+let colWidths = { sidebar: 264, panel: null }; // panel: null = 百分比模式
+
+function loadColWidths() {
+  try {
+    const c = JSON.parse(localStorage.getItem(COLS_KEY) || "{}");
+    if (typeof c.sidebar === "number" && c.sidebar >= 200 && c.sidebar <= 380) colWidths.sidebar = c.sidebar;
+    if (typeof c.panel === "number" && c.panel >= 400 && c.panel <= 700) colWidths.panel = c.panel;
+  } catch {}
+}
+function saveColWidths() {
+  try { localStorage.setItem(COLS_KEY, JSON.stringify(colWidths)); } catch {}
+}
+function applyColWidths() {
+  const sb = $(".sidebar");
+  const pn = $(".panel");
+  if (sb) sb.style.width = colWidths.sidebar + "px";
+  if (pn && colWidths.panel) {
+    pn.style.width = colWidths.panel + "px";
+    pn.style.flex = "0 0 auto";
+  } else if (pn) {
+    pn.style.width = "42%";
+    pn.style.flex = "";
+  }
+}
+
+function setupResize() {
+  loadColWidths();
+  applyColWidths();
+  $$(".resize-handle").forEach((handle) => {
+    handle.addEventListener("mousedown", (e) => {
+      e.preventDefault();
+      const target = handle.dataset.target;
+      handle.classList.add("dragging");
+      const startX = e.clientX;
+      const sb = $(".sidebar");
+      const pn = $(".panel");
+      const startSb = sb.getBoundingClientRect().width;
+      const startPn = pn.getBoundingClientRect().width;
+      const move = (ev) => {
+        const dx = ev.clientX - startX;
+        if (target === "sidebar") {
+          const w = Math.min(380, Math.max(200, startSb + dx));
+          sb.style.width = w + "px";
+          colWidths.sidebar = w;
+        } else {
+          const w = Math.min(700, Math.max(400, startPn - dx));
+          pn.style.width = w + "px";
+          pn.style.flex = "0 0 auto";
+          colWidths.panel = w;
+        }
+      };
+      const up = () => {
+        handle.classList.remove("dragging");
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        saveColWidths();
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    });
+  });
+}
+
 /* ================= 初始化 ================= */
 
 async function init() {
   applyPrefs(); // 恢复上次的 UI 偏好（标签过滤 / 开关等）
+  setupResize(); // 三栏可拖拽调宽
   await checkUv();
   try {
     await loadScripts();
