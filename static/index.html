@@ -17,6 +17,9 @@
   --blur-lg: blur(26px) saturate(185%);
   --blur-md: blur(18px) saturate(170%);
   --blur-sm: blur(10px) saturate(160%);
+  /* 浮动卡片材质：更通透，让背景渐变透出 */
+  --card: rgba(255, 255, 255, 0.52);
+  --card-blur: blur(22px) saturate(155%);
   /* 文字（苹果灰阶） */
   --text: #1d1d1f;
   --muted: #6e6e73;
@@ -55,12 +58,13 @@ html, body { height: 100%; }
 body {
   font-family: var(--font);
   color: var(--text);
-  /* macOS 浅色材质：中性灰渐变 + 极淡光斑，衬托浮动卡片 */
+  /* macOS 式柔和渐变背景（彩色光斑版，恢复） */
   background:
-    radial-gradient(900px 620px at 6% -10%, rgba(120, 170, 255, 0.10), transparent 60%),
-    radial-gradient(800px 560px at 104% 6%, rgba(160, 130, 255, 0.08), transparent 58%),
-    radial-gradient(760px 520px at 50% 118%, rgba(255, 170, 120, 0.07), transparent 60%),
-    linear-gradient(165deg, #f6f7f9 0%, #eef0f4 48%, #f1f2f5 100%);
+    radial-gradient(1100px 760px at 8% -12%, rgba(88, 166, 255, 0.32), transparent 62%),
+    radial-gradient(1000px 720px at 108% 8%, rgba(180, 130, 255, 0.26), transparent 58%),
+    radial-gradient(920px 680px at 50% 118%, rgba(255, 176, 128, 0.24), transparent 60%),
+    radial-gradient(700px 500px at 88% 88%, rgba(120, 220, 255, 0.22), transparent 55%),
+    linear-gradient(160deg, #eef3fb 0%, #f3f1fa 45%, #fdf2f2 100%);
   background-attachment: fixed;
   font-size: 13px;
   line-height: 1.5;
@@ -83,10 +87,10 @@ svg { flex-shrink: 0; }
   padding: 0 18px;
   margin: 14px 14px 0;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.6);
-  background: var(--glass-strong);
-  backdrop-filter: var(--blur-lg);
-  -webkit-backdrop-filter: var(--blur-lg);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  background: var(--card);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
   box-shadow: var(--shadow-md);
   z-index: 5;
   position: relative;
@@ -196,10 +200,10 @@ svg { flex-shrink: 0; }
   min-width: 200px;
   max-width: 380px;
   display: flex; flex-direction: column;
-  background: var(--glass-strong);
-  backdrop-filter: var(--blur-lg);
-  -webkit-backdrop-filter: var(--blur-lg);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: var(--card);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 14px;
   box-shadow: var(--shadow-md);
   min-height: 0;
@@ -301,10 +305,10 @@ svg { flex-shrink: 0; }
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  background: var(--glass-strong);
-  backdrop-filter: var(--blur-lg);
-  -webkit-backdrop-filter: var(--blur-lg);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: var(--card);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 14px;
   box-shadow: var(--shadow-md);
   min-height: 0;
@@ -540,7 +544,7 @@ select.f-input { appearance: none; padding-right: 30px;
   flex-shrink: 0;
   padding: 12px 22px 14px;
   border-top: 1px solid var(--hairline);
-  background: linear-gradient(to bottom, rgba(255,255,255,0.55), rgba(255,255,255,0.85));
+  background: linear-gradient(to bottom, rgba(255,255,255,0.35), rgba(255,255,255,0.62));
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
 }
@@ -557,10 +561,10 @@ select.f-input { appearance: none; padding-right: 30px;
   min-width: 400px;
   max-width: 640px;
   display: flex; flex-direction: column;
-  background: var(--glass-strong);
-  backdrop-filter: var(--blur-lg);
-  -webkit-backdrop-filter: var(--blur-lg);
-  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: var(--card);
+  backdrop-filter: var(--card-blur);
+  -webkit-backdrop-filter: var(--card-blur);
+  border: 1px solid rgba(255, 255, 255, 0.55);
   border-radius: 14px;
   box-shadow: var(--shadow-md);
   position: relative;
@@ -1188,7 +1192,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.33</span>
+    <span class="badge">v0.0.34</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
