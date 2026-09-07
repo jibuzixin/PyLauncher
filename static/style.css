@@ -162,6 +162,8 @@ svg { flex-shrink: 0; }
 }
 .doc-link svg { width: 15px; height: 15px; }
 .doc-link:hover { color: var(--accent); background: rgba(0, 113, 227, 0.07); }
+/* 顶栏文档胶囊：中性玻璃底，hover 蓝色提亮（与文字链接同语义、与按钮语言统一） */
+.btn.doc-glass:hover { color: var(--accent); border-color: rgba(0, 113, 227, 0.35); box-shadow: var(--shadow-md); }
 /* 运行中：黄色呼吸灯 */
 .btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; box-shadow: 0 2px 12px rgba(245, 158, 11, 0.45) !important; }
 .btn.run-active:hover { background: #f59e0b !important; }
