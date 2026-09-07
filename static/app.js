@@ -1567,7 +1567,6 @@ function renderHistoryError(msg) {
 function renderHistory(list) {
   const wrap = $("#history-list");
   wrap.innerHTML = "";
-  updateHistoryMultiBar();
   const kw = ($("#history-search").value || "").toLowerCase();
   const filtered = list.filter((h) => {
     if (historyScope === "script" && state.selectedId && h.script_id !== state.selectedId) return false;
@@ -1582,6 +1581,7 @@ function renderHistory(list) {
       ? `当前选中的「${state.script ? state.script.name : ""}」暂无执行记录，可点上方「全部」查看所有脚本的记录`
       : "暂无执行记录：运行脚本后，每次执行都会自动记录到这里";
     wrap.innerHTML = `<div class="sidebar-empty" style="padding:20px">${escapeHtml(hint)}</div>`;
+    updateHistoryMultiBar();
     return;
   }
   for (const h of filtered) {
@@ -1658,6 +1658,8 @@ function renderHistory(list) {
     };
     wrap.appendChild(item);
   }
+  // 列表渲染完成后刷新操作条（全选/取消全选文字依赖已渲染的条目数）
+  updateHistoryMultiBar();
 }
 
 /* ================= 执行记录多选删除 ================= */
@@ -1684,7 +1686,12 @@ function toggleHistorySelect(id) {
   if (selectedHistory.has(id)) selectedHistory.delete(id);
   else selectedHistory.add(id);
   const item = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(id));
-  if (item) item.classList.toggle("selected", selectedHistory.has(id));
+  if (item) {
+    item.classList.toggle("selected", selectedHistory.has(id));
+    // 卡片行点击时同步多选框勾选状态
+    const cb = item.querySelector(".hi-cb");
+    if (cb) cb.checked = selectedHistory.has(id);
+  }
   updateHistoryMultiBar();
 }
 
@@ -1711,6 +1718,7 @@ function toggleSelectAll() {
     items.forEach((el) => selectedHistory.add(Number(el.dataset.id)));
   }
   refreshHistory();
+  updateHistoryMultiBar(); // 立即刷新「全选/取消全选」文字，不等网络
 }
 
 async function deleteSelectedHistory() {
@@ -2683,7 +2691,6 @@ $("#btn-history-multi").addEventListener("click", () => {
 });
 $("#hm-select-all").addEventListener("click", toggleSelectAll);
 $("#hm-delete").addEventListener("click", deleteSelectedHistory);
-$("#hm-exit").addEventListener("click", exitHistoryMulti);
 $("#btn-clear-history").addEventListener("click", () => {
   confirmModal({
     title: "清空全部执行记录",
