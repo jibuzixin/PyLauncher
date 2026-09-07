@@ -684,10 +684,15 @@ select.f-input { appearance: none; padding-right: 30px;
   backdrop-filter: var(--blur-sm);
   -webkit-backdrop-filter: var(--blur-sm);
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s;
 }
-.hist-item:hover { border-color: var(--hairline-strong); background: rgba(255, 255, 255, 0.85); box-shadow: var(--shadow-md); }
-.hist-item.active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12); }
+.hist-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow-md);
+}
+.hist-item.active { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 113, 227, 0.12); transform: none; }
 .hist-item .hi-top { display: flex; align-items: center; gap: 8px; }
 .hist-item .hi-name { font-weight: 600; font-size: 12.5px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-item .hi-time { font-size: 10.5px; color: var(--faint); flex-shrink: 0; }
@@ -958,9 +963,14 @@ select.f-input { appearance: none; padding-right: 30px;
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s;
 }
-.schedule-item:hover { border-color: var(--hairline-strong); box-shadow: var(--shadow-md); }
+.schedule-item:hover {
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow-md);
+}
 .si-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .si-name { font-weight: 650; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .si-head-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -1237,7 +1247,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.38</span>
+    <span class="badge">v0.0.39</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
