@@ -169,8 +169,12 @@ svg { flex-shrink: 0; }
 }
 .doc-link svg { width: 15px; height: 15px; }
 .doc-link:hover { color: var(--accent); background: rgba(0, 113, 227, 0.07); }
-/* 顶栏文档胶囊：中性玻璃底，hover 蓝色提亮（与文字链接同语义、与按钮语言统一） */
-.btn.doc-glass:hover { color: var(--accent); border-color: rgba(0, 113, 227, 0.35); box-shadow: var(--shadow-md); }
+/* 顶栏文档入口：与次级按钮同为 ghost 透明形态，hover 蓝色提亮区分语义 */
+.btn.doc-glass:hover {
+  color: var(--accent);
+  background: rgba(0, 113, 227, 0.07);
+  border-color: rgba(0, 113, 227, 0.3);
+}
 /* 运行中：黄色呼吸灯 */
 .btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; box-shadow: 0 2px 12px rgba(245, 158, 11, 0.45) !important; }
 .btn.run-active:hover { background: #f59e0b !important; }
@@ -1274,11 +1278,11 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.46</span>
+    <span class="badge">v0.0.47</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
-    <button class="btn doc-glass" id="btn-usage" title="查看使用说明（新标签页打开）">
+    <button class="btn ghost doc-glass" id="btn-usage" title="查看使用说明（新标签页打开）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>文档</span>
     </button>
