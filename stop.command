@@ -23,5 +23,3 @@ if [ -n "$PID" ]; then
 else
   echo "服务当前未在运行。"
 fi
-
-read -r -p "按回车键关闭此窗口…"
