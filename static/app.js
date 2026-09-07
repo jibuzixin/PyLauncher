@@ -501,7 +501,8 @@ function renderEnvBar(env) {
 
   if (env.has_deps) {
     const r = document.createElement("span");
-    r.innerHTML = `<span class="dot ok"></span><span class="env-text ok">${escapeHtml(env.deps_name || "")}</span>`;
+    r.className = "env-text";
+    r.textContent = env.deps_name || "";
     r.title = env.requirements_path || "";
     parts.push(r);
   }
