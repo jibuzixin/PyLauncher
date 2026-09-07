@@ -151,6 +151,13 @@ svg { flex-shrink: 0; }
 }
 .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 .btn.primary:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.btn.soft-green {
+  background: rgba(5, 150, 105, 0.12);
+  color: #047857;
+  border-color: rgba(5, 150, 105, 0.32);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
+}
+.btn.soft-green:hover { background: rgba(5, 150, 105, 0.2); border-color: rgba(5, 150, 105, 0.5); }
 /* 运行中：黄色呼吸灯 */
 .btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; box-shadow: 0 2px 12px rgba(245, 158, 11, 0.45) !important; }
 .btn.run-active:hover { background: #f59e0b !important; }
@@ -1254,11 +1261,11 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.43</span>
+    <span class="badge">v0.0.44</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
-    <button class="btn primary" id="btn-usage" title="查看使用说明（新标签页打开）">
+    <button class="btn soft-green" id="btn-usage" title="查看使用说明（新标签页打开）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>使用说明</span>
     </button>
