@@ -100,10 +100,17 @@ svg { flex-shrink: 0; }
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   color: var(--text);
+  text-decoration: none;
   background: var(--glass-strong);
   border: 1px solid var(--glass-border);
   border-radius: 9px;
   box-shadow: var(--shadow-sm);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.brand-logo:hover {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 .brand-logo svg { width: 17px; height: 17px; }
 .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
@@ -1243,14 +1250,18 @@ select.f-input { appearance: none; padding-right: 30px;
 
 <header class="topbar">
   <div class="brand">
-    <span class="brand-logo">
+    <a class="brand-logo" href="https://github.com/jibuzixin/py-script-launcher" target="_blank" rel="noopener" title="查看 GitHub 源码仓库">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
-    </span>
+    </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.39</span>
+    <span class="badge">v0.0.42</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
+    <button class="btn ghost" id="btn-usage" title="查看使用说明（新标签页打开）">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>使用说明</span>
+    </button>
     <button class="btn ghost" id="btn-export" title="导出全部脚本信息（JSON）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
       <span>导出</span>
@@ -4150,6 +4161,9 @@ $("#btn-clear-history").addEventListener("click", () => {
       refreshHistory();
     },
   });
+});
+$("#btn-usage").addEventListener("click", () => {
+  window.open("/static/usage.html?v=1", "_blank", "noopener");
 });
 $("#btn-export").addEventListener("click", exportData);
 $("#btn-import-config").addEventListener("click", () => {

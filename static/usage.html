@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>使用说明 · Python 脚本启动器</title>
+<style>
+  :root {
+    --text: #1d1d1f; --muted: #6e6e73; --faint: #86868b;
+    --accent: #0071e3; --ok: #1a7f37; --danger: #d93025; --warning: #b45309;
+    --hairline: rgba(0,0,0,0.07);
+    --card: rgba(255,255,255,0.6);
+    --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    font-size: 14px;
+    line-height: 1.7;
+    background:
+      radial-gradient(1000px 700px at 8% -10%, rgba(88,166,255,0.22), transparent 60%),
+      radial-gradient(900px 640px at 104% 6%, rgba(180,130,255,0.18), transparent 58%),
+      linear-gradient(165deg, #eef3fb 0%, #f3f1fa 50%, #fdf2f2 100%);
+    background-attachment: fixed;
+    padding: 40px 20px 80px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  .hero {
+    background: var(--card);
+    backdrop-filter: blur(24px) saturate(170%);
+    -webkit-backdrop-filter: blur(24px) saturate(170%);
+    border: 1px solid rgba(255,255,255,0.65);
+    border-radius: 20px;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.08);
+    padding: 36px 40px;
+    margin-bottom: 20px;
+  }
+  .hero h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
+  .hero .sub { color: var(--muted); margin-top: 8px; font-size: 14px; }
+  .hero .ver { display: inline-block; margin-top: 14px; font-size: 11px; color: var(--muted); border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 10px; background: rgba(255,255,255,0.6); }
+  .card {
+    background: var(--card);
+    backdrop-filter: blur(20px) saturate(160%);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255,255,255,0.65);
+    border-radius: 16px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.05);
+    padding: 24px 28px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 16px; font-weight: 650; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .card h2 .n {
+    width: 22px; height: 22px; border-radius: 7px; background: var(--accent); color: #fff;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 600; flex-shrink: 0;
+  }
+  .card p { color: var(--muted); margin-bottom: 8px; }
+  .card ul { margin: 6px 0 8px 20px; color: var(--muted); }
+  .card li { margin-bottom: 4px; }
+  .card li b { color: var(--text); font-weight: 600; }
+  .card code {
+    font-family: var(--mono); font-size: 12px;
+    background: rgba(0,0,0,0.05); border-radius: 6px; padding: 1px 7px;
+    color: var(--text);
+  }
+  .card pre {
+    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
+    background: rgba(0,0,0,0.05); border: 1px solid var(--hairline);
+    border-radius: 10px; padding: 12px 16px;
+    overflow-x: auto; margin: 8px 0 12px;
+  }
+  .kbd {
+    font-family: var(--mono); font-size: 11px;
+    background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.12);
+    border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px;
+  }
+  .tag {
+    display: inline-block; font-size: 11px; border-radius: 999px; padding: 1px 10px;
+    margin-right: 6px; border: 1px solid var(--hairline); background: rgba(255,255,255,0.5);
+    color: var(--muted);
+  }
+  .tag.green { color: var(--ok); border-color: rgba(26,127,55,0.3); background: rgba(26,127,55,0.08); }
+  .tag.blue { color: var(--accent); border-color: rgba(0,113,227,0.3); background: rgba(0,113,227,0.08); }
+  .tag.orange { color: var(--warning); border-color: rgba(180,83,9,0.3); background: rgba(180,83,9,0.08); }
+  .tag.red { color: var(--danger); border-color: rgba(217,48,37,0.3); background: rgba(217,48,37,0.08); }
+  .faq-item { margin-bottom: 14px; }
+  .faq-item .q { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+  .faq-item .a { color: var(--muted); }
+  .back { text-align: center; margin-top: 10px; }
+  .back a { color: var(--accent); text-decoration: none; font-size: 13px; }
+  .back a:hover { text-decoration: underline; }
+  @media (max-width: 640px) {
+    body { padding: 20px 12px 60px; }
+    .hero, .card { padding: 20px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hero">
+    <h1>Python 脚本启动器 · 使用说明</h1>
+    <div class="sub">本地脚本运行平台 —— 把「进入目录 + 敲 uv 命令 + 盯终端输出」变成可视化表单 + 一键按钮。</div>
+    <span class="ver">v0.0.42</span>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">1</span>快速开始</h2>
+    <p>右上角 <b>「导入 / 扫描」</b> 是你的入口：</p>
+    <ul>
+      <li><b>导入单个脚本</b>：填写 <code>.py</code> 文件路径（或本地文件选择器），自动解析命令行参数；可自定义脚本名称与描述</li>
+      <li><b>扫描目录</b>：扫描指定目录下的全部 <code>.py</code> 文件，逐个导入</li>
+      <li><b>导出 / 导入 JSON</b>：顶栏可批量导出全部脚本信息，用于版本迁移，导入即可恢复</li>
+    </ul>
+    <p>约定：脚本必须使用 <b>argparse</b> 解析命令行参数，启动器才能自动识别参数、默认值、类型与描述。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">2</span>三栏布局</h2>
+    <ul>
+      <li><b>左侧 · 脚本列表</b>：搜索、标签过滤（多选）、运行任务徽章（黄色 ●N，点击查看运行中任务并跳转详情）</li>
+      <li><b>中间 · 参数表单</b>：当前脚本的环境状态、参数预设、参数填写与执行</li>
+      <li><b>右侧 · 面板</b>：控制台 / 执行记录 / 定时任务 三个页签</li>
+    </ul>
+    <p>侧栏与面板之间可以<b>拖拽分隔条</b>调整宽度，宽度偏好自动保存；顶栏左上角可收起/展开侧栏。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">3</span>参数表单</h2>
+    <ul>
+      <li><b>必选参数置顶</b>：有默认值或声明 <code>required=True</code> 的视为必填，排在最前</li>
+      <li><b>类型标签</b>：每个参数显示类型（<span class="tag">str</span><span class="tag blue">int</span><span class="tag green">float</span><span class="tag orange">bool</span>…），带颜色区分</li>
+      <li><b>描述</b>：解析到的参数描述显示在输入框上方，可点击编辑</li>
+      <li><b>布尔参数</b>：使用开关按钮切换</li>
+      <li><b>自动保存</b>：填写内容实时保存，下次打开还在；「仅显示已填参数」开关可隐藏空值</li>
+      <li><b>参数预设</b>：保存当前字段为预设、覆盖已有预设、固定常用预设置顶、最近使用排序，标签过多时折叠为「更多」</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">4</span>执行与环境（uv）</h2>
+    <p>运行原理：在脚本所在目录使用 <code>uv run python 脚本.py 参数…</code>，每个脚本独立虚拟环境。</p>
+    <ul>
+      <li><b>环境检测</b>：打开脚本时自动检测 <code>uv</code> 是否存在（绿色=就绪）、虚拟环境是否已创建</li>
+      <li><b>uv 未安装</b>：给出友好提示与 Mac / Windows 安装命令</li>
+      <li><b>初始化环境</b>：点击「初始化 venv」创建虚拟环境；自动识别 <code>requirements.txt</code> / <code>pyproject.toml</code>，也可手动指定依赖文件路径安装</li>
+      <li><b>单脚本运行</b>：兼容 PEP 723 内联依赖脚本（文件头 <code># /// script</code> 声明），uv 可直接运行，无需依赖文件</li>
+      <li><b>复制命令</b>：执行按钮旁可复制当前参数对应的完整 <code>uv run</code> 命令</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">5</span>控制台</h2>
+    <ul>
+      <li>实时展示终端标准输出，支持 <b>\r 进度条同行刷新</b> 等终端效果</li>
+      <li><b>行号</b>：每行显示行号，悬浮出现复制按钮，可复制整行；支持多行选择复制</li>
+      <li><b>自动滚动 / 等宽字体</b>：工具栏开关控制</li>
+      <li>同时运行多个任务时，每个任务可在执行记录详情页查看自己的实时输出；脚本卡片徽章实时显示运行中的任务数</li>
+      <li>「终止」按钮终止最新一次运行（SIGTERM → 强杀进程组）</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">6</span>执行记录</h2>
+    <ul>
+      <li>每次执行自动记录：脚本、参数、开始时间、退出码、状态（<span class="tag green">成功</span><span class="tag red">失败</span><span class="tag orange">运行中</span><span class="tag">已终止</span>）、完整标准输出</li>
+      <li><b>添加标签</b>：给记录打标签便于筛选；支持按标签 / 脚本名 / 状态搜索</li>
+      <li><b>详情</b>：点击记录滑入详情页（运行中任务实时输出 + 终止 / 复制命令 / 用此参数重跑 / 删除），左上角返回</li>
+      <li><b>多选删除</b>：进入「多选」模式批量删除，也支持 hover 单条删除</li>
+      <li>「重跑」会将该次执行的参数回填到表单</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">7</span>定时任务</h2>
+    <ul>
+      <li><b>cron 表达式</b>：兼容标准 5 段 cron（分 时 日 月 周），如 <code>*/10 * * * *</code></li>
+      <li><b>可视化选择</b>：不懂 cron 也能点选分钟 / 小时 / 每天 / 每周等常用规则</li>
+      <li><b>执行次数</b>：卡片上直接编辑次数（输入 <code>-1</code> 表示不限次数），达到次数自动停用；再次启用时从 0 重新计数</li>
+      <li><b>参数填充</b>：任务可使用某个参数预设，也可自行填写</li>
+      <li>卡片实时显示下次执行时间（精确到分钟）；可随时编辑 cron 与次数</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">8</span>数据与存储</h2>
+    <p>所有数据保存在本地 <code>launcher.db</code>（SQLite）：脚本信息、参数预设、执行记录、定时任务、界面偏好。随删随恢复，无需联网。</p>
+    <p>服务地址：<code>http://127.0.0.1:8900</code>；访问时 URL 带 <code>?t=时间戳</code> 可绕过浏览器缓存加载最新版本。</p>
+  </div>
+
+  <div class="card">
+    <h2><span class="n">9</span>常见问题</h2>
+    <div class="faq-item">
+      <div class="q">Q：为什么页面还是旧样式？</div>
+      <div class="a">每次更新后请用带新 <code>?t=</code> 时间戳的地址打开，或强制刷新（<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">R</span>）。</div>
+    </div>
+    <div class="faq-item">
+      <div class="q">Q：uv 未安装怎么办？</div>
+      <div class="a">页面会给出对应平台的安装命令：macOS <code>brew install uv</code>；Windows <code>winget install astral-sh.uv</code> 或 <code>pip install uv</code>。</div>
+    </div>
+    <div class="faq-item">
+      <div class="q">Q：导入脚本提示 422？</div>
+      <div class="a">422 表示参数校验失败：请检查路径是否为绝对路径、文件是否存在，且脚本为可解析的 Python 文件。</div>
+    </div>
+    <div class="faq-item">
+      <div class="q">Q：服务怎么停止？</div>
+      <div class="a">终端执行 <code>pkill -9 -f main.py</code>（macOS / Linux）；Windows 在任务管理器结束 python 进程。</div>
+    </div>
+  </div>
+
+  <div class="back"><a href="/">← 返回启动器</a></div>
+
+</div>
+</body>
+</html>

@@ -2737,6 +2737,9 @@ $("#btn-clear-history").addEventListener("click", () => {
     },
   });
 });
+$("#btn-usage").addEventListener("click", () => {
+  window.open("/static/usage.html?v=1", "_blank", "noopener");
+});
 $("#btn-export").addEventListener("click", exportData);
 $("#btn-import-config").addEventListener("click", () => {
   const input = document.createElement("input");

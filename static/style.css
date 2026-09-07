@@ -93,10 +93,17 @@ svg { flex-shrink: 0; }
   width: 28px; height: 28px;
   display: flex; align-items: center; justify-content: center;
   color: var(--text);
+  text-decoration: none;
   background: var(--glass-strong);
   border: 1px solid var(--glass-border);
   border-radius: 9px;
   box-shadow: var(--shadow-sm);
+  transition: background 0.15s, box-shadow 0.15s, transform 0.1s;
+}
+.brand-logo:hover {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 .brand-logo svg { width: 17px; height: 17px; }
 .brand-name { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
