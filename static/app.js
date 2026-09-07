@@ -1759,6 +1759,17 @@ function formatTime(iso) {
   return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/* 横向滚动：详情卡固定在右侧，列表与详情可左右滑动查看 */
+function scrollHistoryToDetail() {
+  const wrap = $("#history-wrap");
+  if (!wrap) return;
+  wrap.scrollTo({ left: wrap.scrollWidth, behavior: "smooth" });
+}
+function scrollHistoryToStart() {
+  const wrap = $("#history-wrap");
+  if (wrap) wrap.scrollTo({ left: 0, behavior: "smooth" });
+}
+
 async function showHistoryDetail(id, itemEl) {
   $$(".hist-item").forEach((el) => el.classList.remove("active"));
   if (itemEl) itemEl.classList.add("active");
@@ -1770,6 +1781,7 @@ async function showHistoryDetail(id, itemEl) {
   const detail = $("#history-detail");
   detail.hidden = false;
   detail.innerHTML = "";
+  scrollHistoryToDetail(); // 详情卡片在右侧，自动横向滑过去
   // 静态输出行复制按钮（事件委托）
   detail.onclick = (e) => {
     const btn = e.target.closest(".copy-btn");
@@ -1838,6 +1850,7 @@ async function showHistoryDetail(id, itemEl) {
         if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
         await api(`/api/executions/${rec.id}`, { method: "DELETE" });
         detail.hidden = true;
+        scrollHistoryToStart(); // 详情卡关闭，横向滑回列表
         refreshHistory();
       },
     });
