@@ -605,6 +605,21 @@ async function initEnv() {
 
 /* ================= 预设 ================= */
 
+/** 预设展示分组：固定项排最前（不限个数），非固定按最近使用补足到 MAX_SHOWN 个，其余折叠 */
+const PRESET_MAX_SHOWN = 6;
+function presetDisplayGroups(all) {
+  const pinned = all.filter((p) => p.pinned);
+  const unpinned = all
+    .filter((p) => !p.pinned)
+    .sort((a, b) => {
+      const c = String(b.last_used_at || "").localeCompare(String(a.last_used_at || ""));
+      return c !== 0 ? c : String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    });
+  const shown = unpinned.slice(0, Math.max(0, PRESET_MAX_SHOWN - pinned.length));
+  const rest = unpinned.slice(shown.length);
+  return { pinned, shown, rest };
+}
+
 function renderPresets(presets) {
   const bar = $("#preset-bar");
   bar.innerHTML = "";
@@ -613,20 +628,12 @@ function renderPresets(presets) {
   lbl.textContent = "预设";
   const chips = document.createElement("div");
   chips.className = "preset-chips";
-  const all = presets || [];
-  // 固定项排最前（不限个数）→ 最近使用 3 个 → 其余折叠进「更多」气泡
-  const pinned = all.filter((p) => p.pinned);
-  const recent = all
-    .filter((p) => !p.pinned && p.last_used_at)
-    .sort((a, b) => String(b.last_used_at).localeCompare(String(a.last_used_at)))
-    .slice(0, 3);
-  const recentIds = new Set(recent.map((p) => p.id));
-  const rest = all.filter((p) => !p.pinned && !recentIds.has(p.id));
-  for (const p of [...pinned, ...recent]) {
+  const { pinned, shown, rest } = presetDisplayGroups(presets || []);
+  for (const p of [...pinned, ...shown]) {
     chips.appendChild(makePresetChip(p));
   }
   if (rest.length > 0) {
-    chips.appendChild(makeMoreBubble(rest.length, all));
+    chips.appendChild(makeMoreBubble(rest.length, presets || []));
   }
   const saveBtn = document.createElement("button");
   saveBtn.className = "btn mini ghost";
@@ -706,15 +713,11 @@ function openPresetsModal(presets) {
 function renderPresetManager(mask, presets) {
   const wrap = $("#preset-manage", mask);
   wrap.innerHTML = "";
-  const recent = presets
-    .filter((p) => !p.pinned && p.last_used_at)
-    .sort((a, b) => String(b.last_used_at).localeCompare(String(a.last_used_at)))
-    .slice(0, 3);
-  const recentIds = new Set(recent.map((p) => p.id));
+  const { pinned, shown, rest } = presetDisplayGroups(presets || []);
   const groups = [
-    { title: "📌 已固定", items: presets.filter((p) => p.pinned) },
-    { title: "最近使用", items: recent },
-    { title: "全部", items: presets.filter((p) => !p.pinned && !recentIds.has(p.id)) },
+    { title: "📌 已固定", items: pinned },
+    { title: "最近使用", items: shown },
+    { title: "全部", items: rest },
   ];
   for (const g of groups) {
     if (g.items.length === 0) continue;
