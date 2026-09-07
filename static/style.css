@@ -597,55 +597,63 @@ select.f-input { appearance: none; padding-right: 30px;
 .copy-float .btn { box-shadow: 0 6px 20px rgba(0, 113, 227, 0.35); background: var(--accent); color: #fff; border-color: var(--accent); }
 .copy-float .btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
 
-/* ===== Modal ===== */
+/* ===== Modal（玻璃弹窗） ===== */
 .modal-mask {
   position: fixed; inset: 0;
-  background: rgba(20, 24, 33, 0.3);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(20, 24, 33, 0.28);
+  backdrop-filter: blur(14px) saturate(160%);
+  -webkit-backdrop-filter: blur(14px) saturate(160%);
   display: flex; align-items: center; justify-content: center;
   z-index: 100;
+  padding: 24px;
 }
 .modal {
-  width: 460px; max-width: calc(100vw - 40px);
-  max-height: calc(100vh - 80px);
-  background: var(--glass-strong);
+  width: 460px; max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 48px);
+  background: rgba(255, 255, 255, 0.86);
   backdrop-filter: var(--blur-lg);
   -webkit-backdrop-filter: var(--blur-lg);
   border: 1px solid var(--glass-border);
-  border-radius: 18px;
-  box-shadow: var(--shadow-lg);
+  border-radius: 20px;
+  box-shadow: var(--shadow-lg), 0 24px 60px rgba(0, 0, 0, 0.14), inset 0 1px 0 rgba(255, 255, 255, 0.9);
   display: flex; flex-direction: column;
   overflow: hidden;
 }
 .modal-head {
   display: flex; align-items: center; justify-content: space-between;
-  padding: 15px 19px;
+  padding: 18px 24px 14px;
   border-bottom: 1px solid var(--hairline);
 }
-.modal-title { font-size: 14px; font-weight: 650; }
+.modal-title { font-size: 15px; font-weight: 650; letter-spacing: -0.01em; }
 .modal-close {
   border: none; background: transparent; color: var(--muted);
-  width: 28px; height: 28px; border-radius: 8px;
+  width: 30px; height: 30px; border-radius: var(--radius-pill);
   display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s, color 0.15s;
 }
-.modal-close:hover { background: rgba(0, 0, 0, 0.06); color: var(--text); }
-.modal-close svg { width: 14px; height: 14px; }
-.modal-body { padding: 19px; overflow-y: auto; }
+.modal-close:hover { background: rgba(0, 0, 0, 0.05); color: var(--text); }
+.modal-close svg { width: 15px; height: 15px; }
+.modal-body { padding: 22px 24px 10px; overflow-y: auto; }
 .modal-foot {
-  padding: 13px 19px;
+  padding: 14px 24px 20px;
   border-top: 1px solid var(--hairline);
-  display: flex; justify-content: flex-end; gap: 8px;
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 8px;
 }
+.modal-foot .btn { height: 36px; padding: 0 18px; }
 
-.m-field { margin-bottom: 14px; }
+/* 弹窗字段 */
+.m-field { margin-bottom: 20px; }
 .m-field:last-child { margin-bottom: 0; }
-.m-field .m-label { font-size: 12.5px; font-weight: 550; margin-bottom: 6px; }
-.m-field .f-input { width: 100%; }
-.m-field .m-hint { font-size: 11px; color: var(--faint); margin-top: 5px; }
-.m-field .m-radio { display: flex; gap: 16px; margin-top: 4px; }
-.m-field .m-radio label { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; cursor: pointer; }
-.m-field .m-radio input { accent-color: var(--accent); }
+.m-field .m-label {
+  font-size: 12px; font-weight: 550; letter-spacing: 0.01em;
+  color: var(--muted); margin-bottom: 8px;
+}
+.m-field .f-input { width: 100%; padding: 0 12px; }
+.m-field .m-hint { font-size: 11px; color: var(--faint); margin-top: 6px; line-height: 1.55; }
+.m-field .m-radio { display: flex; gap: 18px; margin-top: 2px; padding: 2px 0; }
+.m-field .m-radio label { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; cursor: pointer; color: var(--text); }
+.m-field .m-radio input { accent-color: var(--accent); width: 15px; height: 15px; }
 
 .uv-install {
   display: flex; flex-direction: column; gap: 10px;
@@ -761,8 +769,8 @@ select.f-input { appearance: none; padding-right: 30px;
 
 /* ===== Modal 加大 + 文件选择 ===== */
 .modal { width: 580px; }
-.modal .f-input { height: 36px; font-size: 13px; }
-.modal textarea.f-input { height: auto; min-height: 60px; }
+.modal .f-input { height: 38px; font-size: 13px; }
+.modal textarea.f-input { height: auto; min-height: 64px; padding: 10px 12px; }
 .path-row { display: flex; gap: 8px; }
 .path-row .f-input { flex: 1; min-width: 0; }
 .path-row .btn { height: 38px; flex-shrink: 0; }
@@ -814,6 +822,14 @@ select.f-input { appearance: none; padding-right: 30px;
 .sc-builder { display: flex; flex-direction: column; gap: 8px; }
 .sc-builder-opts { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .sc-builder-opts .f-input.sc-num, .sc-builder-opts .f-input.sc-time { height: 30px; padding: 0 9px; font-size: 12px; }
+
+/* 弹窗内组件增强：与玻璃弹窗语言一致 */
+.modal .chk { display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--muted); cursor: pointer; padding: 3px 10px; border: 1px solid var(--hairline); border-radius: var(--radius-pill); background: var(--glass-soft); transition: border-color 0.15s, color 0.15s; }
+.modal .chk:hover { border-color: var(--hairline-strong); color: var(--text); }
+.modal .chk input { accent-color: var(--accent); }
+.modal .sc-quick .btn { height: 30px; }
+.modal .sc-builder { gap: 10px; }
+.modal .sc-builder-opts { gap: 9px; }
 .sc-num { width: 74px; }
 .sc-time { width: 110px; }
 .sc-wd { user-select: none; }
