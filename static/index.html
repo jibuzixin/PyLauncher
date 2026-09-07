@@ -158,6 +158,17 @@ svg { flex-shrink: 0; }
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5);
 }
 .btn.soft-green:hover { background: rgba(5, 150, 105, 0.2); border-color: rgba(5, 150, 105, 0.5); }
+/* 顶栏文档链接（安静的文字链接式入口，hover 蓝色提亮） */
+.doc-link {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: transparent; border: none; cursor: pointer;
+  color: var(--text-secondary);
+  font-size: 12.5px; font-weight: 500;
+  padding: 6px 9px; border-radius: 8px;
+  transition: color 0.15s, background 0.15s;
+}
+.doc-link svg { width: 15px; height: 15px; }
+.doc-link:hover { color: var(--accent); background: rgba(0, 113, 227, 0.07); }
 /* 运行中：黄色呼吸灯 */
 .btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; box-shadow: 0 2px 12px rgba(245, 158, 11, 0.45) !important; }
 .btn.run-active:hover { background: #f59e0b !important; }
@@ -1261,13 +1272,13 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.44</span>
+    <span class="badge">v0.0.45</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
-    <button class="btn soft-green" id="btn-usage" title="查看使用说明（新标签页打开）">
+    <button class="doc-link" id="btn-usage" title="查看使用说明（新标签页打开）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      <span>使用说明</span>
+      <span>文档</span>
     </button>
     <button class="btn ghost" id="btn-export" title="导出全部脚本信息（JSON）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
