@@ -303,13 +303,6 @@ svg { flex-shrink: 0; }
 .env-bar .env-text.ok { color: var(--ok); font-weight: 500; }
 .env-bar .env-text.warn { color: var(--warning); }
 .env-bar .env-text.err { color: var(--danger); font-weight: 500; }
-/* 依赖文件信息：中性等宽标签（区别于"成功状态"绿字，避免整行像被选中） */
-.env-bar .env-file-tag {
-  font-family: var(--mono); font-size: 11px; color: var(--muted);
-  background: var(--glass-soft); border: 1px solid var(--hairline);
-  border-radius: 6px; padding: 2px 8px;
-  cursor: default;
-}
 .env-bar .env-actions { margin-left: auto; display: flex; gap: 6px; }
 .env-bar .env-deps { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 4px; }
 .env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }

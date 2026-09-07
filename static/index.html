@@ -310,13 +310,6 @@ svg { flex-shrink: 0; }
 .env-bar .env-text.ok { color: var(--ok); font-weight: 500; }
 .env-bar .env-text.warn { color: var(--warning); }
 .env-bar .env-text.err { color: var(--danger); font-weight: 500; }
-/* 依赖文件信息：中性等宽标签（区别于"成功状态"绿字，避免整行像被选中） */
-.env-bar .env-file-tag {
-  font-family: var(--mono); font-size: 11px; color: var(--muted);
-  background: var(--glass-soft); border: 1px solid var(--hairline);
-  border-radius: 6px; padding: 2px 8px;
-  cursor: default;
-}
 .env-bar .env-actions { margin-left: auto; display: flex; gap: 6px; }
 .env-bar .env-deps { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 4px; }
 .env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
@@ -902,7 +895,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.25</span>
+    <span class="badge">v0.0.24</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -1532,8 +1525,7 @@ function renderEnvBar(env) {
     parts.push(b);
   } else {
     const vSpan = document.createElement("span");
-    vSpan.innerHTML = `<span class="dot ok"></span><span class="env-text">uv ${escapeHtml(env.uv_version || "")}</span>`;
-    vSpan.title = "已检测到 uv";
+    vSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">uv ${escapeHtml(env.uv_version || "")}</span>`;
     parts.push(vSpan);
   }
 
@@ -1556,8 +1548,7 @@ function renderEnvBar(env) {
 
   if (env.has_deps) {
     const r = document.createElement("span");
-    r.className = "env-file-tag";
-    r.textContent = env.deps_name || "";
+    r.innerHTML = `<span class="dot ok"></span><span class="env-text ok">${escapeHtml(env.deps_name || "")}</span>`;
     r.title = env.requirements_path || "";
     parts.push(r);
   }
