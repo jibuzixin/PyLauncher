@@ -104,7 +104,7 @@
   <div class="hero">
     <h1>Python 脚本启动器 · 使用说明</h1>
     <div class="sub">本地脚本运行平台 —— 把「进入目录 + 敲 uv 命令 + 盯终端输出」变成可视化表单 + 一键按钮。</div>
-    <span class="ver">v0.0.42</span>
+    <span class="ver">v0.0.43</span>
   </div>
 
   <div class="card">
@@ -194,10 +194,6 @@
   <div class="card">
     <h2><span class="n">9</span>常见问题</h2>
     <div class="faq-item">
-      <div class="q">Q：为什么页面还是旧样式？</div>
-      <div class="a">每次更新后请用带新 <code>?t=</code> 时间戳的地址打开，或强制刷新（<span class="kbd">⌘</span><span class="kbd">⇧</span><span class="kbd">R</span>）。</div>
-    </div>
-    <div class="faq-item">
       <div class="q">Q：uv 未安装怎么办？</div>
       <div class="a">页面会给出对应平台的安装命令：macOS <code>brew install uv</code>；Windows <code>winget install astral-sh.uv</code> 或 <code>pip install uv</code>。</div>
     </div>
@@ -206,8 +202,15 @@
       <div class="a">422 表示参数校验失败：请检查路径是否为绝对路径、文件是否存在，且脚本为可解析的 Python 文件。</div>
     </div>
     <div class="faq-item">
-      <div class="q">Q：服务怎么停止？</div>
-      <div class="a">终端执行 <code>pkill -9 -f main.py</code>（macOS / Linux）；Windows 在任务管理器结束 python 进程。</div>
+      <div class="q">Q：服务怎么启动 / 停止？</div>
+      <div class="a">
+        项目根目录提供一键脚本，无需手动 kill 进程：
+        <ul style="margin-top:6px">
+          <li><b>macOS 启动</b>：双击 <code>start.command</code> —— 首次运行自动创建虚拟环境并安装依赖；服务后台常驻，关闭窗口不影响使用；若服务已在运行则只打开浏览器</li>
+          <li><b>macOS 停止</b>：双击 <code>stop.command</code> —— 自动结束监听 8900 端口的服务进程</li>
+          <li><b>Windows 启动</b>：双击 <code>start.bat</code> —— 自动建环境装依赖后前台运行</li>
+        </ul>
+      </div>
     </div>
   </div>
 
