@@ -352,6 +352,65 @@ svg { flex-shrink: 0; }
 .preset-chip:hover { background: rgba(255, 255, 255, 0.85); border-color: var(--accent); }
 .preset-chip .x { color: var(--faint); font-size: 11px; }
 .preset-chip .x:hover { color: var(--danger); }
+.preset-chip .pin-mark { font-size: 10px; line-height: 1; }
+.preset-chip .name { cursor: pointer; }
+.preset-chip.pinned { border-color: rgba(0, 113, 227, 0.4); background: rgba(0, 113, 227, 0.07); }
+
+/* 「还有更多」预设：三个圆形气泡叠加 + 剩余数 */
+.preset-more {
+  position: relative; width: 34px; height: 26px;
+  cursor: pointer; flex-shrink: 0;
+}
+.preset-more .pm-b1, .preset-more .pm-b2, .preset-more .pm-b3 {
+  position: absolute; width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid var(--hairline-strong); background: var(--glass-strong);
+  box-shadow: var(--shadow-sm);
+  transition: border-color 0.15s, transform 0.15s;
+}
+.preset-more .pm-b1 { left: 0; top: 0; }
+.preset-more .pm-b2 { left: 8px; top: 2px; }
+.preset-more .pm-b3 { left: 15px; top: 4px; }
+.preset-more:hover .pm-b1 { transform: translateY(-1px); }
+.preset-more:hover .pm-b2 { transform: translateY(-1px); }
+.preset-more:hover .pm-b3 { transform: translateY(-1px); }
+.preset-more:hover .pm-b1, .preset-more:hover .pm-b2, .preset-more:hover .pm-b3 { border-color: var(--accent); }
+.preset-more .pm-count {
+  position: absolute; right: -3px; top: -7px;
+  min-width: 17px; height: 17px; padding: 0 5px;
+  border-radius: 9px; background: var(--accent); color: #fff;
+  font-size: 9px; font-weight: 650; line-height: 17px; text-align: center;
+  border: 1.5px solid var(--bg-surface);
+}
+
+/* 全部预设管理弹窗 */
+.preset-manage { display: flex; flex-direction: column; gap: 4px; max-height: 46vh; overflow-y: auto; }
+.pm-group { font-size: 11px; color: var(--faint); font-weight: 650; letter-spacing: 0.02em; margin: 10px 0 5px; }
+.pm-row {
+  display: flex; align-items: center; gap: 6px;
+  padding: 5px 8px; border: 1px solid var(--hairline); border-radius: var(--radius-sm);
+  background: var(--glass-soft); transition: border-color 0.15s, background 0.15s;
+}
+.pm-row:hover { border-color: var(--hairline-strong); }
+.pm-row.pinned { border-color: rgba(0, 113, 227, 0.35); background: rgba(0, 113, 227, 0.05); }
+.pm-name {
+  flex: 1; min-width: 0; text-align: left;
+  border: none; background: none; cursor: pointer;
+  font-size: 12.5px; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  padding: 3px 5px; border-radius: 6px;
+}
+.pm-name:hover { background: rgba(0, 113, 227, 0.08); color: var(--accent); }
+.pm-op {
+  width: 25px; height: 25px; border-radius: 7px; flex-shrink: 0;
+  border: 1px solid var(--hairline); background: var(--glass-strong);
+  color: var(--muted); font-size: 12px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.pm-op:hover { border-color: var(--accent); color: var(--accent); }
+.pm-op.active { border-color: rgba(0, 113, 227, 0.45); background: rgba(0, 113, 227, 0.1); color: var(--accent); }
+.pm-op.del:hover { border-color: rgba(217, 48, 37, 0.5); color: var(--danger); background: rgba(217, 48, 37, 0.06); }
+.pm-tip { font-size: 11px; color: var(--faint); margin-top: 12px; line-height: 1.5; }
 /* 保存预设弹窗：覆盖目标标签（第一次点击后红色提醒） */
 .preset-overwrite-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .preset-overwrite-chips .preset-chip { cursor: pointer; }

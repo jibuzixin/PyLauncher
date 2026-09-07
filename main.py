@@ -79,6 +79,13 @@ class PresetReq(BaseModel):
     args: dict
 
 
+class PresetPatchReq(BaseModel):
+    """预设管理：固定 / 取消固定 / 手动排序 / 标记最近使用。"""
+    pinned: Optional[bool] = None
+    order: Optional[str] = None  # "up" | "down"
+    touch: Optional[bool] = None
+
+
 class ExecuteReq(BaseModel):
     script_id: int
     args: dict
@@ -719,6 +726,22 @@ async def delete_preset(preset_id: int):
     return {"ok": True}
 
 
+@app.patch("/api/presets/{preset_id}")
+async def patch_preset(preset_id: int, req: PresetPatchReq):
+    """预设管理：固定/取消固定、手动排序、标记最近使用。"""
+    try:
+        if req.order:
+            db.move_preset(preset_id, req.order)
+        if req.touch:
+            db.touch_preset_used(preset_id)
+        if req.pinned is not None:
+            p = db.set_preset_pinned(preset_id, req.pinned)
+            return {"ok": True, "preset": p}
+        return {"ok": True}
+    except ValueError as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=404)
+
+
 @app.get("/api/scripts/{script_id}/env")
 async def script_env(script_id: int):
     rec = db.get_script(script_id)
@@ -755,6 +778,8 @@ async def execute(req: ExecuteReq):
     arg_list = build_arg_list(schema, req.args)
     command = _build_command_text(rec["path"], arg_list)
     exec_row = db.add_execution(req.script_id, req.args, req.preset_id)
+    if req.preset_id:
+        db.touch_preset_used(req.preset_id)
     exec_id = exec_row["id"]
     _new_session(exec_id)
     asyncio.create_task(

@@ -50,7 +50,10 @@ CREATE TABLE IF NOT EXISTS presets (
     script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
     name TEXT NOT NULL,
     args TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL
+    created_at TEXT NOT NULL,
+    pinned INTEGER NOT NULL DEFAULT 0,
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    last_used_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS executions (
@@ -114,6 +117,14 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE schedules ADD COLUMN max_runs INTEGER")
     if "run_count" not in scols:
         conn.execute("ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0")
+    # presets 表迁移：固定 / 排序 / 最近使用
+    pcols = {r[1] for r in conn.execute("PRAGMA table_info(presets)")}
+    if "pinned" not in pcols:
+        conn.execute("ALTER TABLE presets ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0")
+    if "sort_order" not in pcols:
+        conn.execute("ALTER TABLE presets ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    if "last_used_at" not in pcols:
+        conn.execute("ALTER TABLE presets ADD COLUMN last_used_at TEXT")
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
@@ -265,9 +276,12 @@ def save_auto_args(script_id: int, args: dict) -> None:
 
 def add_preset(script_id: int, name: str, args: dict) -> dict:
     with _lock, _conn() as conn:
+        max_o = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM presets WHERE script_id=?", (script_id,)
+        ).fetchone()[0]
         cur = conn.execute(
-            "INSERT INTO presets(script_id, name, args, created_at) VALUES(?,?,?,?)",
-            (script_id, name, _dumps(args), now_iso()),
+            "INSERT INTO presets(script_id, name, args, created_at, sort_order) VALUES(?,?,?,?,?)",
+            (script_id, name, _dumps(args), now_iso(), max_o + 1),
         )
         return dict(conn.execute("SELECT * FROM presets WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -290,9 +304,12 @@ def update_preset(preset_id: int, args: dict) -> dict:
 
 
 def list_presets(script_id: int) -> list[dict]:
+    """固定项在前，组内按 sort_order 升序（手动排序），再按创建时间倒序。"""
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT * FROM presets WHERE script_id=? ORDER BY created_at DESC", (script_id,)
+            "SELECT * FROM presets WHERE script_id=? "
+            "ORDER BY pinned DESC, sort_order ASC, created_at DESC",
+            (script_id,),
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -301,6 +318,51 @@ def delete_preset(preset_id: int) -> bool:
     with _lock, _conn() as conn:
         cur = conn.execute("DELETE FROM presets WHERE id=?", (preset_id,))
         return cur.rowcount > 0
+
+
+def touch_preset_used(preset_id: int) -> None:
+    """记录最近使用时间（应用预设 / 用预设执行时调用）。毫秒精度，同秒多次使用可排序。"""
+    with _lock, _conn() as conn:
+        ts = datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
+        conn.execute("UPDATE presets SET last_used_at=? WHERE id=?", (ts, preset_id))
+
+
+def set_preset_pinned(preset_id: int, pinned: bool) -> dict:
+    """固定 / 取消固定：排到对应分组的末尾（sort_order = 组内最大 + 1）。"""
+    with _lock, _conn() as conn:
+        row = conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone()
+        if not row:
+            raise ValueError("preset not found")
+        flag = 1 if pinned else 0
+        max_o = conn.execute(
+            "SELECT COALESCE(MAX(sort_order), -1) FROM presets WHERE script_id=? AND pinned=?",
+            (row["script_id"], flag),
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE presets SET pinned=?, sort_order=? WHERE id=?",
+            (flag, max_o + 1, preset_id),
+        )
+        return dict(conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone())
+
+
+def move_preset(preset_id: int, direction: str) -> None:
+    """在同一脚本、同一固定组内，与相邻预设交换 sort_order（手动排序）。"""
+    with _lock, _conn() as conn:
+        row = conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone()
+        if not row:
+            return
+        same = conn.execute(
+            "SELECT id, sort_order FROM presets WHERE script_id=? AND pinned=? "
+            "ORDER BY sort_order ASC, created_at DESC",
+            (row["script_id"], row["pinned"]),
+        ).fetchall()
+        idx = next((i for i, r in enumerate(same) if r["id"] == preset_id), -1)
+        nxt = idx - 1 if direction == "up" else idx + 1
+        if idx < 0 or nxt < 0 or nxt >= len(same):
+            return
+        a, b = same[idx], same[nxt]
+        conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (b["sort_order"], a["id"]))
+        conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (a["sort_order"], b["id"]))
 
 
 # ---------- schedules（定时任务） ----------
@@ -512,7 +574,7 @@ def export_all() -> dict:
         for row in conn.execute("SELECT * FROM scripts").fetchall():
             s = dict(row)
             presets = [dict(r) for r in conn.execute(
-                "SELECT name, args FROM presets WHERE script_id=?", (s["id"],)
+                "SELECT name, args, pinned, sort_order, last_used_at FROM presets WHERE script_id=?", (s["id"],)
             ).fetchall()]
             scripts.append({
                 "name": s["name"],
@@ -568,8 +630,12 @@ def import_all(data: dict) -> dict:
                     ).fetchone()
                     if not dup:
                         conn.execute(
-                            "INSERT INTO presets(script_id, name, args, created_at) VALUES(?,?,?,?)",
-                            (sid, pname, _dumps(p.get("args") or {}), ts),
+                            "INSERT INTO presets(script_id, name, args, created_at, pinned, sort_order, last_used_at) "
+                            "VALUES(?,?,?,?,?,?,?)",
+                            (sid, pname, _dumps(p.get("args") or {}), ts,
+                             1 if p.get("pinned") else 0,
+                             int(p.get("sort_order") or 0),
+                             p.get("last_used_at") or None),
                         )
             except Exception as e:  # noqa: BLE001
                 skipped.append({"path": path, "error": str(e)})

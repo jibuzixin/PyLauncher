@@ -613,30 +613,20 @@ function renderPresets(presets) {
   lbl.textContent = "预设";
   const chips = document.createElement("div");
   chips.className = "preset-chips";
-  for (const p of presets) {
-    const chip = document.createElement("span");
-    chip.className = "preset-chip";
-    chip.textContent = p.name;
-    chip.title = "点击应用此预设";
-    chip.onclick = () => applyPreset(p);
-    const x = document.createElement("span");
-    x.className = "x";
-    x.textContent = "✕";
-    x.title = "删除预设";
-    x.onclick = async (e) => {
-      e.stopPropagation();
-      confirmModal({
-        title: "删除预设",
-        message: `确定删除预设「${p.name}」吗？`,
-        onConfirm: async () => {
-          await api(`/api/presets/${p.id}`, { method: "DELETE" });
-          toast("预设已删除");
-          reloadDetail();
-        },
-      });
-    };
-    chip.appendChild(x);
-    chips.appendChild(chip);
+  const all = presets || [];
+  // 固定项排最前（不限个数）→ 最近使用 3 个 → 其余折叠进「更多」气泡
+  const pinned = all.filter((p) => p.pinned);
+  const recent = all
+    .filter((p) => !p.pinned && p.last_used_at)
+    .sort((a, b) => String(b.last_used_at).localeCompare(String(a.last_used_at)))
+    .slice(0, 3);
+  const recentIds = new Set(recent.map((p) => p.id));
+  const rest = all.filter((p) => !p.pinned && !recentIds.has(p.id));
+  for (const p of [...pinned, ...recent]) {
+    chips.appendChild(makePresetChip(p));
+  }
+  if (rest.length > 0) {
+    chips.appendChild(makeMoreBubble(rest.length, all));
   }
   const saveBtn = document.createElement("button");
   saveBtn.className = "btn mini ghost";
@@ -644,6 +634,152 @@ function renderPresets(presets) {
   saveBtn.appendChild(document.createTextNode(" 保存当前为预设"));
   saveBtn.onclick = saveAsPreset;
   bar.append(lbl, chips, saveBtn);
+}
+
+function makePresetChip(p) {
+  const chip = document.createElement("span");
+  chip.className = "preset-chip" + (p.pinned ? " pinned" : "");
+  if (p.pinned) {
+    const pin = document.createElement("span");
+    pin.className = "pin-mark";
+    pin.textContent = "📌";
+    pin.title = "已固定，始终排最前";
+    chip.appendChild(pin);
+  }
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = p.name;
+  name.title = "点击应用此预设";
+  name.onclick = () => applyPreset(p);
+  chip.appendChild(name);
+  const x = document.createElement("span");
+  x.className = "x";
+  x.textContent = "✕";
+  x.title = "删除预设";
+  x.onclick = async (e) => {
+    e.stopPropagation();
+    confirmModal({
+      title: "删除预设",
+      message: `确定删除预设「${p.name}」吗？`,
+      onConfirm: async () => {
+        await api(`/api/presets/${p.id}`, { method: "DELETE" });
+        toast("预设已删除");
+        reloadDetail();
+      },
+    });
+  };
+  chip.appendChild(x);
+  return chip;
+}
+
+/** 「还有更多」气泡：三个圆形叠加 + 剩余数量 */
+function makeMoreBubble(count, all) {
+  const more = document.createElement("div");
+  more.className = "preset-more";
+  more.title = `还有 ${count} 个预设 · 点击管理全部`;
+  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b1" }));
+  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b2" }));
+  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b3" }));
+  const cnt = document.createElement("span");
+  cnt.className = "pm-count";
+  cnt.textContent = "+" + count;
+  more.appendChild(cnt);
+  more.onclick = () => openPresetsModal(all);
+  return more;
+}
+
+/** 全部预设管理弹窗：固定 / 排序 / 应用 / 删除 */
+function openPresetsModal(presets) {
+  openModal({
+    title: `全部预设 · ${presets.length} 个`,
+    bodyHTML: `
+      <div class="preset-manage" id="preset-manage"></div>
+      <div class="pm-tip">点击名称应用 · 📌 固定后始终排最前 · ↑↓ 调整同组顺序 · 删除需二次确认</div>`,
+    footHTML: `<button class="btn ghost" data-close>关闭</button>`,
+    onMount: (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      renderPresetManager(mask, presets || []);
+    },
+  });
+}
+
+function renderPresetManager(mask, presets) {
+  const wrap = $("#preset-manage", mask);
+  wrap.innerHTML = "";
+  const recent = presets
+    .filter((p) => !p.pinned && p.last_used_at)
+    .sort((a, b) => String(b.last_used_at).localeCompare(String(a.last_used_at)))
+    .slice(0, 3);
+  const recentIds = new Set(recent.map((p) => p.id));
+  const groups = [
+    { title: "📌 已固定", items: presets.filter((p) => p.pinned) },
+    { title: "最近使用", items: recent },
+    { title: "全部", items: presets.filter((p) => !p.pinned && !recentIds.has(p.id)) },
+  ];
+  for (const g of groups) {
+    if (g.items.length === 0) continue;
+    const head = document.createElement("div");
+    head.className = "pm-group";
+    head.textContent = `${g.title}（${g.items.length}）`;
+    wrap.appendChild(head);
+    for (const p of g.items) wrap.appendChild(makeManagerRow(mask, p));
+  }
+}
+
+function makeManagerRow(mask, p) {
+  const row = document.createElement("div");
+  row.className = "pm-row" + (p.pinned ? " pinned" : "");
+  const name = document.createElement("button");
+  name.className = "pm-name";
+  name.textContent = p.name;
+  name.title = "应用此预设";
+  name.onclick = () => {
+    applyPreset(p);
+    closeModal();
+  };
+  const pin = document.createElement("button");
+  pin.className = "pm-op" + (p.pinned ? " active" : "");
+  pin.textContent = "📌";
+  pin.title = p.pinned ? "取消固定" : "固定（排最前）";
+  pin.onclick = () => patchPresetAndRefresh(mask, p.id, { pinned: !p.pinned });
+  const up = document.createElement("button");
+  up.className = "pm-op";
+  up.textContent = "↑";
+  up.title = "上移";
+  up.onclick = () => patchPresetAndRefresh(mask, p.id, { order: "up" });
+  const down = document.createElement("button");
+  down.className = "pm-op";
+  down.textContent = "↓";
+  down.title = "下移";
+  down.onclick = () => patchPresetAndRefresh(mask, p.id, { order: "down" });
+  const del = document.createElement("button");
+  del.className = "pm-op del";
+  del.textContent = "✕";
+  del.title = "删除预设";
+  del.onclick = () => {
+    confirmModal({
+      title: "删除预设",
+      message: `确定删除预设「${p.name}」吗？`,
+      onConfirm: async () => {
+        await api(`/api/presets/${p.id}`, { method: "DELETE" });
+        toast("预设已删除");
+        await reloadDetail();
+        renderPresetManager(mask, (state.script && state.script.presets) || []);
+      },
+    });
+  };
+  row.append(name, pin, up, down, del);
+  return row;
+}
+
+async function patchPresetAndRefresh(mask, id, body) {
+  try {
+    await api(`/api/presets/${id}`, { method: "PATCH", body });
+    await reloadDetail();
+    renderPresetManager(mask, (state.script && state.script.presets) || []);
+  } catch (e) {
+    toast("操作失败：" + e.message, true);
+  }
 }
 
 async function saveAsPreset() {
@@ -709,6 +845,10 @@ function applyPreset(p) {
   fillValues(p.args || {});
   saveArgs(p.args || {});
   toast("已应用预设「" + p.name + "」");
+  // 本地立即更新最近使用顺序，同时持久化
+  p.last_used_at = new Date().toISOString();
+  renderPresets((state.script && state.script.presets) || []);
+  api(`/api/presets/${p.id}`, { method: "PATCH", body: { touch: true } }).catch(() => {});
 }
 
 /* ================= 参数表单 ================= */
