@@ -313,19 +313,42 @@ svg { flex-shrink: 0; }
 .env-bar .env-actions { margin-left: auto; display: flex; gap: 6px; }
 .env-bar .env-deps { display: flex; align-items: center; gap: 6px; width: 100%; margin-top: 4px; }
 .env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
-.env-bar .env-deps .dep-input { height: 34px; flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; border-radius: var(--radius-sm); }
+.env-bar .env-deps .dep-input { height: 34px; flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; }
+
+/* ===== 统一输入框语言（Glass） =====
+   所有输入框共用：半透明白玻璃底 + 细边框 + 内阴影 + 圆角；
+   hover 边框加深，focus 苹果蓝边框 + 光晕 + 底更实。
+   各输入框只保留自己的尺寸 / 字体 / 特殊语义。 */
+.f-input, .preset-select, select.f-input, .dep-input,
+.hd-tags input, .si-edit-cron-input, .si-edit-row .si-time,
+.si-edit-runs-input, .sc-builder-opts .f-input, .si-cron-in, .si-runs-in {
+  background-color: rgba(255, 255, 255, 0.68);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.03);
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+.f-input:hover, .preset-select:hover, select.f-input:hover, .dep-input:hover,
+.hd-tags input:hover, .si-edit-cron-input:hover, .si-edit-row .si-time:hover,
+.si-edit-runs-input:hover, .sc-builder-opts .f-input:hover, .si-cron-in:hover, .si-runs-in:hover {
+  border-color: rgba(0, 0, 0, 0.2);
+}
+.f-input:focus, .preset-select:focus, select.f-input:focus, .dep-input:focus,
+.hd-tags input:focus, .si-edit-cron-input:focus, .si-edit-row .si-time:focus,
+.si-edit-runs-input:focus, .sc-builder-opts .f-input:focus, .si-cron-in:focus, .si-runs-in:focus {
+  border-color: var(--accent);
+  background-color: rgba(255, 255, 255, 0.88);
+  box-shadow: var(--focus-ring);
+}
 
 /* preset bar */
 .preset-bar { display: flex; align-items: center; gap: 8px; }
 .preset-bar .lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .preset-select {
   height: 34px; min-width: 140px; flex: 1;
-  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
-  padding: 0 10px; background: var(--glass-strong); outline: none;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  padding: 0 10px;
 }
-.preset-select:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .preset-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .preset-chip {
   display: inline-flex; align-items: center; gap: 4px;
@@ -365,12 +388,8 @@ svg { flex-shrink: 0; }
 
 .field .f-input {
   height: 36px;
-  border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm);
-  padding: 0 11px; background: var(--glass-strong);
-  outline: none; box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.02);
-  transition: border-color 0.15s, box-shadow 0.15s;
+  padding: 0 11px;
 }
-.field .f-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); }
 .field .f-input.mono { font-family: var(--mono); font-size: 12.5px; }
 textarea.f-input { height: auto; min-height: 60px; padding: 9px 11px; resize: vertical; font-family: var(--mono); font-size: 12.5px; }
 
@@ -556,11 +575,10 @@ select.f-input { appearance: none; padding-right: 30px;
 .hd-tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hd-tags input {
   height: 28px; padding: 0 10px;
-  border: 1px dashed var(--hairline-strong); border-radius: var(--radius-sm);
-  outline: none; font-size: 11px; width: 150px;
-  background: var(--glass-soft);
+  border-style: dashed;
+  font-size: 11px; width: 150px;
 }
-.hd-tags input:focus { border-color: var(--accent); border-style: solid; box-shadow: var(--focus-ring); }
+.hd-tags input:focus { border-style: solid; }
 .hd-output {
   font-family: var(--mono); font-size: 11.5px;
   background: var(--glass-strong);
@@ -819,29 +837,21 @@ select.f-input { appearance: none; padding-right: 30px;
 .si-edit-chips .btn { height: 24px; }
 .si-edit-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 .si-edit-label { white-space: nowrap; }
-.si-edit-row .si-time { width: 110px; height: 30px; background: var(--glass-strong); border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); padding: 0 9px; }
-.si-edit-row .si-time:focus { border-color: var(--accent); box-shadow: var(--focus-ring); outline: none; }
+.si-edit-row .si-time { width: 110px; height: 30px; padding: 0 9px; }
 .si-edit-ops { display: flex; gap: 6px; }
 .si-edit-runs { display: inline-flex; align-items: center; gap: 6px; }
-.si-edit-runs-input { width: 80px; height: 28px; font-size: 12px; padding: 0 8px; background: var(--glass-strong); border: 1px solid var(--hairline-strong); border-radius: var(--radius-sm); }
-.si-edit-runs-input:focus { border-color: var(--accent); box-shadow: var(--focus-ring); outline: none; }
+.si-edit-runs-input { width: 80px; height: 28px; font-size: 12px; padding: 0 8px; }
 
 /* ===== 定时任务卡片常驻编辑输入 ===== */
-/* cron 表达式：大号加粗 + 浅灰圆角底框 */
+/* cron 表达式：大号加粗 + 圆角底框（统一输入框语言提供玻璃底/边框/focus） */
 .si-cron-in {
   width: 226px; height: 42px;
   font-family: var(--mono);
   font-size: 20px; font-weight: 700;
-  background: var(--glass-soft);
-  border: 1px solid var(--hairline);
-  border-radius: 9px;
   padding: 0 13px;
   color: var(--text);
   letter-spacing: 0.5px;
-  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.si-cron-in:hover { border-color: var(--hairline-strong); }
-.si-cron-in:focus { background: var(--glass-strong); border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
 /* 执行次数：与 cron 并列，加粗可编辑 */
 .si-runs-block {
   display: inline-flex; align-items: center; gap: 8px;
@@ -851,14 +861,8 @@ select.f-input { appearance: none; padding-right: 30px;
   width: 70px; height: 32px;
   font-size: 16px; font-weight: 700;
   text-align: center;
-  background: var(--glass-soft);
-  border: 1px solid var(--hairline);
-  border-radius: 9px;
   color: var(--text);
-  transition: border-color 0.15s, box-shadow 0.15s;
 }
-.si-runs-in:hover { border-color: var(--hairline-strong); }
-.si-runs-in:focus { background: var(--glass-strong); border-color: var(--accent); outline: none; box-shadow: var(--focus-ring); }
 .si-meta-label { color: var(--muted); }
 
 /* 执行次数进度：已执行/上限 */
@@ -875,7 +879,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.22</span>
+    <span class="badge">v0.0.23</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
