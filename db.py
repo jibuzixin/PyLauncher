@@ -365,6 +365,22 @@ def move_preset(preset_id: int, direction: str) -> None:
         conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (a["sort_order"], b["id"]))
 
 
+def list_running_executions() -> list[dict]:
+    """所有正在运行的执行（脚本卡片徽章 / 任务列表用）。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT e.id, e.script_id, e.args, e.status, e.started_at, e.preset_id, s.name AS script_name "
+            "FROM executions e LEFT JOIN scripts s ON e.script_id = s.id "
+            "WHERE e.status='running' ORDER BY e.started_at DESC"
+        ).fetchall()
+        out = []
+        for r in rows:
+            d = dict(r)
+            d["args"] = _loads(d.get("args") or "{}", {})
+            out.append(d)
+        return out
+
+
 # ---------- schedules（定时任务） ----------
 
 def list_schedules(only_enabled: bool = False) -> list[dict]:

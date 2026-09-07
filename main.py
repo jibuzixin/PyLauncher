@@ -794,6 +794,12 @@ async def list_executions(script_id: Optional[int] = None, tag: Optional[str] = 
     return db.list_executions(script_id, tag, status, limit)
 
 
+@app.get("/api/executions/running")
+async def running_executions():
+    """所有正在运行的执行（脚本卡片徽章 / 任务列表）。必须在 {exec_id} 路由之前。"""
+    return {"running": db.list_running_executions()}
+
+
 @app.get("/api/executions/{exec_id}")
 async def execution_detail(exec_id: int):
     rec = db.get_execution(exec_id)
@@ -801,10 +807,16 @@ async def execution_detail(exec_id: int):
         return JSONResponse({"ok": False, "error": "记录不存在"}, status_code=404)
     rec["args"] = json.loads(rec.get("args") or "{}")
     rec["tags"] = json.loads(rec.get("tags") or "[]")
-    # 附加脚本名用于展示
+    # 附加脚本名与对应命令行，便于详情页展示/复制
     if rec.get("script_id"):
         s = db.get_script(rec["script_id"])
-        rec["script_name"] = s["name"] if s else None
+        if s:
+            rec["script_name"] = s["name"]
+            try:
+                arg_list = build_arg_list(json.loads(s.get("args_schema") or "[]"), rec["args"])
+                rec["command"] = _build_command_text(s["path"], arg_list)
+            except Exception:  # noqa: BLE001
+                rec["command"] = ""
     return rec
 
 

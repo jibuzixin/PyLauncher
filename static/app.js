@@ -10,6 +10,9 @@ const state = {
   script: null,          // 当前脚本详情（含 schema / presets / env）
   activePresetId: null,
   currentExecId: null,
+  runningByScript: {},   // script_id -> running 执行列表（卡片徽章 / 任务 popover）
+  popoverScriptId: null, // 当前打开的 popover 对应脚本
+  detailExec: null,      // 当前打开的详情记录（running 时用于实时输出/终止）
   lineCount: 0,
   ws: null,
   running: false,
@@ -306,10 +309,24 @@ function scriptCard(s) {
   row1.className = "sc-name";
   const nm = document.createElement("span");
   nm.textContent = s.name;
+  const runs = state.runningByScript[s.id] || [];
+  let runBadge = null;
+  if (runs.length) {
+    runBadge = document.createElement("span");
+    runBadge.className = "sc-running";
+    runBadge.textContent = "● " + runs.length;
+    runBadge.title = runs.length + " 个任务正在运行，点击查看";
+    runBadge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRunningPopover(runBadge, s.id);
+    });
+  }
   const badge = document.createElement("span");
   badge.className = "sc-arg";
   badge.textContent = nargs + " 参数";
-  row1.append(nm, badge);
+  row1.append(nm);
+  if (runBadge) row1.appendChild(runBadge);
+  row1.appendChild(badge);
   const row2 = document.createElement("div");
   row2.className = "sc-path";
   row2.textContent = s.path;
@@ -1183,18 +1200,97 @@ async function run() {
    pty 模式下后端推送原始字节块（含 \r \r\n ANSI 转义），这里做终端语义还原：
    - \r 覆盖当前行（进度条单行刷新）
    - \n / \r\n 换行（提交一行）
-   - ANSI SGR 颜色码渲染为彩色文本 */
+   - ANSI SGR 颜色码渲染为彩色文本
+   渲染器可实例化：主控制台与执行记录详情页各持一个，互不干扰 */
 
-function clearConsole() {
-  $("#console").innerHTML = "";
-  $("#console-placeholder").style.display = "flex";
-  state.lineCount = 0;
-  termState.buf = "";
-  termState.cur = null;
-  termState.crPending = false;
+function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
+  const st = { buf: "", cur: null, crPending: false, streamCls: "", lineCount: 0 };
+  const autoscroll = () => {
+    if (wrapEl && $("#opt-autoscroll").checked) wrapEl.scrollTop = wrapEl.scrollHeight;
+  };
+  function ensure() {
+    if (st.cur) return;
+    const lineNo = st.lineCount + 1;
+    const line = document.createElement("div");
+    line.className = "console-line" + (st.streamCls ? " " + st.streamCls : "");
+    const no = document.createElement("div");
+    no.className = "line-no";
+    no.textContent = lineNo;
+    const btn = document.createElement("button");
+    btn.className = "copy-btn";
+    btn.textContent = "复制";
+    btn.onclick = async (e) => {
+      e.stopPropagation();
+      const txt = line.querySelector(".line-text").textContent || "";
+      if (await copyText(stripAnsi(txt))) toast("已复制第 " + lineNo + " 行");
+    };
+    no.appendChild(btn);
+    const txt = document.createElement("div");
+    txt.className = "line-text";
+    line.append(no, txt);
+    consoleEl.appendChild(line);
+    st.lineCount++;
+    st.cur = line;
+    // 控制控制台体量：最多保留 5000 行
+    while (consoleEl.children.length > 5000) consoleEl.removeChild(consoleEl.firstChild);
+  }
+  function update() {
+    if (!st.buf && !st.cur) return;
+    ensure();
+    st.cur.querySelector(".line-text").innerHTML = ansiToHtml(st.buf);
+    autoscroll();
+  }
+  function flush() {
+    ensure();
+    st.cur.querySelector(".line-text").innerHTML = ansiToHtml(st.buf);
+    st.cur = null;
+    st.buf = "";
+    autoscroll();
+  }
+  return {
+    st,
+    clear() {
+      consoleEl.innerHTML = "";
+      st.buf = ""; st.cur = null; st.crPending = false; st.streamCls = ""; st.lineCount = 0;
+      if (placeholderEl) placeholderEl.style.display = "flex";
+    },
+    append(stream, chunk) {
+      if (placeholderEl) placeholderEl.style.display = "none";
+      st.streamCls = stream === "info" ? "info" : stream === "stderr" ? "stderr" : "";
+      let i = 0;
+      const len = chunk.length;
+      while (i < len) {
+        const ch = chunk[i];
+        // 上一个块以 \r 结尾：先结算（下个字符决定是覆盖还是换行）
+        if (st.crPending) {
+          st.crPending = false;
+          if (ch === "\n") { flush(); i++; continue; }
+          st.buf = ""; // \r 覆盖当前行
+        }
+        if (ch === "\r") {
+          if (i + 1 < len) {
+            if (chunk[i + 1] === "\n") { flush(); i += 2; continue; }
+            st.buf = ""; // 单行进度条刷新
+            i++;
+            continue;
+          }
+          st.crPending = true;
+          i++;
+          continue;
+        }
+        if (ch === "\n") { flush(); i++; continue; }
+        st.buf += ch;
+        i++;
+      }
+      // 块尾统一刷新当前行（进度条实时可见；\r 结尾时留待下块决定）
+      if (st.buf && !st.crPending) update();
+    },
+  };
 }
 
-const termState = { buf: "", cur: null, crPending: false, streamCls: "" };
+const mainConsole = createConsoleRenderer($("#console"), $("#console-wrap"), $("#console-placeholder"));
+function clearConsole() { mainConsole.clear(); }
+function appendStream(stream, chunk) { mainConsole.append(stream, chunk); }
 
 // ANSI SGR 颜色映射（适配浅色控制台）
 const ANSI_FG = { 30: "#1a1a1a", 31: "#c62828", 32: "#2e7d32", 33: "#9e7d00", 34: "#1565c0", 35: "#8e24aa", 36: "#00796b", 37: "#424242" };
@@ -1236,87 +1332,6 @@ function ansiToHtml(text) {
   }
   push(escapeHtml(text.slice(last)));
   return html;
-}
-
-function autoscrollConsole() {
-  if ($("#opt-autoscroll").checked) {
-    $("#console-wrap").scrollTop = $("#console-wrap").scrollHeight;
-  }
-}
-
-function ensureTermLine() {
-  if (termState.cur) return;
-  const lineNo = state.lineCount + 1;
-  const line = document.createElement("div");
-  line.className = "console-line" + (termState.streamCls ? " " + termState.streamCls : "");
-  const no = document.createElement("div");
-  no.className = "line-no";
-  no.textContent = lineNo;
-  const btn = document.createElement("button");
-  btn.className = "copy-btn";
-  btn.textContent = "复制";
-  btn.onclick = async (e) => {
-    e.stopPropagation();
-    const txt = line.querySelector(".line-text").textContent || "";
-    if (await copyText(stripAnsi(txt))) toast("已复制第 " + lineNo + " 行");
-  };
-  no.appendChild(btn);
-  const txt = document.createElement("div");
-  txt.className = "line-text";
-  line.append(no, txt);
-  $("#console").appendChild(line);
-  state.lineCount++;
-  termState.cur = line;
-  // 控制控制台体量：最多保留 5000 行
-  const consoleEl = $("#console");
-  while (consoleEl.children.length > 5000) consoleEl.removeChild(consoleEl.firstChild);
-}
-
-function updateTermLine() {
-  if (!termState.buf && !termState.cur) return;
-  ensureTermLine();
-  termState.cur.querySelector(".line-text").innerHTML = ansiToHtml(termState.buf);
-  autoscrollConsole();
-}
-
-function flushTermLine() {
-  ensureTermLine();
-  termState.cur.querySelector(".line-text").innerHTML = ansiToHtml(termState.buf);
-  termState.cur = null;
-  termState.buf = "";
-  autoscrollConsole();
-}
-
-function appendStream(stream, chunk) {
-  $("#console-placeholder").style.display = "none";
-  termState.streamCls = stream === "info" ? "info" : stream === "stderr" ? "stderr" : "";
-  let i = 0;
-  const len = chunk.length;
-  while (i < len) {
-    const ch = chunk[i];
-    // 上一个块以 \r 结尾：先结算（下个字符决定是覆盖还是换行）
-    if (termState.crPending) {
-      termState.crPending = false;
-      if (ch === "\n") { flushTermLine(); i++; continue; }
-      termState.buf = ""; // \r 覆盖当前行
-    }
-    if (ch === "\r") {
-      if (i + 1 < len) {
-        if (chunk[i + 1] === "\n") { flushTermLine(); i += 2; continue; }
-        termState.buf = ""; // 单行进度条刷新
-        i++;
-        continue;
-      }
-      termState.crPending = true;
-      i++;
-      continue;
-    }
-    if (ch === "\n") { flushTermLine(); i++; continue; }
-    termState.buf += ch;
-    i++;
-  }
-  // 块尾统一刷新当前行（进度条实时可见；\r 结尾时留待下块决定）
-  if (termState.buf && !termState.crPending) updateTermLine();
 }
 
 async function connectWs(path, { envInit = false, scriptId = null } = {}) {
@@ -1408,6 +1423,113 @@ document.addEventListener("keyup", updateMultiCopy);
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") { $("#copy-float").hidden = true; $$(".move-menu").forEach((m) => m.remove()); }
 });
+/* ================= 运行任务轮询 / 脚本卡片徽章 / 任务 popover ================= */
+
+async function refreshRunningExecs() {
+  try {
+    const { running } = await api("/api/executions/running");
+    const map = {};
+    for (const r of running) (map[r.script_id] = map[r.script_id] || []).push(r);
+    state.runningByScript = map;
+    renderScriptList();
+    updateRunningPopover();
+    if (state.detailExec && state.detailExec.status === "running") refreshDetailStatus();
+  } catch { /* 轮询失败静默，下次再试 */ }
+}
+
+function fmtRunStart(iso) {
+  try {
+    const d = new Date(iso);
+    const pad = (n) => String(n).padStart(2, "0");
+    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  } catch { return ""; }
+}
+
+function fmtRunDuration(startIso, now = Date.now()) {
+  try {
+    const s = Math.max(0, Math.floor((now - new Date(startIso).getTime()) / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h > 0 ? `${h}h${String(m).padStart(2, "0")}m${String(sec).padStart(2, "0")}s`
+      : m > 0 ? `${m}m${String(sec).padStart(2, "0")}s` : `${sec}s`;
+  } catch { return "-"; }
+}
+
+function openRunningPopover(anchor, scriptId) {
+  state.popoverScriptId = scriptId;
+  const pop = $("#running-popover");
+  pop.hidden = false;
+  const r = anchor.getBoundingClientRect();
+  pop.style.position = "fixed";
+  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 330)) + "px";
+  pop.style.top = (r.bottom + 6) + "px";
+  renderRunningPopover();
+  if (!window._popoverTimer) window._popoverTimer = setInterval(updateRunningPopover, 1000);
+}
+
+function closeRunningPopover() {
+  state.popoverScriptId = null;
+  $("#running-popover").hidden = true;
+  if (window._popoverTimer) { clearInterval(window._popoverTimer); window._popoverTimer = null; }
+}
+
+function updateRunningPopover() {
+  const pop = $("#running-popover");
+  if (pop.hidden || !state.popoverScriptId) return;
+  // 每秒只刷新运行时长，避免整表重建闪烁
+  $$(".rp-time", pop).forEach((el) => {
+    if (el.dataset.start) el.textContent = fmtRunStart(el.dataset.start) + " · 已运行 " + fmtRunDuration(el.dataset.start);
+  });
+}
+
+function renderRunningPopover() {
+  const pop = $("#running-popover");
+  if (pop.hidden || !state.popoverScriptId) return;
+  const runs = state.runningByScript[state.popoverScriptId] || [];
+  pop.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "rp-head";
+  head.textContent = runs.length ? `${runs.length} 个任务运行中` : "暂无运行任务";
+  pop.appendChild(head);
+  if (!runs.length) {
+    const empty = document.createElement("div");
+    empty.className = "rp-empty";
+    empty.textContent = "该脚本当前没有正在运行的任务";
+    pop.appendChild(empty);
+    return;
+  }
+  for (const r of runs) {
+    const row = document.createElement("div");
+    row.className = "rp-item";
+    row.title = "点击查看该任务的执行记录";
+    const args = summarizeArgs(JSON.stringify(r.args || {}));
+    const a1 = document.createElement("div");
+    a1.className = "rp-args";
+    a1.textContent = args;
+    a1.title = args;
+    const a2 = document.createElement("div");
+    a2.className = "rp-meta";
+    const t = document.createElement("span");
+    t.className = "rp-time";
+    t.textContent = fmtRunStart(r.started_at) + " · 已运行 " + fmtRunDuration(r.started_at);
+    t.dataset.start = r.started_at;
+    const arrow = document.createElement("span");
+    arrow.className = "rp-arrow";
+    arrow.textContent = "→";
+    a2.append(t, arrow);
+    row.append(a1, a2);
+    row.addEventListener("click", () => jumpToExecution(r.id));
+    pop.appendChild(row);
+  }
+}
+
+async function jumpToExecution(id) {
+  closeRunningPopover();
+  switchTab("history");
+  await refreshHistory();
+  const item = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(id));
+  await showHistoryDetail(id, item || null);
+}
+
 /* ================= 历史记录 ================= */
 
 let historyScope = "all"; // "all"=全部脚本（默认，确保能看到所有记录）| "script"=仅当前脚本
@@ -1494,6 +1616,7 @@ function renderHistory(list) {
     }
 
     item.append(top, argsLine, tagsRow);
+    item.dataset.id = h.id;
     item.onclick = () => showHistoryDetail(h.id, item);
     wrap.appendChild(item);
   }
@@ -1519,15 +1642,58 @@ async function showHistoryDetail(id, itemEl) {
   $$(".hist-item").forEach((el) => el.classList.remove("active"));
   if (itemEl) itemEl.classList.add("active");
   const rec = await api(`/api/executions/${id}`);
+  state.detailExec = rec;
+  // 关闭上一次详情页的实时 WS（与主控制台连接相互独立）
+  if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
+
   const detail = $("#history-detail");
   detail.hidden = false;
   detail.innerHTML = "";
 
+  // ===== 头部：名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
   const head = document.createElement("div");
   head.className = "hd-head";
-  const info = document.createElement("span");
-  info.style.cssText = "font-size:12.5px;font-weight:600";
-  info.textContent = `${rec.script_name || "脚本"} · ${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
+  const titleBox = document.createElement("div");
+  titleBox.className = "hd-title";
+  const nameRow = document.createElement("div");
+  nameRow.className = "hd-name-row";
+  const nm = document.createElement("span");
+  nm.className = "hd-name";
+  nm.textContent = rec.script_name || "（脚本已删除）";
+  const st = document.createElement("span");
+  st.className = "status-pill " + rec.status;
+  st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[rec.status] || rec.status;
+  const meta = document.createElement("div");
+  meta.className = "hd-meta";
+  meta.textContent = `${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
+  nameRow.append(nm, st);
+  titleBox.append(nameRow, meta);
+
+  const actions = document.createElement("div");
+  actions.className = "hd-actions";
+  if (rec.status === "running") {
+    const term = document.createElement("button");
+    term.className = "btn mini danger";
+    term.textContent = "终止";
+    term.title = "终止该任务（仅影响这一条运行，不影响其他任务）";
+    term.onclick = async () => {
+      try {
+        await api(`/api/executions/${rec.id}/terminate`, { method: "POST" });
+        toast("已发送终止信号");
+        term.disabled = true;
+        term.textContent = "终止中…";
+      } catch (e) { toast(e.message, true); }
+    };
+    actions.appendChild(term);
+  }
+  const copy = document.createElement("button");
+  copy.className = "btn mini ghost";
+  copy.textContent = "复制命令";
+  copy.title = "复制该次执行对应的 uv run 命令";
+  copy.onclick = async () => {
+    if (!rec.command) return toast("无法生成命令", true);
+    if (await copyText(rec.command)) toast("已复制 uv run 命令");
+  };
   const rerun = document.createElement("button");
   rerun.className = "btn mini primary";
   rerun.textContent = "↻ 用此参数重跑";
@@ -1540,14 +1706,30 @@ async function showHistoryDetail(id, itemEl) {
       title: "删除执行记录",
       message: `确定删除这条执行记录（${rec.script_name || "脚本"} · ${formatTime(rec.started_at)}）吗？`,
       onConfirm: async () => {
+        if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
         await api(`/api/executions/${rec.id}`, { method: "DELETE" });
         detail.hidden = true;
         refreshHistory();
       },
     });
   };
-  head.append(info, rerun, del);
+  actions.append(copy, rerun, del);
+  head.append(titleBox, actions);
 
+  // ===== 参数 =====
+  const argsBlock = document.createElement("div");
+  argsBlock.className = "hd-args";
+  const argsLbl = document.createElement("span");
+  argsLbl.className = "hd-lbl";
+  argsLbl.textContent = "参数";
+  const argsTxt = document.createElement("div");
+  argsTxt.className = "hd-args-txt";
+  const argsSummary = summarizeArgs(JSON.stringify(rec.args || {}));
+  argsTxt.textContent = argsSummary;
+  argsTxt.title = JSON.stringify(rec.args || {});
+  argsBlock.append(argsLbl, argsTxt);
+
+  // ===== 标签 =====
   const tagsRow = document.createElement("div");
   tagsRow.className = "hd-tags";
   const tagsLbl = document.createElement("span");
@@ -1587,14 +1769,66 @@ async function showHistoryDetail(id, itemEl) {
   tagsRow.appendChild(inp);
   renderTags();
 
-  const out = document.createElement("div");
-  out.className = "hd-output";
-  out.innerHTML = rec.output ? ansiToHtml(rec.output) : "（无输出）";
-  const truncated = document.createElement("div");
-  truncated.className = "hd-truncated";
-  truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
+  // ===== 输出区：运行中实时流，结束后静态快照 =====
+  if (rec.status === "running") {
+    const live = document.createElement("div");
+    live.className = "hd-live";
+    const ph = document.createElement("div");
+    ph.className = "console-placeholder";
+    ph.style.display = "flex";
+    ph.textContent = "任务运行中，标准输出将实时显示在这里";
+    const cons = document.createElement("div");
+    cons.className = "console mono hd-live-console";
+    live.append(ph, cons);
+    const tip = document.createElement("div");
+    tip.className = "hd-truncated";
+    tip.textContent = "· 实时输出 · 结束后仅保留最后 1000 行";
+    detail.append(head, argsBlock, tagsRow, live, tip);
+    const renderer = createConsoleRenderer(cons, live, ph);
+    state.detailWs = connectDetailWs(rec.id, renderer, id, itemEl);
+  } else {
+    const out = document.createElement("div");
+    out.className = "hd-output";
+    out.innerHTML = rec.output ? ansiToHtml(rec.output) : "（无输出）";
+    const truncated = document.createElement("div");
+    truncated.className = "hd-truncated";
+    truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
+    detail.append(head, argsBlock, tagsRow, out, truncated);
+  }
+}
 
-  detail.append(head, tagsRow, out, truncated);
+function connectDetailWs(execId, renderer, detailId, itemEl) {
+  const proto = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${proto}://${location.host}/ws/run/${execId}`);
+  ws.onmessage = async (e) => {
+    const m = JSON.parse(e.data);
+    if (m.type === "line") {
+      renderer.append(m.stream, m.line);
+    } else if (m.type === "done") {
+      try { ws.close(); } catch {}
+      if (state.detailWs === ws) state.detailWs = null;
+      refreshRunningExecs();
+      refreshHistory();
+      // 任务已结束，详情页切换为静态快照
+      const it = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(detailId));
+      await showHistoryDetail(detailId, it || itemEl);
+    }
+  };
+  ws.onerror = () => {
+    try { ws.close(); } catch {}
+    if (state.detailWs === ws) state.detailWs = null;
+  };
+  return ws;
+}
+
+function refreshDetailStatus() {
+  // 轮询发现详情记录已结束但 WS 已断开时，把详情页切回静态快照
+  if (!state.detailExec || state.detailWs) return;
+  const runs = state.runningByScript[state.detailExec.script_id] || [];
+  if (!runs.some((r) => r.id === state.detailExec.id)) {
+    const it = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(state.detailExec.id));
+    showHistoryDetail(state.detailExec.id, it || null);
+  }
 }
 
 async function rerunExecution(rec) {
@@ -2242,10 +2476,17 @@ function switchTab(name) {
   applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
 }
 document.addEventListener("click", (e) => {
+  // 点击 popover 外部区域时关闭
+  if (state.popoverScriptId && !e.target.closest("#running-popover") && !e.target.closest(".sc-running")) {
+    closeRunningPopover();
+  }
   const t = e.target.closest(".tab");
   if (!t) return;
   switchTab(t.dataset.tab);
   if (t.dataset.tab === "history") refreshHistory();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && state.popoverScriptId) closeRunningPopover();
 });
 
 /* ================= 导出 / 导入（版本迁移） ================= */
@@ -2371,6 +2612,9 @@ async function init() {
   }
   updatePageBadge();
   refreshHistory(); // 默认展示执行记录（不依赖点击）
+  refreshRunningExecs();
+  // 运行任务数 / 徽章 / popover 实时轮询（独立于定时任务页轮询，常驻）
+  if (!window._runningTimer) window._runningTimer = setInterval(refreshRunningExecs, 3000);
   const last = localStorage.getItem("last_script_id");
   if (last && state.scripts.some((s) => String(s.id) === last)) {
     selectScript(Number(last));
