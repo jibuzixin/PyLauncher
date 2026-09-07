@@ -1062,30 +1062,39 @@ select.f-input { appearance: none; padding-right: 30px;
 #running-popover {
   z-index: 60;
   width: 320px; max-width: calc(100vw - 24px);
-  background: rgba(255, 255, 255, 0.9);
-  backdrop-filter: blur(22px) saturate(170%);
-  -webkit-backdrop-filter: blur(22px) saturate(170%);
-  border: 1px solid rgba(0, 0, 0, 0.1);
-  border-radius: 14px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.06);
+  /* 与主卡片一致的玻璃材质（悬浮层更白更实，但保留通透） */
+  background: rgba(255, 255, 255, 0.66);
+  backdrop-filter: blur(28px) saturate(180%);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: 18px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.06),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
   padding: 10px;
   display: flex; flex-direction: column; gap: 6px;
+}
+/* 打开时的入场动画：淡入 + 轻微上浮缩放 */
+#running-popover:not([hidden]) { animation: rpIn 0.18s cubic-bezier(0.3, 1.4, 0.5, 1); }
+@keyframes rpIn {
+  from { opacity: 0; transform: translateY(4px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
 }
 #running-popover .rp-head {
   font-size: 11.5px; font-weight: 600; color: var(--muted);
   padding: 2px 4px 6px;
-  border-bottom: 1px solid rgba(0, 0, 0, 0.07);
+  border-bottom: 1px solid var(--hairline);
 }
 #running-popover .rp-empty { font-size: 12px; color: var(--faint); padding: 10px 4px; }
 #running-popover .rp-item {
   display: flex; flex-direction: column; gap: 3px;
-  padding: 8px 10px; border-radius: 9px;
+  padding: 8px 10px; border-radius: 10px;
   cursor: pointer; border: 1px solid transparent;
-  transition: background 0.12s, border-color 0.12s;
+  transition: background 0.12s, border-color 0.12s, box-shadow 0.12s;
 }
 #running-popover .rp-item:hover {
-  background: rgba(0, 0, 0, 0.045);
-  border-color: rgba(0, 0, 0, 0.08);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow-sm);
 }
 #running-popover .rp-args {
   font-family: var(--mono); font-size: 11px; color: var(--text);
@@ -1216,7 +1225,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </span>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.36</span>
+    <span class="badge">v0.0.37</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
