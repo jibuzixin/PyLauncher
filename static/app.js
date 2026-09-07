@@ -1488,7 +1488,13 @@ function renderRunningPopover() {
   pop.innerHTML = "";
   const head = document.createElement("div");
   head.className = "rp-head";
-  head.textContent = runs.length ? `${runs.length} 个任务运行中` : "暂无运行任务";
+  if (runs.length) {
+    const dot = document.createElement("span");
+    dot.className = "rp-dot";
+    head.append(dot, document.createTextNode(` ${runs.length} 个任务运行中`));
+  } else {
+    head.textContent = "暂无运行任务";
+  }
   pop.appendChild(head);
   if (!runs.length) {
     const empty = document.createElement("div");
