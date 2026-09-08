@@ -641,13 +641,19 @@ select.f-input { appearance: none; padding-right: 30px;
   white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
-.tab.active { color: #fff; }
-/* 苹果风滑动胶囊：绝对定位，随 active tab 平移 */
+.tab.active { color: var(--text); font-weight: 600; }
+/* 苹果风滑动胶囊：透明玻璃 + 边缘折射高光 */
 .tab-pill {
   position: absolute; top: 4px; bottom: 4px; left: 0;
   width: 0; border-radius: 999px;
-  background: linear-gradient(135deg, rgba(28, 28, 30, 0.9), rgba(44, 44, 46, 0.92));
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5));
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.07),
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.45);
   transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 0;
   pointer-events: none;
@@ -1319,7 +1325,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.56</span>
+    <span class="badge">v0.0.57</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
