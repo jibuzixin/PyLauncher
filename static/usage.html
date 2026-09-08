@@ -3,230 +3,413 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>使用说明 · Python 脚本启动器</title>
+<title>Python 脚本启动器 · 演示文档</title>
 <style>
   :root {
     --text: #1d1d1f; --muted: #6e6e73; --faint: #86868b;
-    --accent: #0071e3; --ok: #1a7f37; --danger: #d93025; --warning: #b45309;
-    --hairline: rgba(0,0,0,0.07);
-    --card: rgba(255,255,255,0.6);
+    --accent: #0071e3; --ok: #1a7f37; --warn: #b45309; --danger: #d93025;
+    --card: rgba(255,255,255,0.62);
     --font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
     --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
   body {
-    font-family: var(--font);
-    color: var(--text);
-    font-size: 14px;
-    line-height: 1.7;
+    font-family: var(--font); color: var(--text); font-size: 14px; line-height: 1.65;
     background:
-      radial-gradient(1000px 700px at 8% -10%, rgba(88,166,255,0.22), transparent 60%),
-      radial-gradient(900px 640px at 104% 6%, rgba(180,130,255,0.18), transparent 58%),
-      linear-gradient(165deg, #eef3fb 0%, #f3f1fa 50%, #fdf2f2 100%);
+      radial-gradient(1100px 760px at 10% -12%, rgba(88,166,255,0.26), transparent 62%),
+      radial-gradient(950px 700px at 102% 8%, rgba(180,130,255,0.2), transparent 58%),
+      radial-gradient(800px 600px at 50% 115%, rgba(120,220,255,0.16), transparent 60%),
+      linear-gradient(160deg, #eef3fb 0%, #f3f1fa 48%, #fdf2f2 100%);
     background-attachment: fixed;
-    padding: 40px 20px 80px;
+    display: flex; flex-direction: column; align-items: center;
+    padding: 26px 20px 18px;
     -webkit-font-smoothing: antialiased;
+    overflow: hidden;
   }
-  .wrap { max-width: 860px; margin: 0 auto; }
-  .hero {
-    background: var(--card);
-    backdrop-filter: blur(24px) saturate(170%);
-    -webkit-backdrop-filter: blur(24px) saturate(170%);
-    border: 1px solid rgba(255,255,255,0.65);
-    border-radius: 20px;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.08);
-    padding: 36px 40px;
-    margin-bottom: 20px;
-  }
-  .hero h1 { font-size: 26px; font-weight: 700; letter-spacing: -0.02em; }
-  .hero .sub { color: var(--muted); margin-top: 8px; font-size: 14px; }
-  .hero .ver { display: inline-block; margin-top: 14px; font-size: 11px; color: var(--muted); border: 1px solid var(--hairline); border-radius: 999px; padding: 2px 10px; background: rgba(255,255,255,0.6); }
-  .card {
-    background: var(--card);
-    backdrop-filter: blur(20px) saturate(160%);
-    -webkit-backdrop-filter: blur(20px) saturate(160%);
-    border: 1px solid rgba(255,255,255,0.65);
-    border-radius: 16px;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.05);
-    padding: 24px 28px;
+
+  /* 顶栏 */
+  .bar {
+    width: 100%; max-width: 980px;
+    display: flex; align-items: center; justify-content: space-between;
     margin-bottom: 16px;
+    padding: 0 6px;
   }
-  .card h2 { font-size: 16px; font-weight: 650; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
-  .card h2 .n {
-    width: 22px; height: 22px; border-radius: 7px; background: var(--accent); color: #fff;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; flex-shrink: 0;
+  .bar .t { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; display: flex; align-items: center; gap: 9px; }
+  .bar .t .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(0,113,227,0.15); }
+  .bar .ver { font-size: 11px; color: var(--muted); border: 1px solid rgba(0,0,0,0.08); border-radius: 999px; padding: 2px 10px; background: rgba(255,255,255,0.5); }
+  .bar .back { font-size: 12px; color: var(--accent); text-decoration: none; font-weight: 500; }
+  .bar .back:hover { text-decoration: underline; }
+
+  /* 进度条 */
+  .progress { width: 100%; max-width: 980px; height: 3px; border-radius: 999px; background: rgba(0,0,0,0.07); margin-bottom: 14px; overflow: hidden; }
+  .progress i { display: block; height: 100%; border-radius: 999px; background: linear-gradient(90deg, #0071e3, #5aa2ff); transition: width 0.35s ease; }
+
+  /* 幻灯片 */
+  .stage { position: relative; width: 100%; max-width: 980px; flex: 1; }
+  .slide {
+    position: absolute; inset: 0;
+    background: var(--card);
+    backdrop-filter: blur(26px) saturate(165%);
+    -webkit-backdrop-filter: blur(26px) saturate(165%);
+    border: 1px solid rgba(255,255,255,0.7);
+    border-radius: 26px;
+    box-shadow: 0 18px 60px rgba(0,0,0,0.10), 0 2px 10px rgba(0,0,0,0.04);
+    padding: 40px 52px;
+    display: flex; flex-direction: column;
+    opacity: 0; pointer-events: none;
+    transform: translateX(36px) scale(0.985);
+    transition: opacity 0.32s ease, transform 0.32s ease;
+    overflow: auto;
   }
-  .card p { color: var(--muted); margin-bottom: 8px; }
-  .card ul { margin: 6px 0 8px 20px; color: var(--muted); }
-  .card li { margin-bottom: 4px; }
-  .card li b { color: var(--text); font-weight: 600; }
-  .card code {
-    font-family: var(--mono); font-size: 12px;
-    background: rgba(0,0,0,0.05); border-radius: 6px; padding: 1px 7px;
-    color: var(--text);
+  .slide.active { opacity: 1; pointer-events: auto; transform: none; }
+  .slide.prev { transform: translateX(-36px) scale(0.985); }
+
+  .slide .kick { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 600; color: var(--accent); letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 10px; }
+  .slide h1 { font-size: 32px; font-weight: 750; letter-spacing: -0.025em; line-height: 1.2; margin-bottom: 10px; }
+  .slide h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 6px; }
+  .slide .sub { color: var(--muted); font-size: 15px; max-width: 640px; }
+  .slide .bigicon { width: 64px; height: 64px; border-radius: 18px; display: flex; align-items: center; justify-content: center; margin-bottom: 18px; background: rgba(0,113,227,0.1); color: var(--accent); }
+  .slide .bigicon svg { width: 32px; height: 32px; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 22px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 22px; }
+  .cell {
+    background: rgba(255,255,255,0.55);
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 16px; padding: 16px 18px;
   }
-  .card pre {
-    font-family: var(--mono); font-size: 12.5px; line-height: 1.6;
-    background: rgba(0,0,0,0.05); border: 1px solid var(--hairline);
-    border-radius: 10px; padding: 12px 16px;
-    overflow-x: auto; margin: 8px 0 12px;
+  .cell .ic { width: 38px; height: 38px; border-radius: 11px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px; }
+  .cell .ic svg { width: 20px; height: 20px; }
+  .cell h3 { font-size: 14px; font-weight: 650; margin-bottom: 4px; }
+  .cell p { font-size: 12.5px; color: var(--muted); }
+
+  .vs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 12px; align-items: stretch; margin-top: 22px; }
+  .vs .side { border-radius: 16px; padding: 18px 20px; font-size: 13px; }
+  .vs .side.bad { background: rgba(217,48,37,0.06); border: 1px solid rgba(217,48,37,0.16); color: #7a241e; }
+  .vs .side.good { background: rgba(26,127,55,0.06); border: 1px solid rgba(26,127,55,0.18); color: #14532d; }
+  .vs .mid { display: flex; align-items: center; justify-content: center; font-size: 20px; font-weight: 700; color: var(--faint); }
+  .vs .side h4 { font-size: 14px; font-weight: 650; margin-bottom: 10px; }
+  .vs ul { list-style: none; }
+  .vs li { display: flex; gap: 8px; margin-bottom: 8px; font-size: 12.5px; line-height: 1.5; }
+  .vs li svg { width: 15px; height: 15px; flex-shrink: 0; margin-top: 1px; }
+
+  .flow { display: flex; align-items: center; gap: 8px; margin-top: 22px; flex-wrap: wrap; }
+  .flow .step {
+    flex: 1; min-width: 130px;
+    background: rgba(255,255,255,0.6); border: 1px solid rgba(0,0,0,0.07);
+    border-radius: 14px; padding: 14px 14px;
+    text-align: center; font-size: 12.5px;
   }
-  .kbd {
-    font-family: var(--mono); font-size: 11px;
-    background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.12);
-    border-bottom-width: 2px; border-radius: 6px; padding: 1px 7px;
+  .flow .step .n { width: 22px; height: 22px; margin: 0 auto 8px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+  .flow .step b { display: block; font-size: 13px; margin-bottom: 2px; }
+  .flow .step code { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+  .flow .arrow { color: var(--faint); font-size: 17px; flex-shrink: 0; }
+
+  .codebox {
+    margin-top: 18px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+    background: rgba(30,30,32,0.92); color: #e8e8ea;
+    border-radius: 14px; padding: 16px 18px; overflow-x: auto;
   }
-  .tag {
-    display: inline-block; font-size: 11px; border-radius: 999px; padding: 1px 10px;
-    margin-right: 6px; border: 1px solid var(--hairline); background: rgba(255,255,255,0.5);
-    color: var(--muted);
+  .codebox .c { color: #9aa0a6; }
+  .codebox .g { color: #7ee2a8; }
+  .codebox .b { color: #7ab7ff; }
+  .codebox .y { color: #ffd479; }
+
+  .req { display: flex; flex-direction: column; gap: 12px; margin-top: 20px; }
+  .req .row { display: flex; gap: 14px; align-items: flex-start; background: rgba(255,255,255,0.55); border: 1px solid rgba(0,0,0,0.06); border-radius: 14px; padding: 14px 16px; }
+  .req .row .rnum { width: 26px; height: 26px; border-radius: 9px; background: rgba(0,113,227,0.12); color: var(--accent); font-size: 13px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .req .row .rt { font-size: 13.5px; }
+  .req .row .rt b { display: block; font-size: 14px; margin-bottom: 2px; }
+  .req .row .rt code { font-family: var(--mono); font-size: 12px; background: rgba(0,0,0,0.06); border-radius: 5px; padding: 1px 6px; }
+
+  .features { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px; }
+  .features .f { display: flex; gap: 13px; background: rgba(255,255,255,0.55); border: 1px solid rgba(0,0,0,0.06); border-radius: 15px; padding: 15px 16px; }
+  .features .f .fic { width: 40px; height: 40px; border-radius: 12px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .features .f .fic svg { width: 21px; height: 21px; }
+  .features .f h3 { font-size: 14px; font-weight: 650; margin-bottom: 3px; }
+  .features .f p { font-size: 12.5px; color: var(--muted); }
+
+  .tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+  .tag { font-size: 12px; border-radius: 999px; padding: 4px 13px; border: 1px solid rgba(0,0,0,0.08); background: rgba(255,255,255,0.55); color: var(--muted); }
+  .tag.b { color: var(--accent); border-color: rgba(0,113,227,0.3); background: rgba(0,113,227,0.07); }
+  .tag.g { color: var(--ok); border-color: rgba(26,127,55,0.3); background: rgba(26,127,55,0.07); }
+  .tag.o { color: var(--warn); border-color: rgba(180,83,9,0.3); background: rgba(180,83,9,0.07); }
+
+  .end { text-align: center; align-items: center; justify-content: center; }
+  .end h1 { font-size: 34px; }
+  .end .cta { margin-top: 24px; display: inline-flex; gap: 12px; }
+  .end .cta a { text-decoration: none; font-size: 13.5px; font-weight: 600; border-radius: 999px; padding: 9px 22px; }
+  .end .cta .p { background: var(--accent); color: #fff; }
+  .end .cta .g { background: rgba(255,255,255,0.7); border: 1px solid rgba(0,0,0,0.1); color: var(--text); }
+  .end .cta .p:hover { background: #0b63c9; }
+  .end .cta .g:hover { background: #fff; }
+
+  /* 底部导航 */
+  .nav {
+    width: 100%; max-width: 980px;
+    display: flex; align-items: center; justify-content: space-between;
+    margin-top: 14px; padding: 0 4px;
   }
-  .tag.green { color: var(--ok); border-color: rgba(26,127,55,0.3); background: rgba(26,127,55,0.08); }
-  .tag.blue { color: var(--accent); border-color: rgba(0,113,227,0.3); background: rgba(0,113,227,0.08); }
-  .tag.orange { color: var(--warning); border-color: rgba(180,83,9,0.3); background: rgba(180,83,9,0.08); }
-  .tag.red { color: var(--danger); border-color: rgba(217,48,37,0.3); background: rgba(217,48,37,0.08); }
-  .faq-item { margin-bottom: 14px; }
-  .faq-item .q { font-weight: 600; color: var(--text); margin-bottom: 3px; }
-  .faq-item .a { color: var(--muted); }
-  .back { text-align: center; margin-top: 10px; }
-  .back a { color: var(--accent); text-decoration: none; font-size: 13px; }
-  .back a:hover { text-decoration: underline; }
-  @media (max-width: 640px) {
-    body { padding: 20px 12px 60px; }
-    .hero, .card { padding: 20px; }
+  .nav .dots { display: flex; gap: 7px; }
+  .nav .dots button {
+    width: 8px; height: 8px; border-radius: 50%; border: none; cursor: pointer;
+    background: rgba(0,0,0,0.16); padding: 0; transition: all 0.2s ease;
+  }
+  .nav .dots button.on { background: var(--accent); width: 22px; border-radius: 999px; }
+  .nav .arrow {
+    width: 38px; height: 38px; border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.09); background: rgba(255,255,255,0.6);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    color: var(--text); transition: background 0.15s, transform 0.1s;
+  }
+  .nav .arrow:hover { background: rgba(255,255,255,0.95); }
+  .nav .arrow:active { transform: scale(0.94); }
+  .nav .arrow svg { width: 17px; height: 17px; }
+  .nav .arrow:disabled { opacity: 0.3; cursor: default; }
+
+  .hint { margin-top: 12px; font-size: 11px; color: var(--faint); letter-spacing: 0.02em; }
+  @media (max-width: 720px) {
+    .slide { padding: 26px 22px; }
+    .slide h1 { font-size: 24px; }
+    .grid2, .grid3, .features, .vs { grid-template-columns: 1fr; }
+    .vs { grid-template-columns: 1fr; }
+    .vs .mid { display: none; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
 
-  <div class="hero">
-    <h1>Python 脚本启动器 · 使用说明</h1>
-    <div class="sub">本地脚本运行平台 —— 把「进入目录 + 敲 uv 命令 + 盯终端输出」变成可视化表单 + 一键按钮。</div>
-    <span class="ver">v0.0.49</span>
+<div class="bar">
+  <div class="t"><span class="dot"></span>Python 脚本启动器 · 演示文档</div>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="ver">v0.0.50</span>
+    <a class="back" href="/">← 返回启动器</a>
   </div>
+</div>
 
-  <div class="card">
-    <h2><span class="n">1</span>快速开始</h2>
-    <p>右上角 <b>「导入 / 扫描」</b> 是你的入口：</p>
-    <ul>
-      <li><b>导入单个脚本</b>：填写 <code>.py</code> 文件路径（或本地文件选择器），自动解析命令行参数；可自定义脚本名称与描述</li>
-      <li><b>扫描目录</b>：扫描指定目录下的全部 <code>.py</code> 文件，逐个导入</li>
-      <li><b>导出 / 导入 JSON</b>：顶栏可批量导出全部脚本信息，用于版本迁移，导入即可恢复</li>
-    </ul>
-    <p>约定：脚本必须使用 <b>argparse</b> 解析命令行参数，启动器才能自动识别参数、默认值、类型与描述。</p>
-  </div>
+<div class="progress"><i id="prog"></i></div>
 
-  <div class="card">
-    <h2><span class="n">2</span>三栏布局</h2>
-    <ul>
-      <li><b>左侧 · 脚本列表</b>：搜索、标签过滤（多选）、运行任务徽章（黄色 ●N，点击查看运行中任务并跳转详情）</li>
-      <li><b>中间 · 参数表单</b>：当前脚本的环境状态、参数预设、参数填写与执行</li>
-      <li><b>右侧 · 面板</b>：控制台 / 执行记录 / 定时任务 三个页签</li>
-    </ul>
-    <p>侧栏与面板之间可以<b>拖拽分隔条</b>调整宽度，宽度偏好自动保存；顶栏左上角可收起/展开侧栏。</p>
-  </div>
+<div class="stage" id="stage">
 
-  <div class="card">
-    <h2><span class="n">3</span>参数表单</h2>
-    <ul>
-      <li><b>必选参数置顶</b>：有默认值或声明 <code>required=True</code> 的视为必填，排在最前</li>
-      <li><b>类型标签</b>：每个参数显示类型（<span class="tag">str</span><span class="tag blue">int</span><span class="tag green">float</span><span class="tag orange">bool</span>…），带颜色区分</li>
-      <li><b>描述</b>：解析到的参数描述显示在输入框上方，可点击编辑</li>
-      <li><b>布尔参数</b>：使用开关按钮切换</li>
-      <li><b>自动保存</b>：填写内容实时保存，下次打开还在；「仅显示已填参数」开关可隐藏空值</li>
-      <li><b>参数预设</b>：保存当前字段为预设、覆盖已有预设、固定常用预设置顶、最近使用排序，标签过多时折叠为「更多」</li>
-    </ul>
-  </div>
+  <!-- 1 封面 -->
+  <section class="slide active">
+    <div class="bigicon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg></div>
+    <div class="kick">Python Script Launcher</div>
+    <h1>把「进目录、敲命令、盯输出」<br>变成一张可视化表单 + 一个按钮</h1>
+    <p class="sub">本地脚本运行平台：自动解析 argparse 参数、一键 uv 运行、实时终端输出、完整执行历史 —— 本页用 10 页快速讲清它解决了什么、怎么运行、需要什么。</p>
+    <div class="tags">
+      <span class="tag b">uv 驱动</span>
+      <span class="tag g">SQLite 本地存储</span>
+      <span class="tag o">argparse 约定</span>
+      <span class="tag">FastAPI 本地服务</span>
+    </div>
+  </section>
 
-  <div class="card">
-    <h2><span class="n">4</span>执行与环境（uv）</h2>
-    <p>运行原理：在脚本所在目录使用 <code>uv run python 脚本.py 参数…</code>，每个脚本独立虚拟环境。</p>
-    <ul>
-      <li><b>环境检测</b>：打开脚本时自动检测 <code>uv</code> 是否存在（绿色=就绪）、虚拟环境是否已创建</li>
-      <li><b>uv 未安装</b>：给出友好提示与 Mac / Windows 安装命令</li>
-      <li><b>初始化环境</b>：点击「初始化 venv」创建虚拟环境；自动识别 <code>requirements.txt</code> / <code>pyproject.toml</code>，也可手动指定依赖文件路径安装</li>
-      <li><b>单脚本运行</b>：兼容 PEP 723 内联依赖脚本（文件头 <code># /// script</code> 声明），uv 可直接运行，无需依赖文件</li>
-      <li><b>复制命令</b>：执行按钮旁可复制当前参数对应的完整 <code>uv run</code> 命令</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">5</span>控制台</h2>
-    <ul>
-      <li>实时展示终端标准输出，支持 <b>\r 进度条同行刷新</b> 等终端效果</li>
-      <li><b>行号</b>：每行显示行号，悬浮出现复制按钮，可复制整行；支持多行选择复制</li>
-      <li><b>自动滚动 / 等宽字体</b>：工具栏开关控制</li>
-      <li>同时运行多个任务时，每个任务可在执行记录详情页查看自己的实时输出；脚本卡片徽章实时显示运行中的任务数</li>
-      <li>「终止」按钮终止最新一次运行（SIGTERM → 强杀进程组）</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">6</span>执行记录</h2>
-    <ul>
-      <li>每次执行自动记录：脚本、参数、开始时间、退出码、状态（<span class="tag green">成功</span><span class="tag red">失败</span><span class="tag orange">运行中</span><span class="tag">已终止</span>）、完整标准输出</li>
-      <li><b>添加标签</b>：给记录打标签便于筛选；支持按标签 / 脚本名 / 状态搜索</li>
-      <li><b>详情</b>：点击记录滑入详情页（运行中任务实时输出 + 终止 / 复制命令 / 用此参数重跑 / 删除），左上角返回</li>
-      <li><b>多选删除</b>：进入「多选」模式批量删除，也支持 hover 单条删除</li>
-      <li>「重跑」会将该次执行的参数回填到表单</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">7</span>定时任务</h2>
-    <ul>
-      <li><b>cron 表达式</b>：兼容标准 5 段 cron（分 时 日 月 周），如 <code>*/10 * * * *</code></li>
-      <li><b>可视化选择</b>：不懂 cron 也能点选分钟 / 小时 / 每天 / 每周等常用规则</li>
-      <li><b>执行次数</b>：卡片上直接编辑次数（输入 <code>-1</code> 表示不限次数），达到次数自动停用；再次启用时从 0 重新计数</li>
-      <li><b>参数填充</b>：任务可使用某个参数预设，也可自行填写</li>
-      <li>卡片实时显示下次执行时间（精确到分钟）；可随时编辑 cron 与次数</li>
-    </ul>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">8</span>数据与存储</h2>
-    <p>所有数据保存在本地 <code>launcher.db</code>（SQLite）：脚本信息、参数预设、执行记录、定时任务、界面偏好。随删随恢复，无需联网。</p>
-    <p>服务地址：<code>http://127.0.0.1:8900</code>；访问时 URL 带 <code>?t=时间戳</code> 可绕过浏览器缓存加载最新版本。</p>
-  </div>
-
-  <div class="card">
-    <h2><span class="n">9</span>常见问题</h2>
-    <div class="faq-item">
-      <div class="q">Q：怎么让局域网内其他设备访问？</div>
-      <div class="a">
-        <ul style="margin-top:6px">
-          <li>启动脚本默认已监听所有网卡（<code>--host 0.0.0.0</code>），其他设备访问 <code>http://你的局域网IP:8900</code>（终端 <code>ifconfig</code> / <code>ipconfig</code> 查 IP）</li>
-          <li>macOS 首次监听可能弹出「允许传入网络连接」，需允许；Windows 防火墙需放行 8900 端口（TCP）</li>
-          <li><b>安全提示</b>：监听所有网卡意味着同一局域网内任何设备都能打开页面并运行你的脚本，请只在可信网络使用；临时只想本机使用可执行 <code>python main.py --host 127.0.0.1</code></li>
+  <!-- 2 痛点 -->
+  <section class="slide">
+    <div class="kick">Why</div>
+    <h2>解决了什么痛点</h2>
+    <p class="sub">以前跑一个脚本工具，每次都是同样的重复动作：</p>
+    <div class="vs">
+      <div class="side bad">
+        <h4>✕ 手动流程（每次重复）</h4>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>cd 进入脚本目录</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>回忆参数名、值、默认值</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>手敲 uv run 一行长命令</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>盯终端输出、翻找结果文件</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>跑完就忘：没记录、没对比</li>
+        </ul>
+      </div>
+      <div class="mid">→</div>
+      <div class="side good">
+        <h4>✓ 本工具（一次配置，以后一键）</h4>
+        <ul>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>脚本列表点击即选，自动定位目录</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>参数表单自动解析，必填置顶</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>点「运行」= uv run，参数自动拼好</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>控制台实时输出，行号可复制</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg>每次执行自动留痕，可重跑可复盘</li>
         </ul>
       </div>
     </div>
-    <div class="faq-item">
-      <div class="q">Q：uv 未安装怎么办？</div>
-      <div class="a">页面会给出对应平台的安装命令：macOS <code>brew install uv</code>；Windows <code>winget install astral-sh.uv</code> 或 <code>pip install uv</code>。</div>
-    </div>
-    <div class="faq-item">
-      <div class="q">Q：导入脚本提示 422？</div>
-      <div class="a">422 表示参数校验失败：请检查路径是否为绝对路径、文件是否存在，且脚本为可解析的 Python 文件。</div>
-    </div>
-    <div class="faq-item">
-      <div class="q">Q：服务怎么启动 / 停止？</div>
-      <div class="a">
-        项目根目录提供一键脚本，无需手动 kill 进程：
-        <ul style="margin-top:6px">
-          <li><b>macOS 启动</b>：双击 <code>start.command</code> —— 首次运行自动创建虚拟环境并安装依赖；服务后台常驻，关闭窗口不影响使用；若服务已在运行则只打开浏览器</li>
-          <li><b>macOS 停止</b>：双击 <code>stop.command</code> —— 自动结束监听 8900 端口的服务进程</li>
-          <li><b>Windows 启动</b>：双击 <code>start.bat</code> —— 自动建环境装依赖后前台运行</li>
-          <li><b>Windows 停止</b>：双击 <code>stop.bat</code> —— 自动结束监听 8900 端口的服务进程</li>
-        </ul>
-      </div>
-    </div>
-  </div>
+  </section>
 
-  <div class="back"><a href="/">← 返回启动器</a></div>
+  <!-- 3 运行原理 -->
+  <section class="slide">
+    <div class="kick">How it works</div>
+    <h2>运行原理：本质就是拼一条 uv run 命令</h2>
+    <p class="sub">所有"智能化"都在帮你正确拼出下面这条命令，并在它所在的目录执行：</p>
+    <div class="flow">
+      <div class="step"><div class="n">1</div><b>参数表单</b><code>--input a.csv --retry 3</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><b>拼接命令</b><code>uv run python 脚本.py …</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><b>脚本目录执行</b><code>cwd = 脚本所在目录</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><b>实时输出</b><code>终端流式回显</code></div>
+    </div>
+    <div class="codebox">
+      <span class="c"># 实际执行的命令（可在界面复制）</span><br>
+      cd <span class="y">/path/to/script_dir</span> &amp;&amp; uv run python <span class="y">tool.py</span> <span class="g">--input a.csv</span> <span class="g">--retry 3</span>
+    </div>
+  </section>
+
+  <!-- 4 环境模型 -->
+  <section class="slide">
+    <div class="kick">Environment</div>
+    <h2>环境模型：每个项目独立虚拟环境</h2>
+    <div class="flow">
+      <div class="step"><div class="n">1</div><b>检测 uv</b><code>未装则给出安装命令</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><b>初始化 venv</b><code>脚本目录生成 .venv</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><b>安装依赖</b><code>requirements.txt / pyproject.toml</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">4</div><b>uv run 执行</b><code>依赖隔离、互不干扰</code></div>
+    </div>
+    <div class="grid3">
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>依赖隔离</h3><p>脚本 A 的库版本不影响脚本 B，每个 .venv 独立</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>兼容 pyproject</h3><p>自动识别 requirements.txt 与 pyproject.toml 安装</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>单脚本运行</h3><p>兼容 PEP 723 内联依赖（# /// script），无需依赖文件</p></div>
+    </div>
+  </section>
+
+  <!-- 5 脚本要求 -->
+  <section class="slide">
+    <div class="kick">Requirements · 脚本要求</div>
+    <h2>载入的脚本要符合什么约定</h2>
+    <div class="req">
+      <div class="row"><div class="rnum">1</div><div class="rt"><b>必须用 argparse 解析命令行参数</b>启动器靠它自动识别参数名、类型、默认值与描述 —— 这是唯一硬性约定。<code>python tool.py --input a.csv --retry 3</code></div></div>
+      <div class="row"><div class="rnum">2</div><div class="rt"><b>必填 / 可选判定</b>声明了 <code>required=True</code> 或带默认值的为必填，排在表单最前；其余视为可选</div></div>
+      <div class="row"><div class="rnum">3</div><div class="rt"><b>类型与布尔</b>通过 <code>type=int/float</code> 识别数字类型；<code>action="store_true"</code> 的布尔开关在界面显示为开关按钮</div></div>
+      <div class="row"><div class="rnum">4</div><div class="rt"><b>描述信息</b>参数 <code>help="…"</code> 会自动显示在输入框上方，可再编辑；脚本描述显示在卡片与表单区</div></div>
+      <div class="row"><div class="rnum">5</div><div class="rt"><b>（可选）PEP 723 内联依赖</b>单文件工具可在文件头声明依赖，uv 直接运行，无需 requirements 文件</div></div>
+    </div>
+  </section>
+
+  <!-- 6 前提条件 -->
+  <section class="slide">
+    <div class="kick">Prerequisites · 前提条件</div>
+    <h2>需要什么前提条件</h2>
+    <div class="grid3">
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div><h3>安装 uv</h3><p>Python 包/环境管理工具。macOS：<code>brew install uv</code>；Windows：<code>irm https://astral.sh/uv/install.ps1 | iex</code></p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg></div><h3>本机 Python</h3><p>服务自身运行在项目 .venv 中；uv 可为各脚本自动寻找/创建对应 Python 版本</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><h3>脚本遵循约定</h3><p>argparse 解析（见上一页）。不满足也能导入，但参数无法自动识别</p></div>
+    </div>
+    <div class="codebox">
+      <span class="c"># 未安装 uv 时，页面会给出友好提示 + 对应平台安装命令</span><br>
+      macOS: <span class="g">brew install uv</span> &nbsp;&nbsp;|&nbsp;&nbsp; Windows: <span class="g">irm https://astral.sh/uv/install.ps1 | iex</span>
+    </div>
+  </section>
+
+  <!-- 7 快速开始 -->
+  <section class="slide">
+    <div class="kick">Quick Start</div>
+    <h2>快速开始：三步跑起来</h2>
+    <div class="flow">
+      <div class="step"><div class="n">1</div><b>导入脚本</b><code>右上角「导入 / 扫描」</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">2</div><b>填参数</b><code>表单自动解析，可存预设</code></div>
+      <div class="arrow">→</div>
+      <div class="step"><div class="n">3</div><b>点「运行」</b><code>uv 环境自动就绪</code></div>
+    </div>
+    <div class="grid2">
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg></div><h3>导入方式</h3><p>指定 .py 文件路径导入单个；扫描目录批量导入；JSON 导入导出方便迁移</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg></div><h3>首次运行</h3><p>页面自动检测 uv 与虚拟环境；点击「初始化」建 venv 并安装依赖，之后即点即跑</p></div>
+    </div>
+  </section>
+
+  <!-- 8 核心功能 -->
+  <section class="slide">
+    <div class="kick">Features</div>
+    <h2>核心功能一览</h2>
+    <div class="features">
+      <div class="f"><div class="fic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m8.5 12.5 2.5 2.5 5-5"/></svg></div><div><h3>参数预设</h3><p>保存/覆盖/固定常用预设，一键复写表单，自动保存当前字段</p></div></div>
+      <div class="f"><div class="fic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></div><div><h3>实时控制台</h3><p>终端流式输出（含 \r 进度条）、行号复制、自动滚动、多任务并行</p></div></div>
+      <div class="f"><div class="fic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></div><div><h3>执行历史</h3><p>每次执行自动留痕：状态、参数、完整输出、标签，可重跑可删除</p></div></div>
+      <div class="f"><div class="fic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/><path d="M12 2v2M12 20v2"/></svg></div><div><h3>定时任务</h3><p>cron 表达式或可视化点选，支持执行次数、参数预设、到期自动停用</p></div></div>
+    </div>
+  </section>
+
+  <!-- 9 数据与局域网 -->
+  <section class="slide">
+    <div class="kick">Data & Network</div>
+    <h2>数据与访问</h2>
+    <div class="grid2">
+      <div class="cell"><div class="ic" style="background:rgba(26,127,55,0.1);color:var(--ok)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/></svg></div><h3>本地 SQLite 存储</h3><p>脚本信息、预设、执行记录、定时任务全部存在本地 launcher.db，不联网、不泄露</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/></svg></div><h3>局域网访问（可选）</h3><p>顶栏「局域网」开关：打开后同网段设备可访问；关闭则仅本机。请只在可信网络开启</p></div>
+    </div>
+    <div class="codebox">
+      <span class="c"># 启动 / 停止（一键脚本，无需 kill）</span><br>
+      macOS: 双击 <span class="g">start.command</span> / <span class="g">stop.command</span> &nbsp; Windows: 双击 <span class="g">start.bat</span> / <span class="g">stop.bat</span><br>
+      <span class="c"># 访问地址</span><br>
+      本机 <span class="y">http://127.0.0.1:8900</span> &nbsp; 局域网 <span class="y">http://你的IP:8900</span>
+    </div>
+  </section>
+
+  <!-- 10 结尾 -->
+  <section class="slide end">
+    <div class="kick">Start</div>
+    <h1>从第一个脚本开始</h1>
+    <p class="sub" style="margin-top:8px">导入你的 argparse 脚本 → 填参数 → 点运行。<br>环境、命令、输出、记录 —— 都交给我们。</p>
+    <div class="cta">
+      <a class="p" href="/">打开启动器</a>
+      <a class="g" href="https://github.com/jibuzixin/py-script-launcher" target="_blank" rel="noopener">查看源码</a>
+    </div>
+  </section>
 
 </div>
+
+<div class="nav">
+  <button class="arrow" id="prev" title="上一页（←）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
+  <div class="dots" id="dots"></div>
+  <button class="arrow" id="next" title="下一页（→）"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg></button>
+</div>
+<div class="hint">支持键盘 ← / → 翻页 · 每页可滚动查看</div>
+
+<script>
+(function () {
+  const slides = Array.from(document.querySelectorAll(".slide"));
+  const dotsBox = document.getElementById("dots");
+  const prog = document.getElementById("prog");
+  const prev = document.getElementById("prev");
+  const next = document.getElementById("next");
+  let cur = 0;
+
+  slides.forEach((_, i) => {
+    const d = document.createElement("button");
+    d.title = "第 " + (i + 1) + " 页";
+    d.addEventListener("click", () => go(i));
+    dotsBox.appendChild(d);
+  });
+  const dots = Array.from(dotsBox.children);
+
+  function go(i) {
+    if (i === cur) return;
+    const dir = i > cur ? 1 : -1;
+    slides[cur].classList.remove("active");
+    slides[cur].classList.add(dir === 1 ? "prev" : "");
+    cur = i;
+    slides[cur].classList.remove("prev");
+    slides[cur].classList.add("active");
+    slides[cur].scrollTop = 0;
+    dots.forEach((d, k) => d.classList.toggle("on", k === cur));
+    prog.style.width = ((cur + 1) / slides.length * 100) + "%";
+    prev.disabled = cur === 0;
+    next.disabled = cur === slides.length - 1;
+  }
+
+  prev.addEventListener("click", () => go(Math.max(0, cur - 1)));
+  next.addEventListener("click", () => go(Math.min(slides.length - 1, cur + 1)));
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") go(Math.min(slides.length - 1, cur + 1));
+    if (e.key === "ArrowLeft") go(Math.max(0, cur - 1));
+  });
+
+  go(0);
+})();
+</script>
 </body>
 </html>
