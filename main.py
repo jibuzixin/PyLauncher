@@ -130,6 +130,10 @@ class MetaReq(BaseModel):
     value: str
 
 
+class HostReq(BaseModel):
+    lan: bool
+
+
 # ---------------- 流式会话（执行 / 环境初始化共用） ----------------
 
 _SESSIONS: dict[int, dict] = {}
@@ -463,6 +467,41 @@ async def get_meta():
 async def set_meta(req: MetaReq):
     db.meta_set(req.key, req.value)
     return {"ok": True}
+
+
+# ---------- 局域网访问开关 ----------
+
+CURRENT_HOST = "127.0.0.1"
+CURRENT_PORT = 8900
+
+
+def _restart_for_lan(lan: bool) -> None:
+    """写偏好后由延迟线程调用：以新 host 重启自身进程（保留原有参数，替换 --host）。"""
+    host = "0.0.0.0" if lan else "127.0.0.1"
+    args = [sys.executable, *sys.argv]
+    if "--host" in args:
+        i = args.index("--host")
+        args = args[:i] + args[i + 2:]
+    args += ["--host", host]
+    subprocess.Popen(args, start_new_session=True, close_fds=True)
+    os._exit(0)
+
+
+@app.get("/api/host")
+async def get_host():
+    lan = db.meta_get("lan_access", "0") == "1"
+    return {"ok": True, "lan": lan, "current_host": CURRENT_HOST, "port": CURRENT_PORT}
+
+
+@app.post("/api/host")
+async def set_host(req: HostReq):
+    want = "1" if req.lan else "0"
+    if db.meta_get("lan_access", "0") == want:
+        return {"ok": True, "restarting": False, "lan": req.lan}
+    db.meta_set("lan_access", want)
+    # 延迟重启，让当前响应先送达前端
+    asyncio.get_event_loop().call_later(0.6, lambda: _restart_for_lan(req.lan))
+    return {"ok": True, "restarting": True, "lan": req.lan}
 
 
 # ---------- schedules（定时任务） ----------
@@ -910,16 +949,24 @@ async def index():
 def main() -> None:
     import uvicorn
 
+    global CURRENT_HOST, CURRENT_PORT
+
     port = int(os.environ.get("LAUNCHER_PORT", "8900"))
-    host = os.environ.get("LAUNCHER_HOST", "127.0.0.1")
-    # 命令行 --host 优先于环境变量：--host 0.0.0.0 允许局域网访问
+    db.init_db()
+    # 默认仅本机；meta 偏好 lan_access=1 时监听所有网卡；--host 命令行参数最高优先
+    host = os.environ.get("LAUNCHER_HOST", "")
+    if db.meta_get("lan_access", "0") == "1":
+        host = "0.0.0.0"
+    if not host:
+        host = "127.0.0.1"
     if "--host" in sys.argv:
         i = sys.argv.index("--host")
         if i + 1 < len(sys.argv):
             host = sys.argv[i + 1]
     no_browser = "--no-browser" in sys.argv
 
-    db.init_db()
+    CURRENT_HOST = host
+    CURRENT_PORT = port
     if host == "0.0.0.0":
         url = f"http://127.0.0.1:{port}/?t={int(time.time())}"
         print(f"· Python 脚本启动器已启动: {url}")

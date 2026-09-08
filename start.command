@@ -25,7 +25,7 @@ if lsof -i :8900 -sTCP:LISTEN >/dev/null 2>&1; then
 fi
 
 # 后台常驻启动（日志写入用户目录，关闭窗口不影响）
-nohup .venv/bin/python main.py --host 0.0.0.0 > "$HOME/.tool-launcher.log" 2>&1 &
+nohup .venv/bin/python main.py > "$HOME/.tool-launcher.log" 2>&1 &
 disown
 sleep 2
 open "http://127.0.0.1:8900/?t=$(date +%s)"

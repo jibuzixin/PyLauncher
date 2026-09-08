@@ -175,6 +175,29 @@ svg { flex-shrink: 0; }
   background: rgba(0, 113, 227, 0.07);
   border-color: rgba(0, 113, 227, 0.3);
 }
+/* 局域网访问开关（macOS 风格小开关） */
+.lan-toggle {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 0 10px; height: 32px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.4);
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+.lan-toggle .lan-label { font-size: 12px; font-weight: 500; color: var(--text-secondary); }
+.lan-toggle .switch {
+  position: relative; width: 30px; height: 18px; padding: 0;
+  border-radius: 999px; border: none; cursor: pointer;
+  background: rgba(0, 0, 0, 0.18);
+  transition: background 0.2s ease;
+}
+.lan-toggle .switch .knob {
+  position: absolute; top: 2px; left: 2px;
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+  transition: transform 0.2s ease;
+}
+.lan-toggle .switch[aria-checked="true"] { background: #34c759; }
+.lan-toggle .switch[aria-checked="true"] .knob { transform: translateX(12px); }
 /* 运行中：黄色呼吸灯 */
 .btn.run-active { background: #f59e0b !important; border-color: #f59e0b !important; color: #fff !important; animation: runPulse 1.2s ease-in-out infinite; box-shadow: 0 2px 12px rgba(245, 158, 11, 0.45) !important; }
 .btn.run-active:hover { background: #f59e0b !important; }
@@ -1278,10 +1301,16 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.48</span>
+    <span class="badge">v0.0.49</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
+    <div class="lan-toggle" title="允许局域网内其他设备访问本工具">
+      <span class="lan-label">局域网</span>
+      <button class="switch" id="btn-lan" role="switch" aria-checked="false" title="允许局域网访问">
+        <span class="knob"></span>
+      </button>
+    </div>
     <button class="btn ghost doc-glass" id="btn-usage" title="查看使用说明（新标签页打开）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
       <span>文档</span>
@@ -4189,6 +4218,47 @@ $("#btn-clear-history").addEventListener("click", () => {
 $("#btn-usage").addEventListener("click", () => {
   window.open("/static/usage.html?v=1", "_blank", "noopener");
 });
+// ---------- 局域网访问开关 ----------
+const lanSwitch = $("#btn-lan");
+function applyLanState(lan) {
+  lanSwitch.setAttribute("aria-checked", lan ? "true" : "false");
+  lanSwitch.title = lan ? "已开启：允许局域网访问，点击关闭" : "已关闭：仅本机访问，点击开启";
+}
+async function loadLanState() {
+  try {
+    const r = await fetch("/api/host");
+    const d = await r.json();
+    applyLanState(!!d.lan);
+  } catch (e) { /* 服务未就绪时保持默认 */ }
+}
+lanSwitch.addEventListener("click", async () => {
+  const next = lanSwitch.getAttribute("aria-checked") !== "true";
+  lanSwitch.disabled = true;
+  try {
+    const r = await fetch("/api/host", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lan: next }),
+    });
+    const d = await r.json();
+    toast(next ? "已开启局域网访问，正在重启服务…" : "已关闭局域网访问（仅本机），正在重启服务…");
+    // 轮询等待服务重启完成后整页刷新
+    const t0 = Date.now();
+    (function poll() {
+      fetch("/api/health", { cache: "no-store" })
+        .then((x) => (x.ok ? location.replace(location.pathname + "?t=" + Date.now()) : retry()))
+        .catch(retry);
+      function retry() {
+        if (Date.now() - t0 > 15000) { lanSwitch.disabled = false; toast("服务重启超时，请手动刷新", true); return; }
+        setTimeout(poll, 800);
+      }
+    })();
+  } catch (e) {
+    lanSwitch.disabled = false;
+    toast("切换失败：请检查服务状态", true);
+  }
+});
+loadLanState();
 $("#btn-export").addEventListener("click", exportData);
 $("#btn-import-config").addEventListener("click", () => {
   const input = document.createElement("input");

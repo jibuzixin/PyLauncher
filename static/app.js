@@ -2740,6 +2740,47 @@ $("#btn-clear-history").addEventListener("click", () => {
 $("#btn-usage").addEventListener("click", () => {
   window.open("/static/usage.html?v=1", "_blank", "noopener");
 });
+// ---------- 局域网访问开关 ----------
+const lanSwitch = $("#btn-lan");
+function applyLanState(lan) {
+  lanSwitch.setAttribute("aria-checked", lan ? "true" : "false");
+  lanSwitch.title = lan ? "已开启：允许局域网访问，点击关闭" : "已关闭：仅本机访问，点击开启";
+}
+async function loadLanState() {
+  try {
+    const r = await fetch("/api/host");
+    const d = await r.json();
+    applyLanState(!!d.lan);
+  } catch (e) { /* 服务未就绪时保持默认 */ }
+}
+lanSwitch.addEventListener("click", async () => {
+  const next = lanSwitch.getAttribute("aria-checked") !== "true";
+  lanSwitch.disabled = true;
+  try {
+    const r = await fetch("/api/host", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lan: next }),
+    });
+    const d = await r.json();
+    toast(next ? "已开启局域网访问，正在重启服务…" : "已关闭局域网访问（仅本机），正在重启服务…");
+    // 轮询等待服务重启完成后整页刷新
+    const t0 = Date.now();
+    (function poll() {
+      fetch("/api/health", { cache: "no-store" })
+        .then((x) => (x.ok ? location.replace(location.pathname + "?t=" + Date.now()) : retry()))
+        .catch(retry);
+      function retry() {
+        if (Date.now() - t0 > 15000) { lanSwitch.disabled = false; toast("服务重启超时，请手动刷新", true); return; }
+        setTimeout(poll, 800);
+      }
+    })();
+  } catch (e) {
+    lanSwitch.disabled = false;
+    toast("切换失败：请检查服务状态", true);
+  }
+});
+loadLanState();
 $("#btn-export").addEventListener("click", exportData);
 $("#btn-import-config").addEventListener("click", () => {
   const input = document.createElement("input");
