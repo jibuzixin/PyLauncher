@@ -912,11 +912,21 @@ def main() -> None:
 
     port = int(os.environ.get("LAUNCHER_PORT", "8900"))
     host = os.environ.get("LAUNCHER_HOST", "127.0.0.1")
+    # 命令行 --host 优先于环境变量：--host 0.0.0.0 允许局域网访问
+    if "--host" in sys.argv:
+        i = sys.argv.index("--host")
+        if i + 1 < len(sys.argv):
+            host = sys.argv[i + 1]
     no_browser = "--no-browser" in sys.argv
 
     db.init_db()
-    url = f"http://{host}:{port}/?t={int(time.time())}"
-    print(f"· Python 脚本启动器已启动: {url}")
+    if host == "0.0.0.0":
+        url = f"http://127.0.0.1:{port}/?t={int(time.time())}"
+        print(f"· Python 脚本启动器已启动: {url}")
+        print(f"· 已监听所有网卡，局域网访问: http://<你的IP>:{port}/?t={int(time.time())}")
+    else:
+        url = f"http://{host}:{port}/?t={int(time.time())}"
+        print(f"· Python 脚本启动器已启动: {url}")
 
     if not no_browser:
         # 延迟打开浏览器，带时间戳避免复用旧页面，确保加载最新版

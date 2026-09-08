@@ -19,7 +19,7 @@ if not exist ".venv\Scripts\python.exe" (
   uv pip install -r requirements.txt || goto :err
 )
 
-.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe main.py --host 0.0.0.0
 goto :eof
 
 :err

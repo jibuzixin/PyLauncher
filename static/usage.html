@@ -104,7 +104,7 @@
   <div class="hero">
     <h1>Python 脚本启动器 · 使用说明</h1>
     <div class="sub">本地脚本运行平台 —— 把「进入目录 + 敲 uv 命令 + 盯终端输出」变成可视化表单 + 一键按钮。</div>
-    <span class="ver">v0.0.47</span>
+    <span class="ver">v0.0.48</span>
   </div>
 
   <div class="card">
@@ -193,6 +193,16 @@
 
   <div class="card">
     <h2><span class="n">9</span>常见问题</h2>
+    <div class="faq-item">
+      <div class="q">Q：怎么让局域网内其他设备访问？</div>
+      <div class="a">
+        <ul style="margin-top:6px">
+          <li>启动脚本默认已监听所有网卡（<code>--host 0.0.0.0</code>），其他设备访问 <code>http://你的局域网IP:8900</code>（终端 <code>ifconfig</code> / <code>ipconfig</code> 查 IP）</li>
+          <li>macOS 首次监听可能弹出「允许传入网络连接」，需允许；Windows 防火墙需放行 8900 端口（TCP）</li>
+          <li><b>安全提示</b>：监听所有网卡意味着同一局域网内任何设备都能打开页面并运行你的脚本，请只在可信网络使用；临时只想本机使用可执行 <code>python main.py --host 127.0.0.1</code></li>
+        </ul>
+      </div>
+    </div>
     <div class="faq-item">
       <div class="q">Q：uv 未安装怎么办？</div>
       <div class="a">页面会给出对应平台的安装命令：macOS <code>brew install uv</code>；Windows <code>winget install astral-sh.uv</code> 或 <code>pip install uv</code>。</div>
