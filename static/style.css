@@ -1034,13 +1034,12 @@ select.f-input { appearance: none; padding-right: 30px;
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s;
+  transition: border-color 0.15s, background 0.15s;
 }
+/* 定时任务卡片不可点击，悬浮固定（无上浮动效） */
 .schedule-item:hover {
-  transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.6);
-  border-color: rgba(255, 255, 255, 0.8);
-  box-shadow: var(--shadow-md);
+  background: var(--glass-strong);
+  border-color: var(--glass-border);
 }
 .si-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .si-name { font-weight: 650; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
