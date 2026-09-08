@@ -92,6 +92,11 @@ class ExecuteReq(BaseModel):
     preset_id: Optional[int] = None
 
 
+class CommandReq(BaseModel):
+    script_id: int
+    args: dict = {}
+
+
 class TagsReq(BaseModel):
     tags: list[str]
 
@@ -283,13 +288,11 @@ def _shq(s: str) -> str:
 
 
 def _build_command_text(script_path: str, arg_list: list[str]) -> str:
-    """生成可直接复制执行的 uv run 命令（含 shell 转义）。"""
-    p = Path(script_path)
-    if executor.pep723_metadata(script_path):
-        parts = ["uv", "run", "--script", _shq(str(p))] + [_shq(a) for a in arg_list]
-        return " ".join(parts)
-    parts = ["uv", "run", "--project", _shq(str(p.parent)), "python", _shq(p.name)] + [_shq(a) for a in arg_list]
-    return " ".join(parts)
+    """生成可直接复制执行的命令文本（含 shell 转义），无法执行时返回带说明的提示。"""
+    cmd, err = executor.build_command_ex(script_path, arg_list)
+    if err:
+        return "# " + err
+    return " ".join(_shq(c) for c in cmd)
 
 
 async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emit: Callable) -> dict:
@@ -300,6 +303,13 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
         await emit("info", "· PEP 723 内联脚本，uv 自动管理依赖\n")
     elif not env["has_venv"]:
         await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」\n")
+    # 预检：无 uv 且无 .venv 时直接报错，不启动进程
+    plan = executor.execution_plan(script_path)
+    if plan["mode"] is None:
+        await emit("error", f"✗ {plan['error']}\n")
+        await emit("info", "· 执行结束：failed（退出码 -1）\n")
+        db.finish_execution(exec_id, "failed", -1, [plan["error"]])
+        return {"ok": False, "exit_code": -1, "terminated": False, "status": "failed", "message": plan["error"]}
     await emit("info", "$ " + _build_command_text(script_path, arg_list) + "\n")
 
     result = await executor.run_script(exec_id, script_path, arg_list, emit)
@@ -825,6 +835,18 @@ async def execute(req: ExecuteReq):
         _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit))
     )
     return {"ok": True, "execution_id": exec_id, "command": command}
+
+
+@app.post("/api/scripts/command")
+async def script_command(req: CommandReq):
+    """按当前环境生成实际可执行的命令文本（uv run 或 .venv python），无法执行时返回 error。"""
+    rec = db.get_script(req.script_id)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
+    schema = json.loads(rec.get("args_schema") or "[]")
+    arg_list = build_arg_list(schema, req.args)
+    cmd, err = executor.build_command_ex(rec["path"], arg_list)
+    return {"ok": True, "command": cmd if not err else "", "error": err}
 
 
 @app.get("/api/executions")

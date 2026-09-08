@@ -485,14 +485,22 @@ function renderEnvBar(env) {
   if (!env) return;
   const parts = [];
   if (!state.uvOk) {
-    const span = document.createElement("span");
-    span.innerHTML = '<span class="dot err"></span><span class="env-text err">未检测到 uv</span>';
-    parts.push(span);
-    const b = document.createElement("button");
-    b.className = "btn mini primary";
-    b.textContent = "查看安装指引";
-    b.onclick = showUvInstall;
-    parts.push(b);
+    if (env.has_venv || env.has_inline_meta) {
+      // 有 .venv 可运行：uv 缺失仅提示（灰色可忽略）
+      const span = document.createElement("span");
+      span.innerHTML = '<span class="dot"></span><span class="env-text">未装 uv · 使用项目 .venv 运行</span>';
+      span.title = "脚本目录已有虚拟环境，可正常执行；如需 uv 管理可点击「查看安装指引」";
+      parts.push(span);
+    } else {
+      const span = document.createElement("span");
+      span.innerHTML = '<span class="dot err"></span><span class="env-text err">未检测到 uv</span>';
+      parts.push(span);
+      const b = document.createElement("button");
+      b.className = "btn mini primary";
+      b.textContent = "查看安装指引";
+      b.onclick = showUvInstall;
+      parts.push(b);
+    }
   } else {
     const vSpan = document.createElement("span");
     vSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">uv ${escapeHtml(env.uv_version || "")}</span>`;
@@ -1147,22 +1155,16 @@ function shq(s) {
   return "'" + s.replace(/'/g, "'\\''") + "'";
 }
 
-function buildCommandText() {
+async function buildCommandText() {
   const s = state.script;
   if (!s || !s.path) return "";
-  const argList = buildArgList(s.args_schema || [], collectValues());
-  if (s.has_inline_meta) {
-    // PEP 723 内联脚本：uv run --script <path> <args...>
-    const parts = ["uv", "run", "--script", shq(s.path)];
-    for (const a of argList) parts.push(shq(a));
-    return parts.join(" ");
+  try {
+    const r = await api("/api/scripts/command", { method: "POST", body: { script_id: s.id, args: collectValues() } });
+    if (r.error) return { error: r.error };
+    return { command: r.command };
+  } catch (e) {
+    return { error: e.message };
   }
-  const idx = s.path.lastIndexOf("/");
-  const dir = idx >= 0 ? s.path.slice(0, idx) : s.path;
-  const file = idx >= 0 ? s.path.slice(idx + 1) : s.path;
-  const parts = ["uv", "run", "--project", shq(dir), "python", shq(file)];
-  for (const a of argList) parts.push(shq(a));
-  return parts.join(" ");
 }
 
 async function run() {
@@ -1383,9 +1385,10 @@ $("#btn-terminate").addEventListener("click", async () => {
 
 $("#btn-copy-command").addEventListener("click", async () => {
   if (!state.script) return toast("请先选择一个脚本", true);
-  const cmd = buildCommandText();
-  if (!cmd) return toast("当前无脚本可复制", true);
-  if (await copyText(cmd)) toast("已复制 uv run 命令");
+  const res = await buildCommandText();
+  if (!res) return toast("当前无脚本可复制", true);
+  if (res.error) return toast(res.error, true);
+  if (await copyText(res.command)) toast("已复制执行命令");
 });
 $("#opt-mono").addEventListener("change", (e) => {
   $("#console").classList.toggle("mono", e.target.checked);
@@ -1855,7 +1858,7 @@ async function showHistoryDetail(id, itemEl) {
   copy.title = "复制该次执行对应的 uv run 命令";
   copy.onclick = async () => {
     if (!rec.command) return toast("无法生成命令", true);
-    if (await copyText(rec.command)) toast("已复制 uv run 命令");
+    if (await copyText(rec.command)) toast("已复制执行命令");
   };
   const rerun = document.createElement("button");
   rerun.className = "btn mini primary";

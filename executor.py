@@ -111,6 +111,29 @@ def pep723_metadata(script_path: str) -> Optional[dict]:
         return None
 
 
+def execution_plan(script_path: str) -> dict[str, Any]:
+    """决定脚本如何执行：uv / 项目 .venv / 无法执行。
+
+    理念：脚本目录下只要有虚拟环境（.venv，原生 python venv 或 uv 创建的均可）
+    或有 uv，就可以运行。返回 {"mode": "uv"|"venv"|None, "venv_python": str|None, "error": str|None}。
+    """
+    script = Path(script_path)
+    uv_ok, _ = uv_available()
+    has_meta = pep723_metadata(script_path) is not None
+    venv_py = _venv_python(script.parent)
+    if has_meta:
+        if not uv_ok:
+            return {"mode": None, "venv_python": None,
+                    "error": "该脚本使用 PEP 723 内联依赖，需要 uv 运行（uv 会自动创建临时环境安装依赖）；当前未检测到 uv，请先安装"}
+        return {"mode": "uv", "venv_python": None, "error": None}
+    if uv_ok:
+        return {"mode": "uv", "venv_python": None, "error": None}
+    if venv_py.exists():
+        return {"mode": "venv", "venv_python": str(venv_py), "error": None}
+    return {"mode": None, "venv_python": None,
+            "error": "未检测到 uv，且脚本目录下没有 .venv。请安装 uv，或在页面点击「初始化环境」用系统 Python 创建虚拟环境"}
+
+
 def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
     """检查脚本所在目录的环境状态。deps_path 为可选的自定义依赖文件。"""
     script = Path(script_path)
@@ -120,6 +143,7 @@ def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
     kind, dep_file = _resolve_deps(deps_path, project_dir)
     meta = pep723_metadata(script_path)
     deps = meta.get("dependencies") or [] if meta else []
+    uv_ok, uv_ver = uv_available()
     return {
         "project_dir": str(project_dir),
         "has_venv": has_venv,
@@ -133,8 +157,10 @@ def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
         "has_inline_meta": meta is not None,
         "inline_deps": deps,
         "inline_requires_python": (meta.get("requires-python") if meta else None),
-        "uv_ok": uv_available()[0],
-        "uv_version": uv_available()[1] if uv_available()[0] else None,
+        "uv_ok": uv_ok,
+        "uv_version": uv_ver if uv_ok else None,
+        # 可运行性：项目有虚拟环境或有 uv（PEP 723 内联脚本只需 uv）即可运行
+        "exec_ready": bool(uv_ok or has_venv or meta is not None),
     }
 
 
@@ -272,20 +298,31 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
     venv_py = _venv_python(project_dir)
     steps: list[str] = []
 
-    # 1. 创建 venv
+    # 1. 创建 venv（有 uv 用 uv venv；无 uv 用系统 Python 创建，兼容原生虚拟环境）
     if not venv_py.exists():
-        await on_line("info", f"→ 创建虚拟环境: uv venv --directory {project_dir}\n")
-        code, _ = await _stream_proc(["uv", "venv", "--directory", str(project_dir)], str(project_dir), on_line)
-        if code != 0:
-            return {"ok": False, "step": "venv", "message": "uv venv 创建失败（退出码 %s）" % code}
+        uv_ok, _ = uv_available()
+        if uv_ok:
+            await on_line("info", f"→ 创建虚拟环境: uv venv --directory {project_dir}\n")
+            code, _ = await _stream_proc(["uv", "venv", "--directory", str(project_dir)], str(project_dir), on_line)
+            if code != 0:
+                return {"ok": False, "step": "venv", "message": "uv venv 创建失败（退出码 %s）" % code}
+        else:
+            py = shutil.which("python3") or shutil.which("python")
+            if not py:
+                return {"ok": False, "step": "venv", "message": "未找到 python3/python，无法创建虚拟环境"}
+            await on_line("info", f"→ 未检测到 uv，使用系统 Python 创建虚拟环境: {py} -m venv .venv\n")
+            code, _ = await _stream_proc([py, "-m", "venv", ".venv"], str(project_dir), on_line)
+            if code != 0:
+                return {"ok": False, "step": "venv", "message": "python -m venv 创建失败（退出码 %s）" % code}
         steps.append("venv")
     else:
         await on_line("info", "· 虚拟环境已存在，跳过创建\n")
 
     # 2. 安装依赖文件（显式 deps_path 优先，否则目录下 requirements.txt / pyproject.toml）
     kind, dep_file = _resolve_deps(deps_path, project_dir)
+    uv_ok, _ = uv_available()
     if dep_file is not None:
-        if kind == "pyproject":
+        if kind == "pyproject" and uv_ok:
             await on_line("info", f"→ 安装项目依赖: uv sync --project {project_dir}\n")
             code, _ = await _stream_proc(
                 ["uv", "sync", "--project", str(project_dir), "--python", str(venv_py)],
@@ -294,13 +331,24 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
             )
             if code != 0:
                 return {"ok": False, "step": "deps", "message": "uv sync 失败（退出码 %s）" % code}
-        else:
+        elif kind == "pyproject":
+            # 无 uv：用 venv 的 pip 可编辑安装项目自身
+            await on_line("info", f"→ 未检测到 uv，使用 venv pip 安装项目: {venv_py} -m pip install -e .\n")
+            code, _ = await _stream_proc([str(venv_py), "-m", "pip", "install", "-e", "."], str(project_dir), on_line)
+            if code != 0:
+                return {"ok": False, "step": "deps", "message": "pip install -e . 失败（退出码 %s）" % code}
+        elif uv_ok:
             await on_line("info", f"→ 安装依赖: uv pip install -r {dep_file}\n")
             code, _ = await _stream_proc(
                 ["uv", "pip", "install", "-r", str(dep_file), "--python", str(venv_py)],
                 str(project_dir),
                 on_line,
             )
+            if code != 0:
+                return {"ok": False, "step": "deps", "message": "依赖安装失败（退出码 %s）" % code}
+        else:
+            await on_line("info", f"→ 未检测到 uv，使用 venv pip 安装依赖: {venv_py} -m pip install -r {dep_file.name}\n")
+            code, _ = await _stream_proc([str(venv_py), "-m", "pip", "install", "-r", str(dep_file)], str(project_dir), on_line)
             if code != 0:
                 return {"ok": False, "step": "deps", "message": "依赖安装失败（退出码 %s）" % code}
         steps.append("deps")
@@ -313,23 +361,37 @@ async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[Non
 # ---------------- 执行脚本 ----------------
 
 def build_command(script_path: str, args: list[str], extra_args: list[str] | None = None) -> list[str]:
-    """拼接 uv 执行命令。
+    """拼接实际执行命令，返回 (cmd) 或抛 ValueError（无法执行时）。
 
     PEP 723 内联脚本：uv run --script <script> [-- args...]（uv 自动创建临时环境安装内联依赖）；
-    普通项目：uv run --project <dir> python <script> <args...>。
+    有 uv 的普通项目：uv run --project <dir> python <script> <args...>；
+    无 uv 但目录有 .venv：<venv_python> -u <script> <args...>（兼容原生 python venv）。
     """
+    cmd, err = build_command_ex(script_path, args, extra_args)
+    if err:
+        raise ValueError(err)
+    return cmd
+
+
+def build_command_ex(script_path: str, args: list[str], extra_args: list[str] | None = None) -> tuple[list[str], Optional[str]]:
+    """同 build_command，但返回 (cmd, error)，error 非空表示无法执行。"""
     script = Path(script_path)
-    if pep723_metadata(script_path):
-        # uv run --script 之后的参数直接传给脚本（无需 -- 分隔，-- 会被原样传给脚本）
+    plan = execution_plan(script_path)
+    if plan["mode"] is None:
+        return [], plan["error"]
+    if plan["mode"] == "uv" and pep723_metadata(script_path):
         cmd = ["uv", "run", "--script", str(script)] + args
         if extra_args:
             cmd += extra_args
-        return cmd
-    cmd = ["uv", "run", "--project", str(script.parent), "python", "-u", str(script)]
+        return cmd, None
+    if plan["mode"] == "uv":
+        cmd = ["uv", "run", "--project", str(script.parent), "python", "-u", str(script)]
+    else:
+        cmd = [plan["venv_python"], "-u", str(script)]
     cmd += args
     if extra_args:
         cmd += extra_args
-    return cmd
+    return cmd, None
 
 
 async def run_script(
@@ -342,7 +404,12 @@ async def run_script(
     """执行脚本并流式回调，支持通过 terminate_execution 终止。"""
     script = Path(script_path)
     project_dir = script.parent
-    cmd = build_command(script_path, args, extra_args)
+    try:
+        cmd = build_command(script_path, args, extra_args)
+    except ValueError as e:
+        # 无法执行（无 uv 且无 .venv / PEP 723 需 uv）
+        await on_line("error", f"✗ {e}\n")
+        return {"ok": False, "exit_code": -1, "terminated": False, "message": str(e)}
 
     holder = _RUNNING.setdefault(exec_id, {"proc": None, "terminated": False})
     try:
