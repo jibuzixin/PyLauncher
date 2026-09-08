@@ -1,105 +1,212 @@
-# Python 脚本启动器 v0.0.4
+<div align="center">
 
-一个本地运行的脚本启动平台：把「进入目录 → 敲命令行 → 看终端输出」的可视化为一个按钮。
-本质是在指定目录下用 `uv` 拼接并执行命令行参数。
+<img src="assets/logo.jpg" alt="Python 脚本启动器 Logo" width="110" />
 
-## 功能
+# Python 脚本启动器
 
-- **脚本导入**：扫描目录自动解析导入 `.py` 脚本（递归，自动跳过 `.venv`/`__pycache__` 等），或指定文件路径 / **文件选择器上传**（上传会复制到 `imported/` 管理目录）
-- **名称与描述**：导入时可自定义显示名称与描述；描述默认自动取自 argparse 的 `description`；导入后点击脚本名/描述即可随时编辑
-- **参数表单**：自动解析 `argparse` 参数定义生成表单（文本框/数字/开关/下拉/多值），**必选参数置顶**；参数说明显示在输入框上方；每个参数带**类型标签**（int/float/bool/enum/list 彩色区分）；输入自动保存，下次打开自动恢复
-- **参数预设**：一键把当前表单另存为命名预设，点击预设即复写表单
-- **实时控制台**：WebSocket 流式显示 stdout/stderr，带**行号**、行号悬浮**复制单行**、拖选**多选复制**；**每次执行自动清空**，每个脚本独立查看
-- **执行记录**：每次执行完整记录（含标准输出），支持**添加标签**、按标签/脚本/状态筛选、**默认显示全部脚本记录**（可切「当前脚本」只看某个脚本）、一键用旧参数重跑
-- **uv 集成**：启动时检测 uv（缺失给出 mac/win 安装指引，状态用红绿标识）；按脚本目录管理独立 venv，「初始化环境」按钮一键 `uv venv` + 自动安装依赖；依赖文件**同时兼容 `requirements.txt` 与 `pyproject.toml`**（pyproject 走 `uv sync`）；支持**自定义依赖文件路径**（依赖文件不在脚本同目录时，可在编辑信息或环境栏指定并「安装依赖」）；执行走 `uv run --project <目录>`
-- **标签过滤**：给脚本添加多个**标签**（编辑脚本信息即可），侧边栏**多选标签**即可过滤显示想看的脚本，可随时清除
-- **重新加载**：脚本文件更新后一键重新解析参数（无需重新导入）
-- **批量迁移**：一键**导出全部脚本信息**（名称/路径/描述/参数/标签/预设）为 JSON，另一台机器**导入**即可恢复
-- **便捷操作**：打开脚本所在目录、复制脚本绝对路径、执行中可终止
-- **安全确认**：所有删除操作（脚本/预设/记录/清空历史）均有二次确认
-- **存储**：数据全部存于本地 `sqlite`（`launcher.db`）
-- **UI**：极简黑白风；颜色规范统一——成功绿色、错误红色、可忽略灰色、常规黑色
-- **后台常驻**：`start.command` 以后台进程启动，关闭终端窗口不影响使用；再次双击会直接打开浏览器
+**把「进目录、敲命令、盯输出」变成一张可视化表单 + 一个按钮。**
+
+一个本地运行的脚本启动平台：自动解析 `argparse` 参数生成表单，一键通过 `uv` 在脚本目录运行，实时回显终端输出，并完整留存每次执行记录。
+
+</div>
+
+<p align="center">
+  <a href="https://www.python.org"><img src="https://img.shields.io/badge/Python-3.10+-blue?style=flat&logo=python&logoColor=white" alt="Python 3.10+"/></a>
+  <a href="https://fastapi.tiangolo.com"><img src="https://img.shields.io/badge/FastAPI-后端-009688?style=flat&logo=fastapi&logoColor=white" alt="FastAPI"/></a>
+  <a href="https://docs.astral.sh/uv"><img src="https://img.shields.io/badge/uv-运行引擎-4F46E5?style=flat&logo=uv" alt="uv"/></a>
+  <a href="https://www.sqlite.org"><img src="https://img.shields.io/badge/SQLite-存储-003B57?style=flat&logo=sqlite&logoColor=white" alt="SQLite"/></a>
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows-lightgrey?style=flat" alt="macOS / Windows"/>
+</p>
+
+---
+
+## 这个项目是做什么的
+
+写脚本工具的人都会反复做同一件事：`cd` 进目录 → 回忆参数名和值 → 手敲一整行 `uv run` 命令 → 盯着终端输出 → 跑完翻找结果文件。**Python 脚本启动器**把这个重复流程固化为一个可视化平台：
+
+- **导入脚本**后自动解析出参数表单（必填置顶、类型识别、描述展示）
+- 填好参数**点一下「运行」**，等价于在脚本目录执行那条 `uv run` 命令
+- 终端输出**实时流式回显**，带行号、可复制
+- 每次执行自动**留存记录**，可加标签、可一键重跑
+- 环境交给 uv：每个项目独立 venv，`requirements.txt` / `pyproject.toml` / 单脚本内联依赖都兼容
+
+> 前提约定：你的脚本使用 `argparse` 解析命令行参数即可被自动识别（详见下方「接入你的脚本」）。
+
+---
+
+## 界面一览
+
+![主界面](assets/screenshot.png)
+
+> 左侧脚本列表 · 中间参数表单 · 右侧控制台 / 执行记录 / 定时任务
+
+---
 
 ## 快速开始
 
-### macOS
+### 环境准备（只需一次）
+
+安装 [uv](https://docs.astral.sh/uv/)（Python 包与虚拟环境管理工具）：
+
+```bash
+# macOS
+brew install uv
+
+# Windows（PowerShell）
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+### 启动
+
+**macOS**：双击 `start.command`（首次自动建 venv、装依赖；服务后台常驻，关闭窗口不影响；已在运行则只打开浏览器）
+
+**Windows**：双击 `start.bat`
+
+或命令行方式：
 
 ```bash
 cd launcher
 uv venv && uv pip install -r requirements.txt
-./start.command        # 或：.venv/bin/python main.py --no-browser
+.venv/bin/python main.py --no-browser        # macOS / Linux
+# .venv\Scripts\python.exe main.py            # Windows
 ```
 
-双击 `start.command` 亦可（首次自动初始化；启动后**后台常驻**并自动打开浏览器）。
+启动后访问 **http://127.0.0.1:8900**（页面右上角有「局域网」开关，打开后同网段设备可访问）。
 
-### Windows
+### 停止
 
-双击 `start.bat`，或：
+macOS 双击 `stop.command`；Windows 双击 `stop.bat`。无需手动 kill 进程。
 
-```powershell
-cd launcher
-uv venv
-uv pip install -r requirements.txt
-.venv\Scripts\python.exe main.py
-```
+---
 
-启动后访问 http://127.0.0.1:8900
+## 使用文档
 
-## 接入你自己的脚本（约定）
+页面上方右上角有 **「📖 文档」** 按钮，点击即可在新标签页打开 **10 页 PPT 式演示文档**（支持 ← / → 翻页），直观讲清痛点、运行原理、脚本要求与前提条件：
 
-> **你的脚本必须使用 argparse 解析命令行参数**，启动器会自动解析出参数定义。
+- 直接访问：`http://127.0.0.1:8900/static/usage.html`
+- 或查看源码：[`static/usage.html`](static/usage.html)
+
+---
+
+## 核心功能
+
+| 能力 | 说明 |
+|---|---|
+| 脚本导入 | 指定 `.py` 路径 / 文件选择器 / 扫描目录批量导入，自动解析 argparse 参数 |
+| 参数表单 | 必填置顶、类型彩色标签（int/float/bool/enum/list）、布尔开关、描述显示、自动保存 |
+| 参数预设 | 保存 / 覆盖 / 固定常用预设置顶，一键复写表单 |
+| 实时控制台 | WebSocket 流式输出（兼容 `\r` 进度条）、行号 + 悬浮复制、多行选择复制、自动滚动 |
+| 执行记录 | 完整留存每次输出，支持标签、筛选、多选删除、用旧参数重跑、详情实时输出 |
+| uv 环境 | 自动检测 uv / venv，一键初始化 + 安装依赖，兼容 requirements.txt / pyproject.toml / PEP 723 单脚本 |
+| 定时任务 | 标准 cron 表达式或可视化点选，支持执行次数、参数预设填充、到期自动停用 |
+| 多任务 | 同一脚本可并行多次运行，卡片徽章实时显示任务数，独立控制台 |
+| 便捷操作 | 打开脚本目录、复制绝对路径、复制 uv run 命令、脚本更新一键重新加载 |
+| 数据与安全 | 全部本地 SQLite 存储；删除操作二次确认；命令以参数列表执行（防注入） |
+
+---
+
+## 接入你的脚本（约定）
+
+> **硬性约定：脚本使用 `argparse` 解析命令行参数**，启动器会自动解析参数名、类型、默认值与描述。
 
 ```python
 import argparse
 
 p = argparse.ArgumentParser(description="我的工具")
-p.add_argument("input", help="必选位置参数")               # 位置参数 → 文本框（必选）
-p.add_argument("-n", "--num", type=int, default=3)        # int → 数字框
-p.add_argument("--ratio", type=float, default=0.5)        # float → 数字框
-p.add_argument("--verbose", action="store_true")          # 布尔 → 开关
-p.add_argument("--mode", choices=["fast", "slow"])        # choices → 下拉
-p.add_argument("--tags", action="append", default=[])     # append → 多值（逗号分隔）
-p.add_argument("--opt", required=True, help="必选可选参数") # required → 必填置顶
+p.add_argument("input", help="必选位置参数")                # 位置参数 → 文本框（必填）
+p.add_argument("-n", "--num", type=int, default=3)         # int → 数字框
+p.add_argument("--ratio", type=float, default=0.5)         # float → 数字框
+p.add_argument("--verbose", action="store_true")           # 布尔 → 开关
+p.add_argument("--mode", choices=["fast", "slow"])         # choices → 下拉框
+p.add_argument("--opt", required=True, help="必选可选参数")  # required → 必填置顶
 args = p.parse_args()
 ```
-
-支持的类型映射：
 
 | argparse 写法 | 表单控件 |
 |---|---|
 | 位置参数 / 普通 `--opt` | 文本框 |
 | `type=int` / `type=float` | 数字输入框 |
-| `action="store_true"/"store_false"` | 开关 |
+| `action="store_true"` | 开关按钮 |
 | `choices=[...]` | 下拉框 |
-| `action="append"` / `nargs="+"` | 多值输入（英文逗号分隔） |
-| `required=True` | 必填（置顶 + 红星） |
+| `action="append"` / `nargs="+"` | 多值输入 |
+| `required=True` / 有默认值 | 必填（置顶） |
 
-## 项目结构
+**单脚本工具**（不想写依赖文件）可在文件头声明内联依赖，uv 直接运行：
+
+```python
+# /// script
+# requires-python = ">=3.11"
+# dependencies = ["fastfeishu>=0.0.1a2"]
+# ///
+```
+
+---
+
+## 架构与运行原理
+
+**一句话原理：它做的所有事，本质都是帮你正确拼出并在脚本目录执行一条 `uv run` 命令。**
+
+```
+┌──────────┐   argparse AST 解析   ┌──────────┐
+│  脚本文件  │ ───────────────────→ │ 参数表单  │
+└──────────┘                      └──────────┘
+                                        │ 填写参数
+                                        ▼
+┌──────────┐   拼接命令    ┌────────────────────────┐
+│ 执行记录  │ ←────────── │  uv run --project <目录>  │
+│ SQLite   │  留存输出     │  python 脚本.py 参数...   │
+└──────────┘              └────────────────────────┘
+                                        │ 流式输出
+                                        ▼
+                              ┌──────────────────────┐
+                              │  实时控制台（WebSocket）│
+                              └──────────────────────┘
+```
+
+### 技术栈
+
+| 层 | 技术 | 职责 |
+|---|---|---|
+| 后端 | FastAPI + uvicorn | REST API + WebSocket 实时输出 |
+| 执行 | uv / subprocess | venv 管理、依赖安装、进程执行（参数列表方式，防注入） |
+| 解析 | Python AST + argparse 模型 | 扫描 `.py` 提取参数定义 |
+| 存储 | SQLite（`launcher.db`） | 脚本、预设、执行记录、定时任务、偏好 |
+| 前端 | 原生 HTML/CSS/JS（内联构建） | 玻璃拟态 UI，无需 Node 构建链 |
+
+### 目录结构
 
 ```
 launcher/
-├── main.py           # FastAPI 后端入口（REST + WebSocket）
-├── db.py             # sqlite 数据层
-├── scanner.py        # 目录扫描 + argparse AST 解析
-├── executor.py       # uv 检测 / venv 管理 / 进程执行 / 流式输出
-├── static/           # 前端（极简黑白 UI）
-├── examples/         # 演示脚本（可删除）
-├── start.command     # macOS 启动脚本
-├── start.bat         # Windows 启动脚本
-└── launcher.db       # 数据文件（自动生成）
+├── main.py            # FastAPI 后端入口（REST + WebSocket）
+├── db.py              # SQLite 数据层
+├── scanner.py         # 目录扫描 + argparse AST 解析
+├── executor.py        # uv 检测 / venv 管理 / 进程执行 / 流式输出
+├── static/            # 前端（index.template.html + app.js + style.css → build 内联）
+│   └── usage.html     # PPT 式使用文档
+├── assets/            # README 资源（logo / 截图）
+├── examples/          # 演示脚本（可删除）
+├── build.sh           # 前端构建（内联 JS/CSS 规避缓存）
+├── start.command      # macOS 启动脚本
+├── stop.command       # macOS 停止脚本
+├── start.bat          # Windows 启动脚本
+├── stop.bat           # Windows 停止脚本
+└── launcher.db        # 数据文件（自动生成）
 ```
+
+---
 
 ## 数据与隐私
 
-- 全部数据保存在本地 `launcher.db`（脚本注册表、参数预设、执行记录、配置）
-- 执行记录仅保留程序结束后的**最后 1000 行**输出；可在顶部「清空历史」手动清理
-- 命令以 `subprocess` 参数列表方式执行（不经过 shell），参数值天然防注入
+- 全部数据保存在本地 `launcher.db`，不联网、不上传
+- 执行记录仅保留程序结束后的**最后 1000 行**输出，可手动清空
+- 命令以 `subprocess` 参数列表执行（不经过 shell），参数值天然防注入
+- 局域网访问默认关闭；开启后请仅在可信网络使用
+
+---
 
 ## 常见问题
 
-- **提示未检测到 uv** → 按弹窗指引安装（mac: `brew install uv`；win: PowerShell 安装命令），装完点「重新检测」
-- **脚本无法导入** → 确认脚本里用了 `argparse` 且包含至少一个 `add_argument`
-- **脚本依赖其他包** → 把依赖写入脚本同目录的 `requirements.txt` 或 `pyproject.toml`，点「初始化环境」即可自动安装；依赖文件在别处时，可在「编辑脚本信息」里指定路径
-- **关闭窗口后服务还在吗** → 在，`start.command` 以后台方式运行；再双击一次即可打开浏览器
-- **端口占用** → 设置环境变量 `LAUNCHER_PORT` 指定其他端口
+- **提示未检测到 uv** → 按页面指引安装（mac: `brew install uv`；win: PowerShell 安装命令），装完点「重新检测」
+- **脚本导入失败（422）** → 确认路径为绝对路径、文件存在、脚本使用 argparse 且包含至少一个 `add_argument`
+- **依赖装不上** → 确认脚本同目录存在 `requirements.txt` 或 `pyproject.toml`；依赖文件在别处时可在编辑脚本信息中指定路径后点「安装依赖」
+- **端口被占用** → 设置环境变量 `LAUNCHER_PORT` 指定其他端口
