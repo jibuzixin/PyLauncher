@@ -618,15 +618,33 @@ select.f-input { appearance: none; padding-right: 30px;
   min-height: 0;
   overflow: hidden;
 }
-.panel-tabs { display: flex; border-bottom: 1px solid var(--hairline); padding: 0 12px; flex-shrink: 0; }
+.panel-tabs {
+  position: relative;
+  display: flex;
+  border-bottom: 1px solid var(--hairline);
+  padding: 5px 12px 5px;
+  flex-shrink: 0;
+}
 .tab {
+  position: relative; z-index: 1;
   border: none; background: transparent;
-  padding: 10px 15px; font-size: 13px; font-weight: 500;
-  color: var(--muted); border-bottom: 2px solid transparent;
-  transition: color 0.15s;
+  padding: 7px 15px; font-size: 13px; font-weight: 500;
+  color: var(--muted);
+  transition: color 0.2s ease;
+  white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab.active { color: #fff; }
+/* 苹果风滑动胶囊：绝对定位，随 active tab 平移 */
+.tab-pill {
+  position: absolute; top: 4px; bottom: 4px; left: 0;
+  width: 0; border-radius: 999px;
+  background: linear-gradient(135deg, rgba(28, 28, 30, 0.9), rgba(44, 44, 46, 0.92));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+}
 
 .panel-toolbar {
   display: flex; align-items: center; justify-content: space-between;

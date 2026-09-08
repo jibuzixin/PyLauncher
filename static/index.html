@@ -625,15 +625,33 @@ select.f-input { appearance: none; padding-right: 30px;
   min-height: 0;
   overflow: hidden;
 }
-.panel-tabs { display: flex; border-bottom: 1px solid var(--hairline); padding: 0 12px; flex-shrink: 0; }
+.panel-tabs {
+  position: relative;
+  display: flex;
+  border-bottom: 1px solid var(--hairline);
+  padding: 5px 12px 5px;
+  flex-shrink: 0;
+}
 .tab {
+  position: relative; z-index: 1;
   border: none; background: transparent;
-  padding: 10px 15px; font-size: 13px; font-weight: 500;
-  color: var(--muted); border-bottom: 2px solid transparent;
-  transition: color 0.15s;
+  padding: 7px 15px; font-size: 13px; font-weight: 500;
+  color: var(--muted);
+  transition: color 0.2s ease;
+  white-space: nowrap;
 }
 .tab:hover { color: var(--text); }
-.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+.tab.active { color: #fff; }
+/* 苹果风滑动胶囊：绝对定位，随 active tab 平移 */
+.tab-pill {
+  position: absolute; top: 4px; bottom: 4px; left: 0;
+  width: 0; border-radius: 999px;
+  background: linear-gradient(135deg, rgba(28, 28, 30, 0.9), rgba(44, 44, 46, 0.92));
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
+}
 
 .panel-toolbar {
   display: flex; align-items: center; justify-content: space-between;
@@ -1301,7 +1319,7 @@ select.f-input { appearance: none; padding-right: 30px;
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
     </a>
     <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.55</span>
+    <span class="badge">v0.0.56</span>
     <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
   </div>
   <div class="topbar-actions">
@@ -1410,6 +1428,7 @@ select.f-input { appearance: none; padding-right: 30px;
 
   <section class="panel">
     <div class="panel-tabs">
+      <span class="tab-pill" id="tab-pill"></span>
       <button class="tab" data-tab="console">控制台</button>
       <button class="tab active" data-tab="history">执行记录</button>
       <button class="tab" data-tab="schedules">定时任务</button>
@@ -4116,8 +4135,16 @@ $("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
 
 /* ================= Tab ================= */
 
+function moveTabPill() {
+  const pill = $("#tab-pill");
+  const active = document.querySelector(".tab.active");
+  if (!pill || !active) return;
+  pill.style.width = active.offsetWidth + "px";
+  pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+}
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  moveTabPill();
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
   $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
@@ -4369,6 +4396,8 @@ function setupResize() {
 async function init() {
   applyPrefs(); // 恢复上次的 UI 偏好（标签过滤 / 开关等）
   setupResize(); // 三栏可拖拽调宽
+  moveTabPill(); // 初始化 tab 胶囊位置
+  window.addEventListener("resize", () => moveTabPill());
   await checkUv();
   try {
     await loadScripts();

@@ -2638,8 +2638,16 @@ $("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
 
 /* ================= Tab ================= */
 
+function moveTabPill() {
+  const pill = $("#tab-pill");
+  const active = document.querySelector(".tab.active");
+  if (!pill || !active) return;
+  pill.style.width = active.offsetWidth + "px";
+  pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+}
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
+  moveTabPill();
   $("#console-wrap").style.display = name === "console" ? "" : "none";
   $("#history-wrap").style.display = name === "history" ? "" : "none";
   $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
@@ -2891,6 +2899,8 @@ function setupResize() {
 async function init() {
   applyPrefs(); // 恢复上次的 UI 偏好（标签过滤 / 开关等）
   setupResize(); // 三栏可拖拽调宽
+  moveTabPill(); // 初始化 tab 胶囊位置
+  window.addEventListener("resize", () => moveTabPill());
   await checkUv();
   try {
     await loadScripts();
