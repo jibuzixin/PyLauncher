@@ -183,7 +183,7 @@
 <div class="bar">
   <div class="t"><span class="dot"></span>Python 脚本启动器 · 演示文档</div>
   <div style="display:flex;gap:10px;align-items:center">
-    <span class="ver">v0.0.50</span>
+    <span class="ver">v0.0.51</span>
     <a class="back" href="/">← 返回启动器</a>
   </div>
 </div>
@@ -390,7 +390,11 @@
     if (i === cur) return;
     const dir = i > cur ? 1 : -1;
     slides[cur].classList.remove("active");
-    slides[cur].classList.add(dir === 1 ? "prev" : "");
+    if (dir === 1) {
+      slides[cur].classList.add("prev");
+    } else {
+      slides[cur].classList.remove("prev");
+    }
     cur = i;
     slides[cur].classList.remove("prev");
     slides[cur].classList.add("active");
