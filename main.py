@@ -846,7 +846,8 @@ async def script_command(req: CommandReq):
     schema = json.loads(rec.get("args_schema") or "[]")
     arg_list = build_arg_list(schema, req.args)
     cmd, err = executor.build_command_ex(rec["path"], arg_list)
-    return {"ok": True, "command": cmd if not err else "", "error": err}
+    command = "" if err else " ".join(_shq(c) for c in cmd)
+    return {"ok": True, "command": command, "error": err}
 
 
 @app.get("/api/executions")
