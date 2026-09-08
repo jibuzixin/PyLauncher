@@ -183,7 +183,7 @@
 <div class="bar">
   <div class="t"><span class="dot"></span>Python 脚本启动器 · 演示文档</div>
   <div style="display:flex;gap:10px;align-items:center">
-    <span class="ver">v0.0.51</span>
+    <span class="ver">v0.0.54</span>
     <a class="back" href="/">← 返回启动器</a>
   </div>
 </div>
@@ -251,28 +251,34 @@
       <div class="step"><div class="n">4</div><b>实时输出</b><code>终端流式回显</code></div>
     </div>
     <div class="codebox">
-      <span class="c"># 实际执行的命令（可在界面复制）</span><br>
-      cd <span class="y">/path/to/script_dir</span> &amp;&amp; uv run python <span class="y">tool.py</span> <span class="g">--input a.csv</span> <span class="g">--retry 3</span>
+      <span class="c"># 实际执行的命令（可在界面复制）；有 uv 走 uv run，无 uv 自动改用 .venv/bin/python</span><br>
+      cd <span class="y">/path/to/script_dir</span> &amp;&amp; uv run python <span class="y">tool.py</span> <span class="g">--input a.csv</span> <span class="g">--retry 3</span><br>
+      <span class="c"># 无 uv 时等价于：</span> cd <span class="y">/path/to/script_dir</span> &amp;&amp; .venv/bin/python <span class="y">tool.py</span> <span class="g">--input a.csv</span> <span class="g">--retry 3</span>
     </div>
   </section>
 
   <!-- 4 环境模型 -->
   <section class="slide">
     <div class="kick">Environment</div>
-    <h2>环境模型：每个项目独立虚拟环境</h2>
+    <h2>环境模型：uv 或 .venv，有其一即可运行</h2>
     <div class="flow">
-      <div class="step"><div class="n">1</div><b>检测 uv</b><code>未装则给出安装命令</code></div>
+      <div class="step"><div class="n">1</div><b>检测运行方式</b><code>有 uv？或目录有 .venv？</code></div>
       <div class="arrow">→</div>
-      <div class="step"><div class="n">2</div><b>初始化 venv</b><code>脚本目录生成 .venv</code></div>
+      <div class="step"><div class="n">2</div><b>venv 就绪</b><code>缺失则一键初始化</code></div>
       <div class="arrow">→</div>
-      <div class="step"><div class="n">3</div><b>安装依赖</b><code>requirements.txt / pyproject.toml</code></div>
+      <div class="step"><div class="n">3</div><b>依赖就绪</b><code>requirements / pyproject</code></div>
       <div class="arrow">→</div>
-      <div class="step"><div class="n">4</div><b>uv run 执行</b><code>依赖隔离、互不干扰</code></div>
+      <div class="step"><div class="n">4</div><b>一键执行</b><code>uv run 或 .venv python</code></div>
     </div>
-    <div class="grid3">
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>依赖隔离</h3><p>脚本 A 的库版本不影响脚本 B，每个 .venv 独立</p></div>
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>兼容 pyproject</h3><p>自动识别 requirements.txt 与 pyproject.toml 安装</p></div>
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M20 6 9 17l-5-5"/></svg></div><h3>单脚本运行</h3><p>兼容 PEP 723 内联依赖（# /// script），无需依赖文件</p></div>
+    <div class="grid2">
+      <div class="cell"><div class="ic" style="background:rgba(79,70,229,0.1);color:#4F46E5"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg></div><h3>uv 轨道（推荐）</h3><p><code>uv venv</code> 创建 → <code>uv pip install</code> 装依赖 → <code>uv run --project &lt;目录&gt; python 脚本.py</code></p></div>
+      <div class="cell"><div class="ic" style="background:rgba(26,127,55,0.1);color:var(--ok)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 9l-2-2a2 2 0 0 0-2.83 0l-1.17 1.17a2 2 0 0 0 0 2.83L7 16"/><path d="M9 13 7 11"/><path d="m4 20 4-4"/><circle cx="16" cy="12" r="4"/></svg></div><h3>原生 Python 轨道</h3><p><code>python -m venv .venv</code> → <code>.venv/bin/python -m pip install</code> → <code>.venv/bin/python 脚本.py</code>（Win 为 Scripts\python.exe）</p></div>
+    </div>
+    <div class="tags" style="margin-top:16px">
+      <span class="tag b">依赖隔离</span>
+      <span class="tag b">兼容 pyproject</span>
+      <span class="tag b">单脚本 PEP 723</span>
+      <span class="tag g">无 uv 也能运行</span>
     </div>
   </section>
 
@@ -293,14 +299,17 @@
   <section class="slide">
     <div class="kick">Prerequisites · 前提条件</div>
     <h2>需要什么前提条件</h2>
+    <p class="sub">运行环境二选一（满足其一即可）：装了 <b>uv</b>，或本机有 <b>Python</b> 能创建虚拟环境。</p>
     <div class="grid3">
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div><h3>安装 uv</h3><p>Python 包/环境管理工具。macOS：<code>brew install uv</code>；Windows：<code>irm https://astral.sh/uv/install.ps1 | iex</code></p></div>
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M12 2 2 7l10 5 10-5-10-5z"/><path d="m2 17 10 5 10-5M2 12l10 5 10-5"/></svg></div><h3>本机 Python</h3><p>服务自身运行在项目 .venv 中；uv 可为各脚本自动寻找/创建对应 Python 版本</p></div>
-      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><h3>脚本遵循约定</h3><p>argparse 解析（见上一页）。不满足也能导入，但参数无法自动识别</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/></svg></div><h3>方案 A：安装 uv（推荐）</h3><p>macOS：<code>brew install uv</code>；Windows：<code>irm https://astral.sh/uv/install.ps1 | iex</code></p></div>
+      <div class="cell"><div class="ic" style="background:rgba(26,127,55,0.1);color:var(--ok)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M8 9l-2-2a2 2 0 0 0-2.83 0l-1.17 1.17a2 2 0 0 0 0 2.83L7 16"/><path d="M9 13 7 11"/><circle cx="16" cy="12" r="4"/></svg></div><h3>方案 B：原生 Python + venv</h3><p>不装 uv 也行：<code>python -m venv .venv</code> 建环境、venv 的 pip 装依赖、venv 的 python 运行，全部自动兼容</p></div>
+      <div class="cell"><div class="ic" style="background:rgba(0,113,227,0.1);color:var(--accent)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><h3>脚本遵循约定</h3><p>使用 argparse 解析参数（见上一页）。不满足也能导入，但参数无法自动识别</p></div>
     </div>
     <div class="codebox">
-      <span class="c"># 未安装 uv 时，页面会给出友好提示 + 对应平台安装命令</span><br>
-      macOS: <span class="g">brew install uv</span> &nbsp;&nbsp;|&nbsp;&nbsp; Windows: <span class="g">irm https://astral.sh/uv/install.ps1 | iex</span>
+      <span class="c"># 方案 A（有 uv）：页面自动走 uv 轨道</span><br>
+      <span class="c"># 方案 B（无 uv 但有 .venv）：页面自动走原生轨道，无需 activate</span><br>
+      初始化: <span class="g">python -m venv .venv</span> &nbsp;→&nbsp; 依赖: <span class="g">.venv/bin/python -m pip install -r requirements.txt</span><br>
+      运行: <span class="g">.venv/bin/python 脚本.py</span> &nbsp;<span class="c">（Windows 用 Scripts\\python.exe）</span>
     </div>
   </section>
 

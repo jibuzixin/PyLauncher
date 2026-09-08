@@ -44,9 +44,9 @@
 
 ## 快速开始
 
-### 环境准备（只需一次）
+### 环境准备（只需一次，二选一）
 
-安装 [uv](https://docs.astral.sh/uv/)（Python 包与虚拟环境管理工具）：
+**方案 A：安装 [uv](https://docs.astral.sh/uv/)（推荐，Python 包与虚拟环境管理工具）**
 
 ```bash
 # macOS
@@ -55,6 +55,10 @@ brew install uv
 # Windows（PowerShell）
 powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
+
+**方案 B：不装 uv，用原生 Python** —— 本工具已完整兼容：`python -m venv .venv` 创建环境、venv 的 pip 装依赖、`.venv/bin/python` 运行脚本（Windows 为 `.venv\Scripts\python.exe`）。脚本目录下只要有 `.venv`（无论是 uv 还是原生 python 创建的）即可直接运行，**无需手动 activate**。
+
+> 理念：**项目目录下有虚拟环境（.venv）或有 uv，就可以运行。**
 
 ### 启动
 
@@ -97,7 +101,7 @@ macOS 双击 `stop.command`；Windows 双击 `stop.bat`。无需手动 kill 进�
 | 参数预设 | 保存 / 覆盖 / 固定常用预设置顶，一键复写表单 |
 | 实时控制台 | WebSocket 流式输出（兼容 `\r` 进度条）、行号 + 悬浮复制、多行选择复制、自动滚动 |
 | 执行记录 | 完整留存每次输出，支持标签、筛选、多选删除、用旧参数重跑、详情实时输出 |
-| uv 环境 | 自动检测 uv / venv，一键初始化 + 安装依赖，兼容 requirements.txt / pyproject.toml / PEP 723 单脚本 |
+| uv 环境 | 自动检测 uv / venv，一键初始化 + 安装依赖；兼容 requirements.txt / pyproject.toml / PEP 723 单脚本；**无 uv 时自动降级为原生 python venv（创建/装依赖/运行全兼容）** |
 | 定时任务 | 标准 cron 表达式或可视化点选，支持执行次数、参数预设填充、到期自动停用 |
 | 多任务 | 同一脚本可并行多次运行，卡片徽章实时显示任务数，独立控制台 |
 | 便捷操作 | 打开脚本目录、复制绝对路径、复制 uv run 命令、脚本更新一键重新加载 |
@@ -144,7 +148,7 @@ args = p.parse_args()
 
 ## 架构与运行原理
 
-**一句话原理：它做的所有事，本质都是帮你正确拼出并在脚本目录执行一条 `uv run` 命令。**
+**一句话原理：它做的所有事，本质都是帮你正确拼出并在脚本目录执行一条运行命令。**
 
 ```
 ┌──────────┐   argparse AST 解析   ┌──────────┐
@@ -153,15 +157,19 @@ args = p.parse_args()
                                         │ 填写参数
                                         ▼
 ┌──────────┐   拼接命令    ┌────────────────────────┐
-│ 执行记录  │ ←────────── │  uv run --project <目录>  │
-│ SQLite   │  留存输出     │  python 脚本.py 参数...   │
-└──────────┘              └────────────────────────┘
+│ 执行记录  │ ←────────── │  有 uv：uv run --project │
+│ SQLite   │  留存输出     │  <目录> python 脚本.py …  │
+└──────────┘              │  无 uv：.venv/bin/python │
+                          │  脚本.py …（Win Scripts） │
+                          └────────────────────────┘
                                         │ 流式输出
                                         ▼
                               ┌──────────────────────┐
                               │  实时控制台（WebSocket）│
                               └──────────────────────┘
 ```
+
+> 执行器自动决策：PEP 723 内联脚本走 `uv run --script`；普通项目有 uv 走 `uv run --project`；无 uv 但目录有 `.venv` 走 `.venv` 的 python；两者皆无时明确提示安装 uv 或初始化环境。
 
 ### 技术栈
 
@@ -206,7 +214,7 @@ launcher/
 
 ## 常见问题
 
-- **提示未检测到 uv** → 按页面指引安装（mac: `brew install uv`；win: PowerShell 安装命令），装完点「重新检测」
+- **提示未检测到 uv** → 页面会给出指引。若脚本目录已有 `.venv`，可正常忽略并运行；两者皆无时可点「初始化环境」用系统 Python 自动创建，或按指引安装 uv（mac: `brew install uv`；win: PowerShell 安装命令），装完点「重新检测」
 - **脚本导入失败（422）** → 确认路径为绝对路径、文件存在、脚本使用 argparse 且包含至少一个 `add_argument`
 - **依赖装不上** → 确认脚本同目录存在 `requirements.txt` 或 `pyproject.toml`；依赖文件在别处时可在编辑脚本信息中指定路径后点「安装依赖」
 - **端口被占用** → 设置环境变量 `LAUNCHER_PORT` 指定其他端口
