@@ -803,19 +803,18 @@ function makePresetChip(p) {
   x.title = "删除预设（再次点击确认）";
   x.onclick = async (e) => {
     e.stopPropagation();
-    if (chip.classList.contains("confirm-del")) return; // 弹窗期间防重复
+    if (chip.classList.contains("confirm-del")) {
+      // 第二次点击：直接删除
+      clearTimeout(chip._delTimer);
+      chip.classList.remove("confirm-del");
+      await api(`/api/presets/${p.id}`, { method: "DELETE" });
+      toast("预设已删除");
+      reloadDetail();
+      return;
+    }
     chip.classList.add("confirm-del");
-    confirmModal({
-      title: "删除预设",
-      message: `再次点击「删除」即可完成删除预设「${p.name}」`,
-      confirmText: "删除",
-      onConfirm: async () => {
-        await api(`/api/presets/${p.id}`, { method: "DELETE" });
-        toast("预设已删除");
-        reloadDetail();
-      },
-      onCancel: () => chip.classList.remove("confirm-del"),
-    });
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    chip._delTimer = setTimeout(() => chip.classList.remove("confirm-del"), 3000);
   };
   chip.appendChild(x);
   return chip;
@@ -901,21 +900,20 @@ function makeManagerRow(mask, p) {
   del.className = "pm-op del";
   del.textContent = "✕";
   del.title = "删除预设（再次点击确认）";
-  del.onclick = () => {
-    if (row.classList.contains("confirm-del")) return; // 弹窗期间防重复
+  del.onclick = async () => {
+    if (row.classList.contains("confirm-del")) {
+      // 第二次点击：直接删除
+      clearTimeout(row._delTimer);
+      row.classList.remove("confirm-del");
+      await api(`/api/presets/${p.id}`, { method: "DELETE" });
+      toast("预设已删除");
+      await reloadDetail();
+      renderPresetManager(mask, (state.script && state.script.presets) || []);
+      return;
+    }
     row.classList.add("confirm-del");
-    confirmModal({
-      title: "删除预设",
-      message: `再次点击「删除」即可完成删除预设「${p.name}」`,
-      confirmText: "删除",
-      onConfirm: async () => {
-        await api(`/api/presets/${p.id}`, { method: "DELETE" });
-        toast("预设已删除");
-        await reloadDetail();
-        renderPresetManager(mask, (state.script && state.script.presets) || []);
-      },
-      onCancel: () => row.classList.remove("confirm-del"),
-    });
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    row._delTimer = setTimeout(() => row.classList.remove("confirm-del"), 3000);
   };
   row.append(name, pin, up, down, del);
   return row;
