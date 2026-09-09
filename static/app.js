@@ -66,19 +66,27 @@ async function api(path, opts = {}) {
   return data;
 }
 
-let toastTimer = null;
-function toast(msg, isErr = false) {
-  let el = $("#toast");
-  if (!el) {
-    el = document.createElement("div");
-    el.id = "toast";
-    el.className = "toast";
-    document.body.appendChild(el);
+// 顶部通知：多 toast 堆叠（各自独立计时与动画，连续触发可同时存在多个）
+const TOAST_ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.4 2.9 2.9 5.5-6"/></svg>';
+const TOAST_ICON_ERR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>';
+function toast(msg, isErr = false, duration = 2400) {
+  let box = $("#toast-box");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "toast-box";
+    document.body.appendChild(box);
   }
-  el.textContent = msg;
-  el.className = "toast show" + (isErr ? " err" : "");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove("show"), 2400);
+  const el = document.createElement("div");
+  el.className = "toast-item" + (isErr ? " err" : " ok");
+  el.innerHTML = '<span class="t-ic">' + (isErr ? TOAST_ICON_ERR : TOAST_ICON_OK) + '</span><span class="t-txt"></span>';
+  el.querySelector(".t-txt").textContent = msg;
+  box.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
+  setTimeout(() => {
+    el.classList.remove("in");
+    el.classList.add("out");
+    el.addEventListener("animationend", () => el.remove(), { once: true });
+  }, duration);
 }
 
 async function copyText(text) {
