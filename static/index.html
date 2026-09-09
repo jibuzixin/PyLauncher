@@ -1377,7 +1377,7 @@ select.f-input { appearance: none; padding-right: 30px;
     </button>
     <button class="btn primary" id="btn-add">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-      <span>导入 / 扫描</span>
+      <span>脚本导入</span>
     </button>
   </div>
 </header>
@@ -1395,7 +1395,7 @@ select.f-input { appearance: none; padding-right: 30px;
     </div>
     <div class="scan-info" id="scan-info"></div>
     <div class="script-list" id="script-list"></div>
-    <div class="sidebar-empty" id="sidebar-empty" hidden>暂无脚本<br>点击右上角「导入 / 扫描」开始</div>
+    <div class="sidebar-empty" id="sidebar-empty" hidden>暂无脚本<br>点击右上角「脚本导入」开始</div>
   </aside>
 
   <div class="resize-handle" id="resize-sidebar" data-target="sidebar"></div>
@@ -1678,14 +1678,14 @@ function confirmModal({ title = "确认操作", message, confirmText = "删除",
 function openAddModal() {
   const lastDir = localStorage.getItem("last_scan_dir") || "";
   openModal({
-    title: "导入 / 扫描脚本",
+    title: "脚本导入",
     bodyHTML: `
       <div class="m-field">
         <div class="m-radio">
-          <label><input type="radio" name="add-mode" value="scan" checked> 扫描目录</label>
-          <label><input type="radio" name="add-mode" value="file"> 导入单个脚本</label>
+          <label><input type="radio" name="add-mode" value="file" checked> 导入单个脚本</label>
+          <label><input type="radio" name="add-mode" value="scan"> 扫描目录</label>
         </div>
-        <div class="m-hint">扫描模式递归查找并自动导入；导入模式可填路径或选择本地 .py 文件</div>
+        <div class="m-hint">导入模式可填路径或选择本地 .py 文件；扫描模式递归查找并自动导入</div>
       </div>
       <div class="m-field" id="path-field">
         <div class="m-label">路径</div>

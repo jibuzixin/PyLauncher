@@ -151,14 +151,14 @@ function confirmModal({ title = "确认操作", message, confirmText = "删除",
 function openAddModal() {
   const lastDir = localStorage.getItem("last_scan_dir") || "";
   openModal({
-    title: "导入 / 扫描脚本",
+    title: "脚本导入",
     bodyHTML: `
       <div class="m-field">
         <div class="m-radio">
-          <label><input type="radio" name="add-mode" value="scan" checked> 扫描目录</label>
-          <label><input type="radio" name="add-mode" value="file"> 导入单个脚本</label>
+          <label><input type="radio" name="add-mode" value="file" checked> 导入单个脚本</label>
+          <label><input type="radio" name="add-mode" value="scan"> 扫描目录</label>
         </div>
-        <div class="m-hint">扫描模式递归查找并自动导入；导入模式可填路径或选择本地 .py 文件</div>
+        <div class="m-hint">导入模式可填路径或选择本地 .py 文件；扫描模式递归查找并自动导入</div>
       </div>
       <div class="m-field" id="path-field">
         <div class="m-label">路径</div>
