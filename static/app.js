@@ -1595,8 +1595,10 @@ function renderHistory(list) {
     if (historyScope === "script" && state.selectedId && h.script_id !== state.selectedId) return false;
     if (!kw) return true;
     const tags = JSON.parse(h.tags || "[]").join(" ");
+    const statusCN = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[h.status] || h.status;
     return (h.script_name || "").toLowerCase().includes(kw) ||
       h.status.includes(kw) ||
+      statusCN.toLowerCase().includes(kw) ||
       tags.toLowerCase().includes(kw);
   });
   if (filtered.length === 0) {
