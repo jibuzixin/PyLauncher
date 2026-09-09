@@ -76,6 +76,12 @@ function toast(msg, isErr = false, duration = 2400) {
     box.id = "toast-box";
     document.body.appendChild(box);
   }
+  // 旧 toast 立即退场：上移淡出（明显），动画结束再移除
+  document.querySelectorAll("#toast-box .toast-item:not(.out)").forEach(el => {
+    el.classList.remove("in");
+    el.classList.add("out");
+    el.addEventListener("animationend", () => el.remove(), { once: true });
+  });
   const el = document.createElement("div");
   el.className = "toast-item" + (isErr ? " err" : " ok");
   el.innerHTML = '<span class="t-ic">' + (isErr ? TOAST_ICON_ERR : TOAST_ICON_OK) + '</span><span class="t-txt"></span>';
