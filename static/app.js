@@ -1774,6 +1774,36 @@ function summarizeArgs(argsStr) {
   } catch { return ""; }
 }
 
+/** 参数胶囊渲染：每个参数一个 chip（键粗体灰、值等宽黑），多参数自动换行 */
+function renderArgChips(container, args) {
+  container.innerHTML = "";
+  const kv = Object.entries(args || {}).filter(([, v]) => v !== "" && v !== null && v !== undefined);
+  if (kv.length === 0) {
+    const empty = document.createElement("span");
+    empty.className = "no-args";
+    empty.textContent = "（无参数）";
+    container.appendChild(empty);
+    return;
+  }
+  for (const [k, v] of kv) {
+    const chip = document.createElement("span");
+    chip.className = "arg-chip";
+    const kEl = document.createElement("span");
+    kEl.className = "ak";
+    kEl.textContent = k;
+    const eEl = document.createElement("span");
+    eEl.className = "ae";
+    eEl.textContent = "=";
+    const vEl = document.createElement("span");
+    vEl.className = "av";
+    const raw = Array.isArray(v) ? v.join(", ") : String(v);
+    vEl.textContent = raw || "（空）";
+    if (!raw) vEl.classList.add("no-val");
+    chip.append(kEl, eEl, vEl);
+    container.appendChild(chip);
+  }
+}
+
 function formatTime(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -1904,9 +1934,7 @@ async function showHistoryDetail(id, itemEl) {
   argsLbl.textContent = "参数";
   const argsTxt = document.createElement("div");
   argsTxt.className = "hd-args-txt";
-  const argsSummary = summarizeArgs(JSON.stringify(rec.args || {}));
-  argsTxt.textContent = argsSummary;
-  argsTxt.title = JSON.stringify(rec.args || {});
+  renderArgChips(argsTxt, rec.args || {});
   argsBlock.append(argsLbl, argsTxt);
 
   // ===== 标签 =====
