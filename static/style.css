@@ -1352,3 +1352,27 @@ select.f-input { appearance: none; padding-right: 30px;
   font-size: 15px; font-weight: 600; height: 30px; width: 280px;
   margin: -2px 0 0; padding: 0 8px;
 }
+/* 历史单条删除：双态确认（点击两次，无弹窗） */
+.hist-item { position: relative; }
+.hist-item.confirm-del {
+  border-color: var(--danger);
+  background: var(--danger-bg, #fef2f2);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+  transform: none;
+}
+.hist-item.confirm-del .hi-name { color: var(--danger); }
+.hist-item.confirm-del .hi-del { display: inline-flex; }
+.hist-item .hi-del.armed {
+  width: auto; padding: 0 8px; font-size: 10.5px;
+  background: var(--danger); color: #fff;
+  animation: delPulse 1s ease-in-out infinite;
+}
+@keyframes delPulse { 50% { opacity: 0.72; } }
+/* 3 秒红色倒计时进度条（从满到空） */
+.hist-item.confirm-del::after {
+  content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
+  background: linear-gradient(90deg, var(--danger), rgba(220, 38, 38, 0.35));
+  animation: delCountdown 3s linear forwards;
+  border-radius: 0 0 0 4px;
+}
+@keyframes delCountdown { to { width: 0; } }

@@ -1724,26 +1724,42 @@ function renderHistory(list) {
     tm.className = "hi-time";
     tm.textContent = formatTime(h.started_at);
     top.append(nm, st, tm);
-    // 单条快速删除（hover 显示）
+    // 单条快速删除：双态确认（点击一次卡片变红提示，再点一次删除，无弹窗）
     const del = document.createElement("button");
     del.className = "hi-del";
-    del.title = "删除这条记录";
+    del.title = "删除这条记录（再次点击确认）";
     del.textContent = "✕";
+    let armed = false, armTimer = null;
+    const disarm = () => {
+      armed = false;
+      clearTimeout(armTimer);
+      item.classList.remove("confirm-del");
+      del.classList.remove("armed");
+      del.textContent = "✕";
+      del.title = "删除这条记录（再次点击确认）";
+    };
     del.addEventListener("click", (e) => {
       e.stopPropagation();
-      confirmModal({
-        title: "删除执行记录",
-        message: `确定删除这条执行记录（${h.script_name || "脚本"} · ${formatTime(h.started_at)}）吗？`,
-        confirmText: "删除",
-        onConfirm: async () => {
-          await api(`/api/executions/${h.id}`, { method: "DELETE" });
+      if (!armed) {
+        armed = true;
+        item.classList.add("confirm-del");
+        del.classList.add("armed");
+        del.textContent = "再次点击删除";
+        del.title = "再次点击确认删除";
+        armTimer = setTimeout(disarm, 3000);
+        return;
+      }
+      clearTimeout(armTimer);
+      api(`/api/executions/${h.id}`, { method: "DELETE" })
+        .then(() => {
           refreshHistory();
           if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
-          if (state.detailExec && state.detailExec.id === h.id) {
-            closeHistoryDetail(true);
-          }
-        },
-      });
+          if (state.detailExec && state.detailExec.id === h.id) closeHistoryDetail(true);
+        })
+        .catch((err) => {
+          toast("删除失败：" + err.message, true);
+          disarm();
+        });
     });
     top.appendChild(del);
 
@@ -1765,6 +1781,7 @@ function renderHistory(list) {
     item.append(top, argsLine, tagsRow);
     item.dataset.id = h.id;
     item.onclick = () => {
+      if (item.classList.contains("confirm-del")) { disarm(); return; } // 警告态点击卡片任意处 → 取消确认
       if (historyMulti) toggleHistorySelect(h.id);
       else showHistoryDetail(h.id, item);
     };
