@@ -963,6 +963,7 @@ select.f-input { appearance: none; padding-right: 30px;
 }
 .toast-item .t-ic { width: 15px; height: 15px; flex-shrink: 0; }
 .toast-item.ok .t-ic { color: var(--ok); }
+.toast-item.warn .t-ic { color: var(--warning, #d97706); }
 .toast-item.err .t-ic { color: var(--danger); }
 .toast-item .t-txt { overflow: hidden; text-overflow: ellipsis; }
 .toast-item.in { animation: toastIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards; }
@@ -978,6 +979,12 @@ select.f-input { appearance: none; padding-right: 30px;
   border-color: rgba(220, 38, 38, 0.35);
   color: var(--danger);
   box-shadow: 0 8px 24px rgba(220, 38, 38, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+.toast-item.warn {
+  background: rgba(254, 243, 199, 0.88);
+  border-color: rgba(217, 119, 6, 0.4);
+  color: var(--warning, #b45309);
+  box-shadow: 0 8px 24px rgba(217, 119, 6, 0.16), inset 0 1px 0 rgba(255, 255, 255, 0.75);
 }
 
 .spinner {
@@ -1657,8 +1664,13 @@ async function api(path, opts = {}) {
 
 // 顶部通知：多 toast 堆叠（各自独立计时与动画，连续触发可同时存在多个）
 const TOAST_ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.4 2.9 2.9 5.5-6"/></svg>';
+const TOAST_ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 const TOAST_ICON_ERR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>';
-function toast(msg, isErr = false, duration = 2400) {
+function toast(msg, type = "ok", duration = 2400) {
+  // 兼容旧调用：toast(msg, true) 视为错误
+  if (type === true) type = "err";
+  const kind = type === "warn" ? "warn" : type === "err" ? "err" : "ok";
+  const icon = kind === "warn" ? TOAST_ICON_WARN : kind === "err" ? TOAST_ICON_ERR : TOAST_ICON_OK;
   let box = $("#toast-box");
   if (!box) {
     box = document.createElement("div");
@@ -1672,8 +1684,8 @@ function toast(msg, isErr = false, duration = 2400) {
     el.addEventListener("animationend", () => el.remove(), { once: true });
   });
   const el = document.createElement("div");
-  el.className = "toast-item" + (isErr ? " err" : " ok");
-  el.innerHTML = '<span class="t-ic">' + (isErr ? TOAST_ICON_ERR : TOAST_ICON_OK) + '</span><span class="t-txt"></span>';
+  el.className = "toast-item " + kind;
+  el.innerHTML = '<span class="t-ic">' + icon + '</span><span class="t-txt"></span>';
   el.querySelector(".t-txt").textContent = msg;
   box.appendChild(el);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
@@ -2402,7 +2414,7 @@ function makePresetChip(p) {
       return;
     }
     chip.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
     chip._delTimer = setTimeout(() => chip.classList.remove("confirm-del"), 3000);
   };
   chip.appendChild(x);
@@ -2501,7 +2513,7 @@ function makeManagerRow(mask, p) {
       return;
     }
     row.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
     row._delTimer = setTimeout(() => row.classList.remove("confirm-del"), 3000);
   };
   row.append(name, pin, up, down, del);

@@ -68,8 +68,13 @@ async function api(path, opts = {}) {
 
 // 顶部通知：多 toast 堆叠（各自独立计时与动画，连续触发可同时存在多个）
 const TOAST_ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.4 2.9 2.9 5.5-6"/></svg>';
+const TOAST_ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 const TOAST_ICON_ERR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>';
-function toast(msg, isErr = false, duration = 2400) {
+function toast(msg, type = "ok", duration = 2400) {
+  // 兼容旧调用：toast(msg, true) 视为错误
+  if (type === true) type = "err";
+  const kind = type === "warn" ? "warn" : type === "err" ? "err" : "ok";
+  const icon = kind === "warn" ? TOAST_ICON_WARN : kind === "err" ? TOAST_ICON_ERR : TOAST_ICON_OK;
   let box = $("#toast-box");
   if (!box) {
     box = document.createElement("div");
@@ -83,8 +88,8 @@ function toast(msg, isErr = false, duration = 2400) {
     el.addEventListener("animationend", () => el.remove(), { once: true });
   });
   const el = document.createElement("div");
-  el.className = "toast-item" + (isErr ? " err" : " ok");
-  el.innerHTML = '<span class="t-ic">' + (isErr ? TOAST_ICON_ERR : TOAST_ICON_OK) + '</span><span class="t-txt"></span>';
+  el.className = "toast-item " + kind;
+  el.innerHTML = '<span class="t-ic">' + icon + '</span><span class="t-txt"></span>';
   el.querySelector(".t-txt").textContent = msg;
   box.appendChild(el);
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
@@ -813,7 +818,7 @@ function makePresetChip(p) {
       return;
     }
     chip.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
     chip._delTimer = setTimeout(() => chip.classList.remove("confirm-del"), 3000);
   };
   chip.appendChild(x);
@@ -912,7 +917,7 @@ function makeManagerRow(mask, p) {
       return;
     }
     row.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, true);
+    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
     row._delTimer = setTimeout(() => row.classList.remove("confirm-del"), 3000);
   };
   row.append(name, pin, up, down, del);
