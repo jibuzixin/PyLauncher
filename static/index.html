@@ -2349,10 +2349,7 @@ function presetDisplayGroups(all) {
   const pinned = all.filter((p) => p.pinned);
   const unpinned = all
     .filter((p) => !p.pinned)
-    .sort((a, b) => {
-      const c = String(b.last_used_at || "").localeCompare(String(a.last_used_at || ""));
-      return c !== 0 ? c : String(b.created_at || "").localeCompare(String(a.created_at || ""));
-    });
+    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
   const shown = unpinned.slice(0, Math.max(0, PRESET_MAX_SHOWN - pinned.length));
   const rest = unpinned.slice(shown.length);
   return { pinned, shown, rest };
@@ -2372,6 +2369,9 @@ function renderPresets(presets) {
   }
   if (rest.length > 0) {
     chips.appendChild(makeMoreBubble(rest.length, presets || []));
+  } else {
+    // 气泡常驻：即使没有更多预设也显示管理入口（固定 / 排序 / 编辑）
+    chips.appendChild(makeMoreBubble(0, presets || []));
   }
   const saveBtn = document.createElement("button");
   saveBtn.className = "btn mini ghost";
@@ -2420,17 +2420,17 @@ function makePresetChip(p) {
   return chip;
 }
 
-/** 「还有更多」气泡：三个圆形叠加 + 剩余数量 */
+/** 「还有更多」气泡：三个圆形叠加 + 剩余数量（常驻管理入口） */
 function makeMoreBubble(count, all) {
   const more = document.createElement("div");
   more.className = "preset-more";
-  more.title = `还有 ${count} 个预设 · 点击管理全部`;
+  more.title = count > 0 ? `还有 ${count} 个预设 · 点击管理全部` : "管理全部预设（固定 / 排序 / 编辑）";
   more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b1" }));
   more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b2" }));
   more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b3" }));
   const cnt = document.createElement("span");
   cnt.className = "pm-count";
-  cnt.textContent = "+" + count;
+  cnt.textContent = count > 0 ? "+" + count : "⋯";
   more.appendChild(cnt);
   more.onclick = () => openPresetsModal(all);
   return more;
