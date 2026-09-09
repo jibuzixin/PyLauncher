@@ -972,7 +972,8 @@ async function saveAsPreset() {
           $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
           chip.classList.add("cover-target");
           tip.hidden = false;
-          tip.textContent = `⚠ 再次点击「${p.name}」将覆盖该预设`;
+          tip.textContent = `再次点击「${p.name}」即可完成覆盖`;
+          toast(`再次点击「${p.name}」即可完成覆盖该预设`, "warn");
         };
         chips.appendChild(chip);
       }
