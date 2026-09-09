@@ -1346,3 +1346,9 @@ select.f-input { appearance: none; padding-right: 30px;
   padding-top: 4px;
   border-top: 1px solid var(--hairline);
 }
+/* 脚本详情页：标签区 + 原地重命名 */
+.script-tags { margin-top: 8px; }
+.script-name-input {
+  font-size: 15px; font-weight: 600; height: 30px; width: 280px;
+  margin: -2px 0 0; padding: 0 8px;
+}

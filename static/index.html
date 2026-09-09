@@ -1353,6 +1353,12 @@ select.f-input { appearance: none; padding-right: 30px;
   padding-top: 4px;
   border-top: 1px solid var(--hairline);
 }
+/* 脚本详情页：标签区 + 原地重命名 */
+.script-tags { margin-top: 8px; }
+.script-name-input {
+  font-size: 15px; font-weight: 600; height: 30px; width: 280px;
+  margin: -2px 0 0; padding: 0 8px;
+}
 
 </style>
 </head>
@@ -1423,6 +1429,7 @@ select.f-input { appearance: none; padding-right: 30px;
           <h2 id="script-name"></h2>
           <div class="script-desc" id="script-desc" title="点击编辑描述"></div>
           <div class="script-path" id="script-path" title=""></div>
+          <div class="hd-tags script-tags" id="script-tags"></div>
         </div>
         <div class="script-actions">
           <button class="btn ghost" id="btn-reload" title="脚本文件更新后重新解析参数">
@@ -1936,12 +1943,14 @@ function renderScriptHead(rec) {
   const nameEl = $("#script-name");
   nameEl.textContent = rec.name;
   nameEl.title = "点击重命名";
-  nameEl.onclick = () => editScriptMeta(rec);
+  nameEl.onclick = () => inlineRename(rec);
 
   const descEl = $("#script-desc");
   descEl.textContent = rec.description || "（无描述，点击添加）";
   descEl.className = "script-desc" + (rec.description ? "" : " empty");
   descEl.onclick = () => editScriptMeta(rec);
+
+  renderScriptTags(rec);
 
   const p = $("#script-path");
   p.textContent = rec.path;
@@ -1987,6 +1996,92 @@ async function reloadScript() {
   label.textContent = "重新加载";
 }
 
+/** 原地重命名：点击脚本名称直接变为输入框，Enter/失焦保存，Esc 取消 */
+function inlineRename(rec) {
+  const nameEl = $("#script-name");
+  if (nameEl.dataset.editing === "1") return;
+  const input = document.createElement("input");
+  input.className = "f-input script-name-input";
+  input.value = rec.name;
+  input.dataset.editing = "1";
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+  let done = false;
+  const commit = async (save) => {
+    if (done) return;
+    done = true;
+    const v = input.value.trim();
+    if (save && v && v !== rec.name) {
+      try {
+        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { name: v } });
+        toast("已重命名");
+        await loadScripts();
+        await selectScript(rec.id);
+        return;
+      } catch (e) {
+        toast("重命名失败：" + e.message, true);
+      }
+    }
+    const next = document.createElement("h2");
+    next.id = "script-name";
+    next.title = "点击重命名";
+    next.textContent = rec.name;
+    next.onclick = () => inlineRename(rec);
+    input.replaceWith(next);
+  };
+  input.onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); commit(true); }
+    else if (e.key === "Escape") commit(false);
+  };
+  input.onblur = () => commit(true);
+}
+
+/** 脚本详情页标签：chips + 输入框（回车添加、✕ 删除，实时保存） */
+function renderScriptTags(rec) {
+  const row = $("#script-tags");
+  if (!row) return;
+  row.innerHTML = "";
+  const lbl = document.createElement("span");
+  lbl.style.cssText = "font-size:11px;color:var(--muted)";
+  lbl.textContent = "标签:";
+  row.appendChild(lbl);
+  const renderTags = () => {
+    $$(".tag", row).forEach((t) => t.remove());
+    const inp = $("#sc-tag-input", row);
+    for (const t of rec.tags || []) {
+      const tag = document.createElement("span");
+      tag.className = "tag";
+      const txt = document.createTextNode("#" + t);
+      const x = document.createElement("span");
+      x.className = "x";
+      x.textContent = "✕";
+      x.onclick = async () => {
+        rec.tags = (rec.tags || []).filter((v) => v !== t);
+        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { tags: rec.tags } });
+        renderTags();
+        await loadScripts();
+      };
+      tag.append(txt, x);
+      row.insertBefore(tag, inp);
+    }
+  };
+  const inp = document.createElement("input");
+  inp.id = "sc-tag-input";
+  inp.placeholder = "+ 添加标签，回车确认";
+  inp.onkeydown = async (e) => {
+    if (e.key === "Enter" && inp.value.trim()) {
+      rec.tags = [...new Set([...(rec.tags || []), inp.value.trim()])];
+      inp.value = "";
+      await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { tags: rec.tags } });
+      renderTags();
+      await loadScripts();
+    }
+  };
+  row.appendChild(inp);
+  renderTags();
+}
+
 function editScriptMeta(rec) {
   openModal({
     title: "编辑脚本信息",
@@ -2022,7 +2117,7 @@ function editScriptMeta(rec) {
         await loadScripts();
         await selectScript(rec.id);
       });
-      $("#meta-name", mask).focus();
+      $("#meta-desc", mask).focus();
     },
   });
 }
