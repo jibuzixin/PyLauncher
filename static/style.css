@@ -1376,3 +1376,19 @@ select.f-input { appearance: none; padding-right: 30px;
   border-radius: 0 0 0 4px;
 }
 @keyframes delCountdown { to { width: 0; } }
+/* 预设删除：先变红警告态 + 弹窗再次确认 */
+.preset-chip.confirm-del {
+  border-color: var(--danger) !important;
+  background: var(--danger-bg, #fef2f2) !important;
+  color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+}
+.preset-chip.confirm-del .name { color: var(--danger); }
+.preset-chip.confirm-del .x { color: var(--danger); }
+.pm-row.confirm-del {
+  border-color: var(--danger) !important;
+  background: var(--danger-bg, #fef2f2) !important;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+}
+.pm-row.confirm-del .pm-name { color: var(--danger); }
+.pm-row.confirm-del .pm-op.del { background: var(--danger); color: #fff; }

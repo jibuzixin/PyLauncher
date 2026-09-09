@@ -1383,6 +1383,22 @@ select.f-input { appearance: none; padding-right: 30px;
   border-radius: 0 0 0 4px;
 }
 @keyframes delCountdown { to { width: 0; } }
+/* 预设删除：先变红警告态 + 弹窗再次确认 */
+.preset-chip.confirm-del {
+  border-color: var(--danger) !important;
+  background: var(--danger-bg, #fef2f2) !important;
+  color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+}
+.preset-chip.confirm-del .name { color: var(--danger); }
+.preset-chip.confirm-del .x { color: var(--danger); }
+.pm-row.confirm-del {
+  border-color: var(--danger) !important;
+  background: var(--danger-bg, #fef2f2) !important;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+}
+.pm-row.confirm-del .pm-name { color: var(--danger); }
+.pm-row.confirm-del .pm-op.del { background: var(--danger); color: #fff; }
 
 </style>
 </head>
@@ -1704,17 +1720,28 @@ $("#modal-close").addEventListener("click", closeModal);
 $("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
 
 /** 删除等危险操作的二次确认弹窗 */
-function confirmModal({ title = "确认操作", message, confirmText = "删除", onConfirm } = {}) {
+function confirmModal({ title = "确认操作", message, confirmText = "删除", onConfirm, onCancel } = {}) {
+  const mask = $("#modal");
+  // 清理上一次挂载的遮罩监听，避免回调残留
+  if (mask._confirmCleanup) { try { mask._confirmCleanup(); } catch {} mask._confirmCleanup = null; }
+  const handleMask = (e) => {
+    if (e.target.id === "modal") {
+      closeModal();
+      if (onCancel) onCancel();
+    }
+  };
   openModal({
     title,
     bodyHTML: `<div class="result-tip err" style="margin-bottom:0">${escapeHtml(message)}</div>`,
     footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn danger primary" id="confirm-ok">${confirmText}</button>`,
     onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      mask._confirmCleanup = () => mask.removeEventListener("click", handleMask);
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", () => { closeModal(); if (onCancel) onCancel(); }));
       $("#confirm-ok", mask).addEventListener("click", async () => {
         closeModal();
         try { await onConfirm(); } catch (e) { toast(e.message, true); }
       });
+      mask.addEventListener("click", handleMask);
     },
   });
 }
@@ -2362,17 +2389,21 @@ function makePresetChip(p) {
   const x = document.createElement("span");
   x.className = "x";
   x.textContent = "✕";
-  x.title = "删除预设";
+  x.title = "删除预设（再次点击确认）";
   x.onclick = async (e) => {
     e.stopPropagation();
+    if (chip.classList.contains("confirm-del")) return; // 弹窗期间防重复
+    chip.classList.add("confirm-del");
     confirmModal({
       title: "删除预设",
-      message: `确定删除预设「${p.name}」吗？`,
+      message: `再次点击「删除」即可完成删除预设「${p.name}」`,
+      confirmText: "删除",
       onConfirm: async () => {
         await api(`/api/presets/${p.id}`, { method: "DELETE" });
         toast("预设已删除");
         reloadDetail();
       },
+      onCancel: () => chip.classList.remove("confirm-del"),
     });
   };
   chip.appendChild(x);
@@ -2458,17 +2489,21 @@ function makeManagerRow(mask, p) {
   const del = document.createElement("button");
   del.className = "pm-op del";
   del.textContent = "✕";
-  del.title = "删除预设";
+  del.title = "删除预设（再次点击确认）";
   del.onclick = () => {
+    if (row.classList.contains("confirm-del")) return; // 弹窗期间防重复
+    row.classList.add("confirm-del");
     confirmModal({
       title: "删除预设",
-      message: `确定删除预设「${p.name}」吗？`,
+      message: `再次点击「删除」即可完成删除预设「${p.name}」`,
+      confirmText: "删除",
       onConfirm: async () => {
         await api(`/api/presets/${p.id}`, { method: "DELETE" });
         toast("预设已删除");
         await reloadDetail();
         renderPresetManager(mask, (state.script && state.script.presets) || []);
       },
+      onCancel: () => row.classList.remove("confirm-del"),
     });
   };
   row.append(name, pin, up, down, del);
