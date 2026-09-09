@@ -947,13 +947,11 @@ async function saveAsPreset() {
       <div class="m-field">
         <div class="m-label">已有预设 · 点击标签两次覆盖</div>
         <div class="preset-overwrite-chips" id="preset-overwrite-chips"></div>
-        <div class="preset-overwrite-tip" id="preset-overwrite-tip" hidden></div>
       </div>`,
     footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="preset-save">保存为新预设</button>`,
     onMount: (mask) => {
       $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
       const chips = $("#preset-overwrite-chips", mask);
-      const tip = $("#preset-overwrite-tip", mask);
       let pending = null; // 第一次点击待覆盖的预设名
       for (const p of presets) {
         const chip = document.createElement("span");
@@ -971,8 +969,6 @@ async function saveAsPreset() {
           pending = p.name;
           $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
           chip.classList.add("cover-target");
-          tip.hidden = false;
-          tip.textContent = `再次点击「${p.name}」即可完成覆盖`;
           toast(`再次点击「${p.name}」即可完成覆盖该预设`, "warn");
         };
         chips.appendChild(chip);
