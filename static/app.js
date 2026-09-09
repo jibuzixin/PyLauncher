@@ -1752,6 +1752,7 @@ function renderHistory(list) {
       clearTimeout(armTimer);
       api(`/api/executions/${h.id}`, { method: "DELETE" })
         .then(() => {
+          toast("已删除该执行记录");
           refreshHistory();
           if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
           if (state.detailExec && state.detailExec.id === h.id) closeHistoryDetail(true);
