@@ -2346,10 +2346,9 @@ async function initEnv() {
 /** 预设展示分组：固定项排最前（不限个数），非固定按最近使用补足到 MAX_SHOWN 个，其余折叠 */
 const PRESET_MAX_SHOWN = 6;
 function presetDisplayGroups(all) {
+  // 尊重后端 sort_order 顺序（固定项在前，其余按添加/手动排序），不再自行排序
   const pinned = all.filter((p) => p.pinned);
-  const unpinned = all
-    .filter((p) => !p.pinned)
-    .sort((a, b) => String(a.created_at || "").localeCompare(String(b.created_at || "")));
+  const unpinned = all.filter((p) => !p.pinned);
   const shown = unpinned.slice(0, Math.max(0, PRESET_MAX_SHOWN - pinned.length));
   const rest = unpinned.slice(shown.length);
   return { pinned, shown, rest };
@@ -2442,7 +2441,7 @@ function openPresetsModal(presets) {
     title: `全部预设 · ${presets.length} 个`,
     bodyHTML: `
       <div class="preset-manage" id="preset-manage"></div>
-      <div class="pm-tip">点击名称应用 · 📌 固定后始终排最前 · ↑↓ 调整同组顺序 · 删除需二次确认</div>`,
+      <div class="pm-tip">点击名称应用 · 📌 固定后始终排最前 · ↑↓ 手动排序 · 删除需二次确认</div>`,
     footHTML: `<button class="btn ghost" data-close>关闭</button>`,
     onMount: (mask) => {
       $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
@@ -2454,20 +2453,9 @@ function openPresetsModal(presets) {
 function renderPresetManager(mask, presets) {
   const wrap = $("#preset-manage", mask);
   wrap.innerHTML = "";
+  // 直接显示全部（固定在前，其余按当前顺序），不划分分组
   const { pinned, shown, rest } = presetDisplayGroups(presets || []);
-  const groups = [
-    { title: "📌 已固定", items: pinned },
-    { title: "最近使用", items: shown },
-    { title: "全部", items: rest },
-  ];
-  for (const g of groups) {
-    if (g.items.length === 0) continue;
-    const head = document.createElement("div");
-    head.className = "pm-group";
-    head.textContent = `${g.title}（${g.items.length}）`;
-    wrap.appendChild(head);
-    for (const p of g.items) wrap.appendChild(makeManagerRow(mask, p));
-  }
+  for (const p of [...pinned, ...shown, ...rest]) wrap.appendChild(makeManagerRow(mask, p));
 }
 
 function makeManagerRow(mask, p) {
