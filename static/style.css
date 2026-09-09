@@ -1362,40 +1362,40 @@ select.f-input { appearance: none; padding-right: 30px;
 /* 历史单条删除：双态确认（点击两次，无弹窗） */
 .hist-item { position: relative; }
 .hist-item.confirm-del {
-  border-color: var(--danger);
-  background: var(--danger-bg, #fef2f2);
-  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.14);
+  border-color: var(--warning, #d97706);
+  background: rgba(254, 243, 199, 0.6);
+  box-shadow: 0 0 0 3px rgba(217, 119, 6, 0.14);
   transform: none;
 }
-.hist-item.confirm-del .hi-name { color: var(--danger); }
+.hist-item.confirm-del .hi-name { color: var(--warning, #b45309); }
 .hist-item.confirm-del .hi-del { display: inline-flex; }
 .hist-item .hi-del.armed {
   width: auto; padding: 0 8px; font-size: 10.5px;
-  background: var(--danger); color: #fff;
+  background: var(--warning, #d97706); color: #fff;
   animation: delPulse 1s ease-in-out infinite;
 }
 @keyframes delPulse { 50% { opacity: 0.72; } }
-/* 3 秒红色倒计时进度条（从满到空） */
+/* 3 秒黄色倒计时进度条（从满到空） */
 .hist-item.confirm-del::after {
   content: ""; position: absolute; left: 0; bottom: 0; height: 2px;
-  background: linear-gradient(90deg, var(--danger), rgba(220, 38, 38, 0.35));
+  background: linear-gradient(90deg, var(--warning, #d97706), rgba(217, 119, 6, 0.3));
   animation: delCountdown 3s linear forwards;
   border-radius: 0 0 0 4px;
 }
 @keyframes delCountdown { to { width: 0; } }
-/* 预设删除：先变红警告态 + 弹窗再次确认 */
+/* 预设删除：先变黄警告态（谨慎操作）+ 再次点击确认 */
 .preset-chip.confirm-del {
-  border-color: var(--danger) !important;
-  background: var(--danger-bg, #fef2f2) !important;
-  color: var(--danger);
-  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.16);
+  border-color: var(--warning, #d97706) !important;
+  background: rgba(254, 243, 199, 0.75) !important;
+  color: var(--warning, #b45309);
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.18);
 }
-.preset-chip.confirm-del .name { color: var(--danger); }
-.preset-chip.confirm-del .x { color: var(--danger); }
+.preset-chip.confirm-del .name { color: var(--warning, #b45309); }
+.preset-chip.confirm-del .x { color: var(--warning, #b45309); }
 .pm-row.confirm-del {
-  border-color: var(--danger) !important;
-  background: var(--danger-bg, #fef2f2) !important;
-  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.14);
+  border-color: var(--warning, #d97706) !important;
+  background: rgba(254, 243, 199, 0.75) !important;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.16);
 }
-.pm-row.confirm-del .pm-name { color: var(--danger); }
-.pm-row.confirm-del .pm-op.del { background: var(--danger); color: #fff; }
+.pm-row.confirm-del .pm-name { color: var(--warning, #b45309); }
+.pm-row.confirm-del .pm-op.del { background: var(--warning, #d97706); color: #fff; }
