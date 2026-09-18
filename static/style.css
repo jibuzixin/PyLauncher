@@ -442,9 +442,15 @@ svg { flex-shrink: 0; }
   font-size: 11.5px;
   color: var(--muted);
 }
-/* 无标题弹窗：head 只留关闭按钮，紧凑贴顶 */
-#modal.no-title .modal-head { padding: 10px 24px 10px; border-bottom: none; }
-#modal.no-title .modal-title { display: none; }
+/* 无标题弹窗：隐藏 head，tab 行与关闭按钮同排顶格 */
+#modal.no-title .modal-head { display: none; }
+#modal.no-title .modal-body { padding-top: 14px; }
+.venv-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; margin-bottom: 14px;
+}
+.venv-top .venv-tabs { flex: 1; margin-bottom: 0; }
+.venv-top .modal-close { position: static; }
 .venv-tabs {
   position: relative;
   display: flex; gap: 2px;

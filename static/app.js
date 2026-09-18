@@ -725,10 +725,15 @@ function openVenvSettings() {
     title: "",
     hideTitle: true,
     bodyHTML: `
-      <div class="venv-tabs">
-        <span class="venv-pill" id="venv-pill"></span>
-        <button class="venv-tab active" data-tab="select">选择环境</button>
-        <button class="venv-tab" data-tab="manual">手动输入</button>
+      <div class="venv-top">
+        <div class="venv-tabs">
+          <span class="venv-pill" id="venv-pill"></span>
+          <button class="venv-tab active" data-tab="select">选择环境</button>
+          <button class="venv-tab" data-tab="manual">手动输入</button>
+        </div>
+        <button class="modal-close" data-close title="关闭">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
       </div>
       <div class="venv-sub">选择脚本运行所用的 Python 虚拟环境</div>
       <div class="venv-panel" id="venv-panel-select">
@@ -769,6 +774,7 @@ function openVenvSettings() {
         if (which === "manual") input.focus();
       }
       tabSel.forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
       requestAnimationFrame(moveVenvPill);
 
       function fillOptions(data) {
