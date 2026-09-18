@@ -443,22 +443,45 @@ svg { flex-shrink: 0; }
   max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ===== 更换虚拟环境弹窗 ===== */
-.venv-manual-row { display: flex; gap: 8px; margin-top: 10px; }
-.venv-scan { display: inline-flex; align-items: center; gap: 5px; }
+/* ===== 更换虚拟环境弹窗（Tab 双态） ===== */
+.venv-tabs {
+  display: flex; gap: 3px;
+  padding: 3px; margin-bottom: 12px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 9px;
+}
+.venv-tab {
+  flex: 1; height: 30px;
+  border: none; background: transparent;
+  border-radius: 7px;
+  font-size: 12.5px; color: var(--muted);
+  cursor: pointer; transition: all 0.18s;
+}
+.venv-tab:hover { color: var(--text); }
+.venv-tab.active {
+  background: #fff; color: var(--text); font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+.venv-panel { display: flex; gap: 8px; align-items: center; }
+.venv-sel { flex: 1; height: 36px; font-size: 13px; padding: 0 10px; }
+.venv-scan {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 36px; padding: 0 12px;
+  font-size: 12.5px; flex-shrink: 0;
+}
 .venv-scan svg { width: 13px; height: 13px; }
-.venv-manual-row .venv-manual-input { flex: 1; height: 34px; font-family: var(--mono); font-size: 12px; padding: 0 10px; }
-.venv-sel { height: 36px; width: 100%; font-size: 12.5px; padding: 0 10px; }
+.venv-manual-input { width: 100%; height: 36px; font-family: var(--mono); font-size: 12.5px; padding: 0 10px; }
 .venv-preview {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 7px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted);
-  background: rgba(0,0,0,0.03);
-  border: 1px solid rgba(0,0,0,0.06);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.07);
   word-break: break-all;
+  line-height: 1.5;
 }
 .venv-preview.manual { color: var(--text); background: rgba(255,255,255,0.6); border-color: rgba(0,0,0,0.12); }
 
@@ -2287,16 +2310,6 @@ function renderEnvBar(env) {
     vels.push(mkDot("warn"), mkText("未初始化虚拟环境", "warn"));
   }
   if (!env.has_inline_meta) {
-    // 路径：默认/自定义一律显示；无环境时显示占位说明
-    const pathEl = document.createElement("span");
-    pathEl.className = "venv-path";
-    if (env.venv_python) {
-      pathEl.textContent = env.venv_python;
-      pathEl.title = env.venv_python;
-    } else {
-      pathEl.textContent = "（无虚拟环境路径）";
-    }
-    vels.push(pathEl);
     // 更换：纯图标按钮（无胶囊边框）
     const chg = document.createElement("button");
     chg.className = "venv-change";
@@ -2355,7 +2368,7 @@ function renderEnvBar(env) {
 
 let _venvScanned = null; // 扫描缓存：{venvs:[...]}，避免每次打开都重复扫描
 
-/** 弹出「更换虚拟环境」设置窗：下拉（默认 + 扫描到的环境）+ 扫描 + 手动输入 */
+/** 弹出「更换虚拟环境」设置窗：选择 / 手动输入 双 Tab，底部常显所选路径 */
 function openVenvSettings() {
   const rec = state.script;
   if (!rec) return;
@@ -2364,17 +2377,19 @@ function openVenvSettings() {
   openModal({
     title: "更换虚拟环境",
     bodyHTML: `
-      <div class="m-field">
-        <div class="m-label">选择环境</div>
-        <select class="f-input venv-sel" id="venv-sel"></select>
+      <div class="venv-tabs">
+        <button class="venv-tab active" data-tab="select">选择环境</button>
+        <button class="venv-tab" data-tab="manual">手动输入</button>
       </div>
-      <div class="venv-manual-row">
-        <input class="f-input venv-manual-input" id="venv-manual-input"
-               placeholder="或手动输入虚拟环境路径 / python 可执行文件">
-        <button class="btn mini ghost venv-scan" id="venv-scan"
-                title="重新扫描本机已管理的虚拟环境">
+      <div class="venv-panel" id="venv-panel-select">
+        <select class="f-input venv-sel" id="venv-sel"></select>
+        <button class="btn mini ghost venv-scan" id="venv-scan" title="重新扫描本机已管理的虚拟环境">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>
         </button>
+      </div>
+      <div class="venv-panel" id="venv-panel-manual" style="display:none">
+        <input class="f-input venv-manual-input" id="venv-manual-input"
+               placeholder="输入虚拟环境路径或 python 可执行文件，例如 /opt/venv 或 /opt/venv/bin/python">
       </div>
       <div class="venv-preview" id="venv-preview"></div>
     `,
@@ -2384,6 +2399,18 @@ function openVenvSettings() {
       const input = $("#venv-manual-input", mask);
       const preview = $("#venv-preview", mask);
       const scanBtn = $("#venv-scan", mask);
+      const tabSel = $$(".venv-tab", mask);
+      const panelSelect = $("#venv-panel-select", mask);
+      const panelManual = $("#venv-panel-manual", mask);
+
+      function setTab(which) {
+        tabSel.forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
+        panelSelect.style.display = which === "select" ? "flex" : "none";
+        panelManual.style.display = which === "manual" ? "block" : "none";
+        updatePreview();
+        if (which === "manual") input.focus();
+      }
+      tabSel.forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
 
       function fillOptions(data) {
         const venvs = (data && data.venvs) || [];
@@ -2419,37 +2446,29 @@ function openVenvSettings() {
         sel.value = val;
       }
 
+      /** 底部预览：始终显示当前选择的虚拟环境路径 */
       function updatePreview() {
         const manual = input.value.trim();
         const chosen = manual || sel.value;
+        if (manual) {
+          preview.textContent = "将使用：" + manual;
+          preview.className = "venv-preview manual";
+          return;
+        }
         if (!chosen) {
-          preview.textContent = "";
+          preview.textContent = "当前：默认（脚本目录 .venv）" + (rec.env && rec.env.venv_python ? " · " + rec.env.venv_python : "");
           preview.className = "venv-preview";
           return;
         }
-        const opt = [...sel.options].find((o) => o.value === chosen && o.title);
-        preview.textContent = "路径：" + (manual ? chosen : (opt && opt.title ? opt.title : chosen));
-        preview.className = "venv-preview" + (manual ? " manual" : "");
+        const opt = [...sel.options].find((o) => o.value === chosen);
+        const py = opt && opt.title ? opt.title : chosen;
+        const isDefault = chosen === "";
+        preview.textContent = "当前：" + (opt ? opt.textContent : chosen) + (py && py !== chosen ? " · " + py : "");
+        preview.className = "venv-preview";
       }
 
-      // 手动输入时联动下拉
-      input.addEventListener("input", () => {
-        const manual = input.value.trim();
-        if (manual) {
-          const exists = [...sel.options].some((o) => o.value === manual);
-          if (!exists) {
-            const o = document.createElement("option");
-            o.value = manual;
-            o.textContent = "自定义：" + manual;
-            o.title = manual;
-            sel.appendChild(o);
-          }
-          sel.value = manual;
-        } else {
-          sel.value = cur;
-        }
-        updatePreview();
-      });
+      // 手动输入联动
+      input.addEventListener("input", updatePreview);
       sel.addEventListener("change", updatePreview);
 
       // 初始填充
@@ -2481,7 +2500,8 @@ function openVenvSettings() {
       $("#venv-cancel", mask).addEventListener("click", closeModal);
 
       $("#venv-save", mask).addEventListener("click", async () => {
-        const v = input.value.trim() || sel.value;
+        const manual = input.value.trim();
+        const v = manual || sel.value;
         try {
           await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { venv_path: v } });
           rec.venv_path = v;
@@ -2514,7 +2534,7 @@ function openVenvSettings() {
   });
 }
 
-/* ================= 预设 ================= *//* ================= 预设 ================= */
+/* ================= 预设 ================= *//* ================= 预设 ================= *//* ================= 预设 ================= */
 
 /** 预设展示分组：固定项排最前（不限个数），非固定按最近使用补足到 MAX_SHOWN 个，其余折叠 */
 const PRESET_MAX_SHOWN = 6;

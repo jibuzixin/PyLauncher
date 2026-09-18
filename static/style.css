@@ -436,22 +436,45 @@ svg { flex-shrink: 0; }
   max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ===== 更换虚拟环境弹窗 ===== */
-.venv-manual-row { display: flex; gap: 8px; margin-top: 10px; }
-.venv-scan { display: inline-flex; align-items: center; gap: 5px; }
+/* ===== 更换虚拟环境弹窗（Tab 双态） ===== */
+.venv-tabs {
+  display: flex; gap: 3px;
+  padding: 3px; margin-bottom: 12px;
+  background: rgba(0,0,0,0.05);
+  border-radius: 9px;
+}
+.venv-tab {
+  flex: 1; height: 30px;
+  border: none; background: transparent;
+  border-radius: 7px;
+  font-size: 12.5px; color: var(--muted);
+  cursor: pointer; transition: all 0.18s;
+}
+.venv-tab:hover { color: var(--text); }
+.venv-tab.active {
+  background: #fff; color: var(--text); font-weight: 600;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+}
+.venv-panel { display: flex; gap: 8px; align-items: center; }
+.venv-sel { flex: 1; height: 36px; font-size: 13px; padding: 0 10px; }
+.venv-scan {
+  display: inline-flex; align-items: center; gap: 5px;
+  height: 36px; padding: 0 12px;
+  font-size: 12.5px; flex-shrink: 0;
+}
 .venv-scan svg { width: 13px; height: 13px; }
-.venv-manual-row .venv-manual-input { flex: 1; height: 34px; font-family: var(--mono); font-size: 12px; padding: 0 10px; }
-.venv-sel { height: 36px; width: 100%; font-size: 12.5px; padding: 0 10px; }
+.venv-manual-input { width: 100%; height: 36px; font-family: var(--mono); font-size: 12.5px; padding: 0 10px; }
 .venv-preview {
-  margin-top: 10px;
-  padding: 8px 10px;
-  border-radius: 6px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  border-radius: 7px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--muted);
-  background: rgba(0,0,0,0.03);
-  border: 1px solid rgba(0,0,0,0.06);
+  background: rgba(0,0,0,0.04);
+  border: 1px solid rgba(0,0,0,0.07);
   word-break: break-all;
+  line-height: 1.5;
 }
 .venv-preview.manual { color: var(--text); background: rgba(255,255,255,0.6); border-color: rgba(0,0,0,0.12); }
 
