@@ -59,6 +59,7 @@ class UpdateScriptReq(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     deps_path: Optional[str] = None
+    venv_path: Optional[str] = None
     tags: Optional[list[str]] = None
 
 
@@ -287,30 +288,33 @@ def _shq(s: str) -> str:
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def _build_command_text(script_path: str, arg_list: list[str]) -> str:
+def _build_command_text(script_path: str, arg_list: list[str], venv_path: str = "") -> str:
     """生成可直接复制执行的命令文本（含 shell 转义），无法执行时返回带说明的提示。"""
-    cmd, err = executor.build_command_ex(script_path, arg_list)
+    cmd, err = executor.build_command_ex(script_path, arg_list, venv_path=venv_path)
     if err:
         return "# " + err
     return " ".join(_shq(c) for c in cmd)
 
 
-async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emit: Callable) -> dict:
-    """后台执行任务，流式输出，结束后写库。"""
+async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emit: Callable,
+                         venv_path: str = "") -> dict:
+    """后台执行任务，流式输出，结束后写库。venv_path 指定自定义虚拟环境。"""
     await emit("info", "· 环境检查中…\n")
-    env = executor.inspect_env(script_path)
+    env = executor.inspect_env(script_path, venv_path=venv_path)
+    if env.get("venv_source") == "custom" and not env.get("venv_broken"):
+        await emit("info", "· 使用指定虚拟环境: " + (env.get("venv_python") or "") + "\n")
     if env.get("has_inline_meta"):
         await emit("info", "· PEP 723 内联脚本，uv 自动管理依赖\n")
     elif not env["has_venv"]:
         await emit("info", "⚠ 未检测到虚拟环境，请先点击「初始化环境」\n")
     # 预检：无 uv 且无 .venv 时直接报错，不启动进程
-    plan = executor.execution_plan(script_path)
+    plan = executor.execution_plan(script_path, venv_path)
     if plan["mode"] is None:
         await emit("error", f"✗ {plan['error']}\n")
         await emit("info", "· 执行结束：failed（退出码 -1）\n")
         db.finish_execution(exec_id, "failed", -1, [plan["error"]])
         return {"ok": False, "exit_code": -1, "terminated": False, "status": "failed", "message": plan["error"]}
-    await emit("info", "$ " + _build_command_text(script_path, arg_list) + "\n")
+    await emit("info", "$ " + _build_command_text(script_path, arg_list, venv_path) + "\n")
 
     result = await executor.run_script(exec_id, script_path, arg_list, emit)
     terminated = result.get("terminated", False)
@@ -363,10 +367,11 @@ def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
             db.set_schedule_runtime(schedule_id, last_status=f"cron 无效: {e}")
 
 
-async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str]) -> None:
+async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str],
+                    venv_path: str = "") -> None:
     """定时触发的一次执行：走标准 session 流程并落库，结束后回写 last_status。"""
     async def coro(emit: Callable) -> dict:
-        return await _execute_task(exec_id, script_path, arg_list, emit)
+        return await _execute_task(exec_id, script_path, arg_list, emit, venv_path)
     result = await _run_in_session(exec_id, coro)
     status = result.get("status", "unknown")
     # 已达执行上限自动停用时，保留上限提示而不覆盖为 success/failed
@@ -397,7 +402,7 @@ async def _fire_schedule(sched: dict, base: datetime) -> None:
     exec_row = db.add_execution(rec["id"], args, None)
     exec_id = exec_row["id"]
     _new_session(exec_id)
-    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list))
+    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list, rec.get("venv_path") or ""))
     db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
 
     # 执行次数计数：达到上限后自动停用，等用户重新启用时重置
@@ -674,7 +679,7 @@ async def upload_script(file: UploadFile = File(...), name: Optional[str] = Form
 
 @app.put("/api/scripts/{script_id}")
 async def update_script(script_id: int, req: UpdateScriptReq):
-    rec = db.update_script(script_id, req.name, req.description, req.deps_path, req.tags)
+    rec = db.update_script(script_id, req.name, req.description, req.deps_path, req.venv_path, req.tags)
     if not rec:
         return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
     return {"ok": True, "script": rec}
@@ -712,7 +717,7 @@ async def script_detail(script_id: int):
     for p in presets:
         p["args"] = json.loads(p.get("args") or "{}")
     rec["presets"] = presets
-    rec["env"] = executor.inspect_env(rec["path"], rec.get("deps_path") or "")
+    rec["env"] = executor.inspect_env(rec["path"], rec.get("deps_path") or "", rec.get("venv_path") or "")
     return rec
 
 
@@ -720,6 +725,20 @@ async def script_detail(script_id: int):
 async def delete_script(script_id: int):
     db.delete_script(script_id)
     return {"ok": True}
+
+
+# ---------- 环境管理：检测管理器 / 扫描已有虚拟环境 ----------
+
+@app.get("/api/env/managers")
+async def env_managers():
+    """检测本机环境管理工具（uv / conda / mamba / python）。"""
+    return executor.list_env_managers()
+
+
+@app.get("/api/env/venvs")
+async def env_venvs():
+    """扫描已有虚拟环境（conda env list + 常见 venv 约定目录），不做全盘扫描。"""
+    return {"venvs": executor.scan_venvs()}
 
 
 # ---------- folders ----------
@@ -796,7 +815,7 @@ async def script_env(script_id: int):
     rec = db.get_script(script_id)
     if not rec:
         return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
-    return executor.inspect_env(rec["path"])
+    return executor.inspect_env(rec["path"], venv_path=rec.get("venv_path") or "")
 
 
 class EnvInitReq(BaseModel):
@@ -812,7 +831,10 @@ async def init_script_env(script_id: int, req: EnvInitReq = None):
     session_id = script_id + 10_000_000
     deps_path = (req.deps_path if req and req.deps_path else "") or (rec.get("deps_path") or "")
     _new_session(session_id)
-    asyncio.create_task(_run_in_session(session_id, lambda emit: executor.init_env(rec["path"], emit, deps_path)))
+    asyncio.create_task(_run_in_session(
+        session_id,
+        lambda emit: executor.init_env(rec["path"], emit, deps_path, rec.get("venv_path") or ""),
+    ))
     return {"ok": True, "session_id": session_id}
 
 
@@ -825,14 +847,14 @@ async def execute(req: ExecuteReq):
         return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
     schema = json.loads(rec.get("args_schema") or "[]")
     arg_list = build_arg_list(schema, req.args)
-    command = _build_command_text(rec["path"], arg_list)
+    command = _build_command_text(rec["path"], arg_list, rec.get("venv_path") or "")
     exec_row = db.add_execution(req.script_id, req.args, req.preset_id)
     if req.preset_id:
         db.touch_preset_used(req.preset_id)
     exec_id = exec_row["id"]
     _new_session(exec_id)
     asyncio.create_task(
-        _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit))
+        _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit, rec.get("venv_path") or ""))
     )
     return {"ok": True, "execution_id": exec_id, "command": command}
 
@@ -845,7 +867,7 @@ async def script_command(req: CommandReq):
         return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
     schema = json.loads(rec.get("args_schema") or "[]")
     arg_list = build_arg_list(schema, req.args)
-    cmd, err = executor.build_command_ex(rec["path"], arg_list)
+    cmd, err = executor.build_command_ex(rec["path"], arg_list, venv_path=rec.get("venv_path") or "")
     command = "" if err else " ".join(_shq(c) for c in cmd)
     return {"ok": True, "command": command, "error": err}
 

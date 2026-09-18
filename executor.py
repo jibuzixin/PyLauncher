@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import platform
 import shutil
@@ -53,6 +54,94 @@ def uv_install_hint() -> dict:
         "linux": UV_INSTALL_HINTS["linux"],
         "platform": platform.system().lower(),
     }
+
+
+def _venv_python_for(venv_dir: Path) -> Path:
+    """返回 venv 根目录下的 python 可执行文件路径（win / posix 分支）。"""
+    if os.name == "nt":
+        return venv_dir / "Scripts" / "python.exe"
+    return venv_dir / "bin" / "python"
+
+
+def resolve_venv_python(venv_path: str) -> Optional[str]:
+    """解析用户指定的虚拟环境 python：接受 venv 根目录或 python 可执行文件路径。"""
+    if not venv_path:
+        return None
+    p = Path(venv_path).expanduser()
+    if not p.exists():
+        return None
+    if p.is_file():
+        return str(p)
+    py = _venv_python_for(p)
+    return str(py) if py.exists() else None
+
+
+def list_env_managers() -> dict[str, Any]:
+    """检测本机环境管理工具：uv / conda / mamba / 系统 python。"""
+    def _ver(cmd: list[str]) -> str:
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            return (out.stdout or out.stderr).strip().splitlines()[0] if (out.stdout or out.stderr) else ""
+        except Exception:  # noqa: BLE001
+            return ""
+    managers = []
+    for key, cmd in [
+        ("uv", ["uv", "--version"]),
+        ("conda", ["conda", "--version"]),
+        ("mamba", ["mamba", "--version"]),
+    ]:
+        if shutil.which(key):
+            v = _ver(cmd)
+            managers.append({"name": key, "ok": True, "version": v or "已安装"})
+    py = shutil.which("python3") or shutil.which("python")
+    if py:
+        import sysconfig
+        managers.append({"name": "python", "ok": True,
+                         "version": _ver([py, "--version"]).replace("Python ", "") or "", "path": py})
+    return {"managers": managers}
+
+
+def scan_venvs() -> list[dict[str, Any]]:
+    """扫描已有虚拟环境（只扫"被管理的"，不做全盘扫描）。
+
+    来源：conda/mamba 环境列表 + 常见 venv 约定目录（~/.virtualenvs、~/.venvs）。
+    返回 [{name, path, python, type}]，python 存在性已校验。
+    """
+    out: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def _add(name: str, root: Path, kind: str) -> None:
+        root = root.expanduser()
+        py = _venv_python_for(root)
+        if py.exists() and str(root) not in seen:
+            seen.add(str(root))
+            out.append({"name": name, "path": str(root), "python": str(py), "type": kind})
+
+    # 1. conda / mamba env list --json
+    for mgr in ("conda", "mamba"):
+        if not shutil.which(mgr):
+            continue
+        try:
+            r = subprocess.run([mgr, "env", "list", "--json"], capture_output=True, text=True, timeout=20)
+            data = json.loads(r.stdout or "{}")
+            for p in data.get("envs", []):
+                _add(Path(p).name, Path(p), "conda")
+            break
+        except Exception:  # noqa: BLE001
+            pass
+
+    # 2. 常见 venv 约定目录（定点扫描）
+    for base in (Path.home() / ".virtualenvs", Path.home() / ".venvs"):
+        if not base.is_dir():
+            continue
+        try:
+            for child in sorted(base.iterdir()):
+                if child.is_dir() and not child.name.startswith("."):
+                    _add(child.name, child, "venv")
+        except Exception:  # noqa: BLE001
+            pass
+
+    return out
 
 
 def _resolve_deps(deps_path: str, project_dir: Path) -> tuple[Optional[str], Optional[Path]]:
@@ -111,13 +200,21 @@ def pep723_metadata(script_path: str) -> Optional[dict]:
         return None
 
 
-def execution_plan(script_path: str) -> dict[str, Any]:
-    """决定脚本如何执行：uv / 项目 .venv / 无法执行。
+def execution_plan(script_path: str, venv_path: str = "") -> dict[str, Any]:
+    """决定脚本如何执行：自定义 venv / uv / 项目 .venv / 无法执行。
 
     理念：脚本目录下只要有虚拟环境（.venv，原生 python venv 或 uv 创建的均可）
-    或有 uv，就可以运行。返回 {"mode": "uv"|"venv"|None, "venv_python": str|None, "error": str|None}。
+    或有 uv，就可以运行；用户也可为脚本显式指定任意位置的虚拟环境（venv_path）。
+    返回 {"mode": "uv"|"venv"|None, "venv_python": str|None, "error": str|None}。
     """
     script = Path(script_path)
+    # 显式指定的虚拟环境优先（用户明确选择，覆盖一切默认逻辑）
+    if venv_path:
+        vpy = resolve_venv_python(venv_path)
+        if not vpy:
+            return {"mode": None, "venv_python": None,
+                    "error": f"指定的虚拟环境不可用：{venv_path}（未找到可执行的 python）"}
+        return {"mode": "venv", "venv_python": vpy, "error": None}
     uv_ok, _ = uv_available()
     has_meta = pep723_metadata(script_path) is not None
     venv_py = _venv_python(script.parent)
@@ -134,18 +231,31 @@ def execution_plan(script_path: str) -> dict[str, Any]:
             "error": "未检测到 uv，且脚本目录下没有 .venv。请安装 uv，或在页面点击「初始化环境」用系统 Python 创建虚拟环境"}
 
 
-def inspect_env(script_path: str, deps_path: str = "") -> dict[str, Any]:
-    """检查脚本所在目录的环境状态。deps_path 为可选的自定义依赖文件。"""
+def inspect_env(script_path: str, deps_path: str = "", venv_path: str = "") -> dict[str, Any]:
+    """检查脚本所在目录的环境状态。deps_path 为可选的自定义依赖文件；venv_path 为可选的自定义虚拟环境。"""
     script = Path(script_path)
     project_dir = script.parent
-    venv_py = _venv_python(project_dir)
-    has_venv = venv_py.exists()
     kind, dep_file = _resolve_deps(deps_path, project_dir)
     meta = pep723_metadata(script_path)
     deps = meta.get("dependencies") or [] if meta else []
     uv_ok, uv_ver = uv_available()
+    # 自定义虚拟环境优先
+    if venv_path:
+        vpy = resolve_venv_python(venv_path)
+        has_venv = vpy is not None
+        venv_py = vpy or _venv_python(project_dir)
+        venv_source = "custom"
+        venv_broken = not has_venv
+    else:
+        venv_py = _venv_python(project_dir)
+        has_venv = venv_py.exists()
+        venv_source = "project"
+        venv_broken = False
     return {
         "project_dir": str(project_dir),
+        "venv_path": venv_path,
+        "venv_source": venv_source,
+        "venv_broken": venv_broken,
         "has_venv": has_venv,
         "venv_python": str(venv_py) if has_venv else None,
         "deps_path": deps_path,
@@ -290,16 +400,25 @@ async def _stream_proc_pty(
 
 # ---------------- venv 初始化 ----------------
 
-async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[None]], deps_path: str = "") -> dict[str, Any]:
-    """初始化脚本所在目录的 venv 并安装依赖。deps_path 为空时自动找目录下 requirements.txt。"""
+async def init_env(script_path: str, on_line: Callable[[str, str], Awaitable[None]], deps_path: str = "",
+                   venv_path: str = "") -> dict[str, Any]:
+    """初始化虚拟环境并安装依赖。deps_path 为空时自动找目录下 requirements.txt。
+
+    venv_path 指定时：使用该虚拟环境（存在则不创建，只装依赖）；未指定时在脚本目录创建 .venv。
+    """
     script = Path(script_path)
     project_dir = script.parent
     project_dir.mkdir(parents=True, exist_ok=True)
     venv_py = _venv_python(project_dir)
     steps: list[str] = []
+    custom_venv = bool(venv_path)
+    if custom_venv:
+        venv_py = Path(resolve_venv_python(venv_path) or "")
 
     # 1. 创建 venv（有 uv 用 uv venv；无 uv 用系统 Python 创建，兼容原生虚拟环境）
-    if not venv_py.exists():
+    if custom_venv:
+        await on_line("info", f"· 使用指定虚拟环境: {venv_py}\n")
+    elif not venv_py.exists():
         uv_ok, _ = uv_available()
         if uv_ok:
             await on_line("info", f"→ 创建虚拟环境: uv venv --directory {project_dir}\n")
@@ -373,10 +492,11 @@ def build_command(script_path: str, args: list[str], extra_args: list[str] | Non
     return cmd
 
 
-def build_command_ex(script_path: str, args: list[str], extra_args: list[str] | None = None) -> tuple[list[str], Optional[str]]:
-    """同 build_command，但返回 (cmd, error)，error 非空表示无法执行。"""
+def build_command_ex(script_path: str, args: list[str], extra_args: list[str] | None = None,
+                    venv_path: str = "") -> tuple[list[str], Optional[str]]:
+    """同 build_command，但返回 (cmd, error)，error 非空表示无法执行。venv_path 指定自定义虚拟环境。"""
     script = Path(script_path)
-    plan = execution_plan(script_path)
+    plan = execution_plan(script_path, venv_path)
     if plan["mode"] is None:
         return [], plan["error"]
     if plan["mode"] == "uv" and pep723_metadata(script_path):

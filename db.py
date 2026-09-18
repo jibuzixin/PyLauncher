@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS scripts (
     auto_saved_args TEXT NOT NULL DEFAULT '{}',
     description TEXT NOT NULL DEFAULT '',
     deps_path TEXT NOT NULL DEFAULT '',
+    venv_path TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
     has_inline_meta INTEGER NOT NULL DEFAULT 0,
     folder_id INTEGER REFERENCES folders(id) ON DELETE SET NULL,
@@ -117,6 +118,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE schedules ADD COLUMN max_runs INTEGER")
     if "run_count" not in scols:
         conn.execute("ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0")
+    # scripts 表迁移：自定义虚拟环境（venv_path，空=默认脚本目录 .venv）
+    scols = {r[1] for r in conn.execute("PRAGMA table_info(scripts)")}
+    if "venv_path" not in scols:
+        conn.execute("ALTER TABLE scripts ADD COLUMN venv_path TEXT NOT NULL DEFAULT ''")
     # presets 表迁移：固定 / 排序 / 最近使用
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(presets)")}
     if "pinned" not in pcols:
@@ -191,8 +196,9 @@ def add_script(name: str, path: str, args_schema: list[dict], description: str =
 
 
 def update_script(script_id: int, name: str | None = None, description: str | None = None,
-                  deps_path: str | None = None, tags: list[str] | None = None) -> Optional[dict]:
-    """更新脚本名称/描述/依赖路径/标签，不传的字段保持不变。"""
+                  deps_path: str | None = None, venv_path: str | None = None,
+                  tags: list[str] | None = None) -> Optional[dict]:
+    """更新脚本名称/描述/依赖路径/虚拟环境/标签，不传的字段保持不变。"""
     sets: list[str] = []
     params: list = []
     if name is not None:
@@ -204,6 +210,9 @@ def update_script(script_id: int, name: str | None = None, description: str | No
     if deps_path is not None:
         sets.append("deps_path=?")
         params.append(deps_path)
+    if venv_path is not None:
+        sets.append("venv_path=?")
+        params.append(venv_path)
     if tags is not None:
         sets.append("tags=?")
         params.append(_dumps([str(t).strip() for t in tags if str(t).strip()]))

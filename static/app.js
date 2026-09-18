@@ -396,6 +396,7 @@ async function selectScript(id) {
     $("#form-content").hidden = false;
     renderScriptHead(rec);
     renderEnvBar(rec.env);
+    renderVenvPicker(rec);
     renderPresets(rec.presets);
     renderFields(rec.args_schema, rec.auto_saved_args);
     setRunning(false);
@@ -626,7 +627,16 @@ function renderEnvBar(env) {
   }
 
   const venvSpan = document.createElement("span");
-  if (env.has_inline_meta) {
+  if (env.venv_source === "custom") {
+    // 用户显式指定的虚拟环境
+    if (env.venv_broken) {
+      venvSpan.innerHTML = '<span class="dot err"></span><span class="env-text err">指定环境不可用</span>';
+      venvSpan.title = "所选虚拟环境未找到可执行的 python，请重新选择或手动输入";
+    } else {
+      venvSpan.innerHTML = '<span class="dot ok"></span><span class="env-text ok">使用指定环境</span>';
+      venvSpan.title = env.venv_python || env.venv_path || "";
+    }
+  } else if (env.has_inline_meta) {
     const depsN = (env.inline_deps || []).length;
     venvSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">PEP 723 内联脚本${depsN ? " · 内联依赖 " + depsN + " 个" : ""}</span>`;
     venvSpan.title = "uv 自动创建临时环境并安装内联依赖，无需初始化";
@@ -743,6 +753,153 @@ async function initEnv() {
     await connectWs(`/ws/env/${res.session_id}`, { envInit: true, scriptId: state.script.id });
   } catch (e) {
     toast("初始化失败：" + e.message, true);
+  }
+}
+
+/* ================= 虚拟环境选择 ================= */
+
+let _venvScanned = null; // 扫描缓存：{venvs:[...]}，避免每次切脚本都重复扫描
+
+/** 渲染「虚拟环境」选择器：下拉（默认 + 扫描到的环境）+ 扫描 + 手动输入 */
+function renderVenvPicker(rec) {
+  const wrap = $("#venv-picker");
+  wrap.innerHTML = "";
+  if (!rec) return;
+  const cur = (rec.venv_path || "").trim();
+
+  const row = document.createElement("div");
+  row.className = "venv-row";
+
+  const lbl = document.createElement("span");
+  lbl.className = "venv-lbl";
+  lbl.textContent = "虚拟环境";
+  lbl.title = "选择脚本使用的虚拟环境；默认使用脚本目录下的 .venv（有 uv 时优先 uv 运行）";
+
+  const sel = document.createElement("select");
+  sel.className = "f-input venv-select";
+
+  const scanBtn = document.createElement("button");
+  scanBtn.className = "btn mini ghost";
+  scanBtn.textContent = "🔄 扫描";
+
+  const customBtn = document.createElement("button");
+  customBtn.className = "btn mini ghost";
+  customBtn.textContent = "✎ 手动";
+
+  const customInput = document.createElement("input");
+  customInput.className = "f-input venv-custom";
+  customInput.placeholder = "输入虚拟环境路径（如 /path/to/venv）或 python 可执行文件，回车保存";
+  customInput.style.display = "none";
+
+  function fillOptions(data) {
+    const venvs = (data && data.venvs) || [];
+    sel.innerHTML = "";
+    const d = document.createElement("option");
+    d.value = "";
+    d.textContent = "默认（脚本目录 .venv）";
+    sel.appendChild(d);
+    if (venvs.length) {
+      const g = document.createElement("optgroup");
+      g.label = "已检测到的虚拟环境";
+      for (const v of venvs) {
+        const o = document.createElement("option");
+        o.value = v.path;
+        o.textContent = `${v.name}（${v.type}）`;
+        o.title = v.python;
+        g.appendChild(o);
+      }
+      sel.appendChild(g);
+    }
+    if (cur) {
+      const exists = [...sel.options].some((o) => o.value === cur);
+      if (!exists) {
+        const o = document.createElement("option");
+        o.value = cur;
+        o.textContent = "自定义：" + cur;
+        o.title = cur;
+        sel.appendChild(o);
+      }
+    }
+    sel.value = cur;
+  }
+
+  // 立即填充（有缓存时）；否则异步拉取
+  if (_venvScanned) fillOptions(_venvScanned);
+  else {
+    scanBtn.disabled = true;
+    scanBtn.textContent = "扫描中…";
+  }
+
+  async function applyVenv(v) {
+    if (v === cur) return;
+    try {
+      await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { venv_path: v } });
+      rec.venv_path = v;
+      toast(v ? "已切换虚拟环境" : "已恢复默认环境");
+      const env = await api(`/api/scripts/${rec.id}/env`);
+      rec.env = env;
+      renderEnvBar(env);
+    } catch (e) {
+      toast("保存失败：" + e.message, true);
+    }
+  }
+
+  scanBtn.onclick = async () => {
+    scanBtn.disabled = true;
+    scanBtn.textContent = "扫描中…";
+    try {
+      const data = await api("/api/env/venvs");
+      _venvScanned = data;
+      fillOptions(data);
+      toast("已扫描到 " + (data.venvs || []).length + " 个虚拟环境");
+    } catch (e) {
+      toast("扫描失败：" + e.message, true);
+    } finally {
+      scanBtn.disabled = false;
+      scanBtn.textContent = "🔄 扫描";
+    }
+  };
+
+  customBtn.onclick = () => {
+    const show = customInput.style.display === "none";
+    customInput.style.display = show ? "block" : "none";
+    customBtn.classList.toggle("active", show);
+    if (show) {
+      customInput.value = cur;
+      customInput.focus();
+    }
+  };
+  customInput.addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") {
+      ev.preventDefault();
+      applyVenv(customInput.value.trim()).then(() => {
+        customInput.style.display = "none";
+        customBtn.classList.remove("active");
+      });
+    } else if (ev.key === "Escape") {
+      customInput.style.display = "none";
+      customBtn.classList.remove("active");
+    }
+  });
+
+  sel.addEventListener("change", () => applyVenv(sel.value));
+
+  row.append(lbl, sel, scanBtn, customBtn);
+  wrap.append(row, customInput);
+
+  // 后台拉取扫描结果（不阻塞渲染）
+  if (!_venvScanned) {
+    api("/api/env/venvs")
+      .then((data) => {
+        _venvScanned = data;
+        fillOptions(data);
+        scanBtn.disabled = false;
+        scanBtn.textContent = "🔄 扫描";
+      })
+      .catch(() => {
+        scanBtn.disabled = false;
+        scanBtn.textContent = "🔄 扫描";
+      });
   }
 }
 
@@ -1459,7 +1616,10 @@ async function connectWs(path, { envInit = false, scriptId = null } = {}) {
         if (r.ok) {
           toast("环境初始化完成");
           const env = await api(`/api/scripts/${scriptId}/env`);
-          if (state.script && state.script.id === scriptId) renderEnvBar(env);
+          if (state.script && state.script.id === scriptId) {
+            renderEnvBar(env);
+            renderVenvPicker(state.script);
+          }
         } else {
           toast("环境初始化失败：" + (r.message || ""), true);
         }

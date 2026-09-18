@@ -419,6 +419,27 @@ svg { flex-shrink: 0; }
 .env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .env-bar .env-deps .dep-input { height: 34px; flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; }
 
+/* ===== 虚拟环境选择器 ===== */
+.venv-picker {
+  display: flex; flex-direction: column; gap: 6px;
+  padding: 8px 13px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  background: var(--glass-soft);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
+  font-size: 12px;
+}
+.venv-row { display: flex; align-items: center; gap: 8px; }
+.venv-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; min-width: 44px; }
+.venv-select { height: 32px; flex: 1; min-width: 0; font-size: 12px; padding: 0 8px; }
+.venv-custom { height: 32px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; }
+.venv-picker .btn.mini.ghost.active {
+  border-color: var(--glass-border);
+  background: var(--glass-strong);
+  color: #1d1d1f;
+}
+
 /* ===== 统一输入框语言（Glass） =====
    所有输入框共用：半透明白玻璃底 + 细边框 + 内阴影 + 圆角；
    hover 边框加深，focus 苹果蓝边框 + 光晕 + 底更实。
