@@ -123,9 +123,10 @@ function escapeHtml(s) {
 
 /* ================= Modal ================= */
 
-function openModal({ title, bodyHTML, footHTML, onMount } = {}) {
+function openModal({ title, bodyHTML, footHTML, onMount, hideTitle } = {}) {
   const mask = $("#modal");
-  $("#modal-title").textContent = title;
+  $("#modal-title").textContent = title || "";
+  mask.classList.toggle("no-title", !!hideTitle);
   $("#modal-body").innerHTML = bodyHTML || "";
   $("#modal-foot").innerHTML = footHTML || "";
   mask.hidden = false;
@@ -721,14 +722,15 @@ function openVenvSettings() {
   const cur = (rec.venv_path || "").trim();
 
   openModal({
-    title: "虚拟环境",
+    title: "",
+    hideTitle: true,
     bodyHTML: `
-      <div class="venv-sub">选择脚本运行所用的 Python 虚拟环境</div>
       <div class="venv-tabs">
         <span class="venv-pill" id="venv-pill"></span>
         <button class="venv-tab active" data-tab="select">选择环境</button>
         <button class="venv-tab" data-tab="manual">手动输入</button>
       </div>
+      <div class="venv-sub">选择脚本运行所用的 Python 虚拟环境</div>
       <div class="venv-panel" id="venv-panel-select">
         <select class="f-input venv-sel" id="venv-sel"></select>
         <button class="btn mini ghost venv-scan" id="venv-scan" title="重新扫描本机已管理的虚拟环境">
