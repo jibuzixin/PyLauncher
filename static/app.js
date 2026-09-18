@@ -335,6 +335,7 @@ function renderScriptList() {
 function scriptCard(s) {
   const card = document.createElement("div");
   card.className = "script-card" + (s.id === state.selectedId ? " active" : "");
+  card.dataset.id = s.id;
   const nargs = (JSON.parse(s.args_schema || "[]")).length;
   const row1 = document.createElement("div");
   row1.className = "sc-name";
@@ -1690,13 +1691,63 @@ document.addEventListener("keydown", (e) => {
 async function refreshRunningExecs() {
   try {
     const { running } = await api("/api/executions/running");
+    window._offlineStreak = 0;
+    hideOfflineBanner();
     const map = {};
     for (const r of running) (map[r.script_id] = map[r.script_id] || []).push(r);
     state.runningByScript = map;
-    renderScriptList();
+    updateRunBadges();   // 局部更新徽章，避免整表重建导致 popover/弹窗频闪
     updateRunningPopover();
     if (state.detailExec && state.detailExec.status === "running") refreshDetailStatus();
-  } catch { /* 轮询失败静默，下次再试 */ }
+  } catch {
+    // 连续多次失败才判定离线，避免瞬时抖动误报
+    window._offlineStreak = (window._offlineStreak || 0) + 1;
+    if (window._offlineStreak >= 2) showOfflineBanner();
+  }
+}
+
+function showOfflineBanner() {
+  const b = $("#offline-banner");
+  if (b) b.hidden = false;
+}
+function hideOfflineBanner() {
+  const b = $("#offline-banner");
+  if (b && !b.hidden) b.hidden = true;
+}
+
+/** 局部更新脚本卡片上的运行徽章（增/删/数字变化），不重建整个列表。 */
+function updateRunBadges() {
+  const map = state.runningByScript;
+  for (const card of $$("#script-list .script-card")) {
+    const id = Number(card.dataset.id);
+    const runs = map[id] || [];
+    const nameRow = card.querySelector(".sc-name");
+    const argBadge = card.querySelector(".sc-arg");
+    let badge = card.querySelector(".sc-running");
+    if (!runs.length) {
+      if (badge) badge.remove();
+      continue;
+    }
+    const label = "● " + runs.length;
+    if (badge) {
+      if (badge.textContent !== label) {
+        badge.textContent = label;
+        badge.title = runs.length + " 个任务正在运行，点击查看";
+      }
+      continue;
+    }
+    badge = document.createElement("span");
+    badge.className = "sc-running";
+    badge.textContent = label;
+    badge.title = runs.length + " 个任务正在运行，点击查看";
+    badge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRunningPopover(badge, id);
+    });
+    // 插在"参数"徽章之前，与 scriptCard 中的顺序保持一致
+    argBadge.insertAdjacentElement("beforebegin", badge);
+    nameRow.appendChild ? null : null;
+  }
 }
 
 function fmtRunStart(iso) {

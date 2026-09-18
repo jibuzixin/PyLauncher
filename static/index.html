@@ -79,6 +79,19 @@ input, select, textarea { font-family: inherit; font-size: 13px; color: var(--te
 svg { flex-shrink: 0; }
 
 /* ===== Topbar（浮动卡片式顶栏） ===== */
+.offline-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 16px;
+  background: rgba(220, 38, 38, 0.94);
+  color: #fff; font-size: 12.5px; font-weight: 500;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+.offline-banner svg { width: 15px; height: 15px; flex-shrink: 0; }
+.offline-banner + .topbar { border-top: 2px solid rgba(220, 38, 38, 0.35); }
+
 .topbar {
   height: 54px;
   display: flex;
@@ -1493,6 +1506,10 @@ select.f-input { appearance: none; padding-right: 30px;
 </head>
 <body>
 
+<div class="offline-banner" id="offline-banner" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
+  <span>与本地服务的连接已断开，页面数据可能已过期。服务恢复后将自动重连。</span>
+</div>
 <header class="topbar">
   <div class="brand">
     <a class="brand-logo" href="https://github.com/jibuzixin/py-script-launcher" target="_blank" rel="noopener" title="查看 GitHub 源码仓库">
@@ -2013,6 +2030,7 @@ function renderScriptList() {
 function scriptCard(s) {
   const card = document.createElement("div");
   card.className = "script-card" + (s.id === state.selectedId ? " active" : "");
+  card.dataset.id = s.id;
   const nargs = (JSON.parse(s.args_schema || "[]")).length;
   const row1 = document.createElement("div");
   row1.className = "sc-name";
@@ -3368,13 +3386,63 @@ document.addEventListener("keydown", (e) => {
 async function refreshRunningExecs() {
   try {
     const { running } = await api("/api/executions/running");
+    window._offlineStreak = 0;
+    hideOfflineBanner();
     const map = {};
     for (const r of running) (map[r.script_id] = map[r.script_id] || []).push(r);
     state.runningByScript = map;
-    renderScriptList();
+    updateRunBadges();   // 局部更新徽章，避免整表重建导致 popover/弹窗频闪
     updateRunningPopover();
     if (state.detailExec && state.detailExec.status === "running") refreshDetailStatus();
-  } catch { /* 轮询失败静默，下次再试 */ }
+  } catch {
+    // 连续多次失败才判定离线，避免瞬时抖动误报
+    window._offlineStreak = (window._offlineStreak || 0) + 1;
+    if (window._offlineStreak >= 2) showOfflineBanner();
+  }
+}
+
+function showOfflineBanner() {
+  const b = $("#offline-banner");
+  if (b) b.hidden = false;
+}
+function hideOfflineBanner() {
+  const b = $("#offline-banner");
+  if (b && !b.hidden) b.hidden = true;
+}
+
+/** 局部更新脚本卡片上的运行徽章（增/删/数字变化），不重建整个列表。 */
+function updateRunBadges() {
+  const map = state.runningByScript;
+  for (const card of $$("#script-list .script-card")) {
+    const id = Number(card.dataset.id);
+    const runs = map[id] || [];
+    const nameRow = card.querySelector(".sc-name");
+    const argBadge = card.querySelector(".sc-arg");
+    let badge = card.querySelector(".sc-running");
+    if (!runs.length) {
+      if (badge) badge.remove();
+      continue;
+    }
+    const label = "● " + runs.length;
+    if (badge) {
+      if (badge.textContent !== label) {
+        badge.textContent = label;
+        badge.title = runs.length + " 个任务正在运行，点击查看";
+      }
+      continue;
+    }
+    badge = document.createElement("span");
+    badge.className = "sc-running";
+    badge.textContent = label;
+    badge.title = runs.length + " 个任务正在运行，点击查看";
+    badge.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openRunningPopover(badge, id);
+    });
+    // 插在"参数"徽章之前，与 scriptCard 中的顺序保持一致
+    argBadge.insertAdjacentElement("beforebegin", badge);
+    nameRow.appendChild ? null : null;
+  }
 }
 
 function fmtRunStart(iso) {

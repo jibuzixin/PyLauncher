@@ -72,6 +72,19 @@ input, select, textarea { font-family: inherit; font-size: 13px; color: var(--te
 svg { flex-shrink: 0; }
 
 /* ===== Topbar（浮动卡片式顶栏） ===== */
+.offline-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 300;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 9px 16px;
+  background: rgba(220, 38, 38, 0.94);
+  color: #fff; font-size: 12.5px; font-weight: 500;
+  box-shadow: 0 4px 14px rgba(220, 38, 38, 0.25);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+}
+.offline-banner svg { width: 15px; height: 15px; flex-shrink: 0; }
+.offline-banner + .topbar { border-top: 2px solid rgba(220, 38, 38, 0.35); }
+
 .topbar {
   height: 54px;
   display: flex;

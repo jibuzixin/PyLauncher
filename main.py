@@ -32,6 +32,13 @@ STATIC_DIR = APP_DIR / "static"
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # 启动时清理上次进程遗留的 running 记录（服务重启后旧进程已不存在）
+    try:
+        n = db.mark_stale_running()
+        if n:
+            print(f"[startup] 清理 {n} 条遗留的 running 记录 → failed", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
     # 定时任务调度循环（服务生命周期内常驻）
     task = asyncio.create_task(_schedule_loop())
     try:
@@ -880,8 +887,25 @@ async def list_executions(script_id: Optional[int] = None, tag: Optional[str] = 
 
 @app.get("/api/executions/running")
 async def running_executions():
-    """所有正在运行的执行（脚本卡片徽章 / 任务列表）。必须在 {exec_id} 路由之前。"""
-    return {"running": db.list_running_executions()}
+    """所有正在运行的执行（脚本卡片徽章 / 任务列表）。必须在 {exec_id} 路由之前。
+
+    对 DB 中 running 的记录做进程存活校验：进程已不存在（外部中断/异常退出）的
+    立即落库为 failed 并过滤，避免前端轮询永远显示"运行中"。
+    """
+    rows = db.list_running_executions()
+    alive = []
+    for r in rows:
+        info = executor._RUNNING.get(r["id"])
+        proc = info.get("proc") if info else None
+        if info and proc is not None and proc.returncode is None:
+            alive.append(r)
+            continue
+        # 进程已死：写入 failed（若执行协程随后正常收尾，finish_execution 会覆盖为真实状态）
+        try:
+            db.finish_execution(r["id"], "failed", -1, [])
+        except Exception:  # noqa: BLE001
+            pass
+    return {"running": alive}
 
 
 @app.get("/api/executions/{exec_id}")

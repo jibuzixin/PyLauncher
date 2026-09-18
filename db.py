@@ -374,6 +374,16 @@ def move_preset(preset_id: int, direction: str) -> None:
         conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (a["sort_order"], b["id"]))
 
 
+def mark_stale_running() -> int:
+    """服务启动时调用：上一次进程遗留的 running 记录全部标记为 failed（进程已不存在）。"""
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "UPDATE executions SET status='failed', exit_code=-1, finished_at=? WHERE status='running'",
+            (now_iso(),),
+        )
+        return cur.rowcount
+
+
 def list_running_executions() -> list[dict]:
     """所有正在运行的执行（脚本卡片徽章 / 任务列表用）。"""
     with _conn() as conn:
