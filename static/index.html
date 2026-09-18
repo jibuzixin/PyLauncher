@@ -426,26 +426,33 @@ svg { flex-shrink: 0; }
 .env-bar .env-deps .dep-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; }
 .env-bar .env-deps .dep-input { height: 34px; flex: 1; min-width: 120px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; }
 
-/* ===== 虚拟环境选择器 ===== */
-.venv-picker {
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 8px 13px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--glass-soft);
-  backdrop-filter: var(--blur-sm);
-  -webkit-backdrop-filter: var(--blur-sm);
-  font-size: 12px;
+/* ===== 环境状态行（分隔符三态 + 更换） ===== */
+.env-bar .env-group { display: inline-flex; align-items: center; gap: 6px; }
+.env-bar .env-sep { color: rgba(0,0,0,0.18); margin: 0 3px; user-select: none; }
+.env-bar .btn.mini.ghost.venv-change {
+  height: 22px; padding: 0 8px; font-size: 11px;
+  color: var(--text);
+  border-color: rgba(0,0,0,0.12);
+  background: rgba(255,255,255,0.45);
 }
-.venv-row { display: flex; align-items: center; gap: 8px; }
-.venv-lbl { font-size: 11px; color: var(--muted); flex-shrink: 0; min-width: 44px; }
-.venv-select { height: 32px; flex: 1; min-width: 0; font-size: 12px; padding: 0 8px; }
-.venv-custom { height: 32px; font-family: var(--mono); font-size: 11.5px; padding: 0 9px; }
-.venv-picker .btn.mini.ghost.active {
-  border-color: var(--glass-border);
-  background: var(--glass-strong);
-  color: #1d1d1f;
+.env-bar .btn.mini.ghost.venv-change:hover { background: rgba(255,255,255,0.85); border-color: rgba(0,0,0,0.25); }
+
+/* ===== 更换虚拟环境弹窗 ===== */
+.venv-manual-row { display: flex; gap: 8px; margin-top: 10px; }
+.venv-manual-row .venv-manual-input { flex: 1; height: 34px; font-family: var(--mono); font-size: 12px; padding: 0 10px; }
+.venv-sel { height: 36px; width: 100%; font-size: 12.5px; padding: 0 10px; }
+.venv-preview {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0,0,0,0.03);
+  border: 1px solid rgba(0,0,0,0.06);
+  word-break: break-all;
 }
+.venv-preview.manual { color: var(--text); background: rgba(255,255,255,0.6); border-color: rgba(0,0,0,0.12); }
 
 /* ===== 统一输入框语言（Glass） =====
    所有输入框共用：半透明白玻璃底 + 细边框 + 内阴影 + 圆角；
@@ -1519,7 +1526,6 @@ select.f-input { appearance: none; padding-right: 30px;
       </div>
 
       <div class="env-bar" id="env-bar"></div>
-      <div class="venv-picker" id="venv-picker"></div>
       <div class="preset-bar" id="preset-bar"></div>
 
       <div class="fields-toolbar">
@@ -2013,7 +2019,6 @@ async function selectScript(id) {
     $("#form-content").hidden = false;
     renderScriptHead(rec);
     renderEnvBar(rec.env);
-    renderVenvPicker(rec);
     renderPresets(rec.presets);
     renderFields(rec.args_schema, rec.auto_saved_args);
     setRunning(false);
@@ -2219,62 +2224,89 @@ function renderEnvBar(env) {
   const bar = $("#env-bar");
   bar.innerHTML = "";
   if (!env) return;
-  const parts = [];
+
+  const mkDot = (cls) => {
+    const d = document.createElement("span");
+    d.className = "dot" + (cls ? " " + cls : "");
+    return d;
+  };
+  const mkText = (t, cls) => {
+    const s = document.createElement("span");
+    s.className = "env-text" + (cls ? " " + cls : "");
+    s.textContent = t;
+    return s;
+  };
+  const sep = () => {
+    const s = document.createElement("span");
+    s.className = "env-sep";
+    s.textContent = "·";
+    return s;
+  };
+  const group = (...els) => {
+    const g = document.createElement("span");
+    g.className = "env-group";
+    g.append(...els);
+    return g;
+  };
+
+  const groups = [];
+
+  // 1. uv 状态
   if (!state.uvOk) {
     if (env.has_venv || env.has_inline_meta) {
-      // 有 .venv 可运行：uv 缺失仅提示（灰色可忽略）
-      const span = document.createElement("span");
-      span.innerHTML = '<span class="dot"></span><span class="env-text">未装 uv · 使用项目 .venv 运行</span>';
-      span.title = "脚本目录已有虚拟环境，可正常执行；如需 uv 管理可点击「查看安装指引」";
-      parts.push(span);
+      groups.push(group(mkDot(""), mkText("未装 uv · 用项目环境运行")));
     } else {
-      const span = document.createElement("span");
-      span.innerHTML = '<span class="dot err"></span><span class="env-text err">未检测到 uv</span>';
-      parts.push(span);
-      const b = document.createElement("button");
-      b.className = "btn mini primary";
-      b.textContent = "查看安装指引";
-      b.onclick = showUvInstall;
-      parts.push(b);
+      groups.push(group(mkDot("err"), mkText("未检测到 uv", "err")));
     }
   } else {
-    const vSpan = document.createElement("span");
-    vSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">uv ${escapeHtml(env.uv_version || "")}</span>`;
-    parts.push(vSpan);
+    groups.push(group(mkDot("ok"), mkText("uv " + (env.uv_version || ""), "ok")));
   }
 
-  const venvSpan = document.createElement("span");
+  // 2. 虚拟环境状态 + 更换/初始化
+  const vels = [];
   if (env.venv_source === "custom") {
-    // 用户显式指定的虚拟环境
     if (env.venv_broken) {
-      venvSpan.innerHTML = '<span class="dot err"></span><span class="env-text err">指定环境不可用</span>';
-      venvSpan.title = "所选虚拟环境未找到可执行的 python，请重新选择或手动输入";
+      vels.push(mkDot("err"), mkText("指定环境不可用", "err"));
     } else {
-      venvSpan.innerHTML = '<span class="dot ok"></span><span class="env-text ok">使用指定环境</span>';
-      venvSpan.title = env.venv_python || env.venv_path || "";
+      vels.push(mkDot("ok"), mkText("使用指定环境", "ok"));
     }
   } else if (env.has_inline_meta) {
     const depsN = (env.inline_deps || []).length;
-    venvSpan.innerHTML = `<span class="dot ok"></span><span class="env-text ok">PEP 723 内联脚本${depsN ? " · 内联依赖 " + depsN + " 个" : ""}</span>`;
-    venvSpan.title = "uv 自动创建临时环境并安装内联依赖，无需初始化";
+    vels.push(mkDot("ok"), mkText("PEP 723 内联脚本" + (depsN ? " · " + depsN + " 个依赖" : ""), "ok"));
   } else if (env.has_venv) {
-    venvSpan.innerHTML = '<span class="dot ok"></span><span class="env-text ok">venv 已就绪</span>';
+    vels.push(mkDot("ok"), mkText("venv 已就绪", "ok"));
   } else {
-    venvSpan.innerHTML = '<span class="dot warn"></span><span class="env-text warn">未初始化虚拟环境</span>';
-    const initBtn = document.createElement("button");
-    initBtn.className = "btn mini primary";
-    initBtn.textContent = env.has_deps ? "初始化环境（含依赖）" : "初始化环境";
-    initBtn.onclick = () => initEnv();
-    parts.push(initBtn);
+    vels.push(mkDot("warn"), mkText("未初始化虚拟环境", "warn"));
   }
-  parts.push(venvSpan);
+  if (!env.has_inline_meta) {
+    const chg = document.createElement("button");
+    chg.className = "btn mini ghost venv-change";
+    chg.textContent = "更换";
+    chg.title = "选择脚本使用的虚拟环境（默认脚本目录 .venv）";
+    chg.onclick = openVenvSettings;
+    vels.push(chg);
+    if (!env.venv_source && !env.has_venv) {
+      const initBtn = document.createElement("button");
+      initBtn.className = "btn mini primary";
+      initBtn.textContent = env.has_deps ? "初始化环境" : "初始化环境";
+      initBtn.onclick = () => initEnv();
+      vels.push(initBtn);
+    }
+  }
+  groups.push(group(...vels));
 
+  // 3. 依赖状态
   if (env.has_deps) {
-    const r = document.createElement("span");
-    r.className = "env-text";
-    r.textContent = env.deps_name || "";
-    r.title = env.requirements_path || "";
-    parts.push(r);
+    const d = mkText(env.deps_name || "依赖文件", "ok");
+    d.title = env.requirements_path || "";
+    groups.push(group(mkDot("ok"), d));
+  } else {
+    groups.push(group(mkDot(""), mkText("无依赖文件")));
+  }
+
+  for (let i = 0; i < groups.length; i++) {
+    if (i > 0) bar.appendChild(sep());
+    bar.appendChild(groups[i]);
   }
 
   // 依赖文件行：可自定义依赖文件路径并安装
@@ -2297,230 +2329,170 @@ function renderEnvBar(env) {
   depInstall.onclick = () => initEnvDeps(depInput.value.trim());
   depRow.append(depDot, depLbl, depInput, depInstall);
   if (env.has_inline_meta) depRow.style.display = "none"; // PEP 723 内联脚本无需依赖文件
-  bar.append(...parts, depRow);
+  bar.appendChild(depRow);
 }
 
-/** 用自定义依赖文件路径安装依赖（留空则自动检测脚本目录 requirements.txt） */
-async function initEnvDeps(depsPath) {
-  if (!state.script) return;
-  if (depsPath && depsPath !== state.script.deps_path) {
-    await api(`/api/scripts/${state.script.id}`, { method: "PUT", body: { deps_path: depsPath } });
-    state.script.deps_path = depsPath;
-  }
-  switchTab("console");
-  clearConsole();
-  const installBtn = $("#env-bar .env-deps .btn.primary");
-  if (installBtn) { installBtn.disabled = true; installBtn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 安装中…'; }
-  try {
-    const res = await api(`/api/scripts/${state.script.id}/env/init`, {
-      method: "POST",
-      body: { deps_path: depsPath || null },
-    });
-    await connectWs(`/ws/env/${res.session_id}`, { envInit: true, scriptId: state.script.id });
-  } catch (e) {
-    toast("安装失败：" + e.message, true);
-  }
-  if (installBtn) { installBtn.disabled = false; installBtn.textContent = "安装依赖"; }
-}
+/* ================= 虚拟环境设置（更换弹窗） ================= */
 
-function showUvInstall() {
-  const hint = state.uvHint || {};
-  const entries = [];
-  if (hint.mac) entries.push(["macOS", hint.mac]);
-  if (hint.win) entries.push(["Windows (PowerShell)", hint.win]);
-  if (hint.linux) entries.push(["Linux", hint.linux]);
+let _venvScanned = null; // 扫描缓存：{venvs:[...]}，避免每次打开都重复扫描
+
+/** 弹出「更换虚拟环境」设置窗：下拉（默认 + 扫描到的环境）+ 扫描 + 手动输入 */
+function openVenvSettings() {
+  const rec = state.script;
+  if (!rec) return;
+  const cur = (rec.venv_path || "").trim();
+
   openModal({
-    title: "需要安装 uv",
+    title: "更换虚拟环境",
     bodyHTML: `
-      <div class="result-tip err" style="margin-bottom:12px">未检测到 uv。uv 是脚本启动器运行依赖的环境管理器，请先安装：</div>
-      <div class="uv-install">
-        ${entries.map(([os, cmd]) => `
-          <div>
-            <div class="m-label" style="margin-bottom:4px">${os}</div>
-            <div class="cmd">${escapeHtml(cmd)}<button class="copy-mini" data-copy="${escapeHtml(cmd)}">复制</button></div>
-          </div>`).join("")}
+      <div class="m-field">
+        <div class="m-label">选择环境</div>
+        <select class="f-input venv-sel" id="venv-sel"></select>
       </div>
+      <div class="venv-manual-row">
+        <input class="f-input venv-manual-input" id="venv-manual-input"
+               placeholder="或手动输入虚拟环境路径 / python 可执行文件">
+        <button class="btn mini ghost" id="venv-scan">🔄 扫描</button>
+      </div>
+      <div class="venv-preview" id="venv-preview"></div>
     `,
-    footHTML: `<button class="btn ghost" id="uv-later">稍后</button><button class="btn primary" id="uv-retry">我已安装，重新检测</button>`,
+    footHTML: `<button class="btn ghost" id="venv-cancel">取消</button><button class="btn primary" id="venv-save">保存</button>`,
     onMount: (mask) => {
-      $("#uv-later", mask).addEventListener("click", closeModal);
-      $("#uv-retry", mask).addEventListener("click", async () => {
-        await checkUv();
-        closeModal();
-        if (state.uvOk && state.script) {
-          const env = await api(`/api/scripts/${state.script.id}/env`);
+      const sel = $("#venv-sel", mask);
+      const input = $("#venv-manual-input", mask);
+      const preview = $("#venv-preview", mask);
+      const scanBtn = $("#venv-scan", mask);
+
+      function fillOptions(data) {
+        const venvs = (data && data.venvs) || [];
+        sel.innerHTML = "";
+        const d = document.createElement("option");
+        d.value = "";
+        d.textContent = "默认（脚本目录 .venv）";
+        sel.appendChild(d);
+        if (venvs.length) {
+          const g = document.createElement("optgroup");
+          g.label = "已检测到的虚拟环境";
+          for (const v of venvs) {
+            const o = document.createElement("option");
+            o.value = v.path;
+            o.textContent = v.name + "（" + v.type + "）";
+            o.title = v.python;
+            g.appendChild(o);
+          }
+          sel.appendChild(g);
+        }
+        const manual = input.value.trim();
+        const val = manual || cur;
+        if (val) {
+          const exists = [...sel.options].some((o) => o.value === val);
+          if (!exists) {
+            const o = document.createElement("option");
+            o.value = val;
+            o.textContent = "自定义：" + val;
+            o.title = val;
+            sel.appendChild(o);
+          }
+        }
+        sel.value = val;
+      }
+
+      function updatePreview() {
+        const manual = input.value.trim();
+        const chosen = manual || sel.value;
+        if (!chosen) {
+          preview.textContent = "";
+          preview.className = "venv-preview";
+          return;
+        }
+        const opt = [...sel.options].find((o) => o.value === chosen && o.title);
+        preview.textContent = "路径：" + (manual ? chosen : (opt && opt.title ? opt.title : chosen));
+        preview.className = "venv-preview" + (manual ? " manual" : "");
+      }
+
+      // 手动输入时联动下拉
+      input.addEventListener("input", () => {
+        const manual = input.value.trim();
+        if (manual) {
+          const exists = [...sel.options].some((o) => o.value === manual);
+          if (!exists) {
+            const o = document.createElement("option");
+            o.value = manual;
+            o.textContent = "自定义：" + manual;
+            o.title = manual;
+            sel.appendChild(o);
+          }
+          sel.value = manual;
+        } else {
+          sel.value = cur;
+        }
+        updatePreview();
+      });
+      sel.addEventListener("change", updatePreview);
+
+      // 初始填充
+      if (_venvScanned) fillOptions(_venvScanned);
+      else {
+        scanBtn.disabled = true;
+        scanBtn.textContent = "扫描中…";
+      }
+      updatePreview();
+
+      // 扫描
+      scanBtn.onclick = async () => {
+        scanBtn.disabled = true;
+        scanBtn.textContent = "扫描中…";
+        try {
+          const data = await api("/api/env/venvs");
+          _venvScanned = data;
+          fillOptions(data);
+          updatePreview();
+          toast("已扫描到 " + (data.venvs || []).length + " 个虚拟环境");
+        } catch (e) {
+          toast("扫描失败：" + e.message, true);
+        } finally {
+          scanBtn.disabled = false;
+          scanBtn.textContent = "🔄 扫描";
+        }
+      };
+
+      $("#venv-cancel", mask).addEventListener("click", closeModal);
+
+      $("#venv-save", mask).addEventListener("click", async () => {
+        const v = input.value.trim() || sel.value;
+        try {
+          await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { venv_path: v } });
+          rec.venv_path = v;
+          toast(v ? "已切换虚拟环境" : "已恢复默认环境");
+          closeModal();
+          const env = await api(`/api/scripts/${rec.id}/env`);
+          rec.env = env;
           renderEnvBar(env);
+        } catch (e) {
+          toast("保存失败：" + e.message, true);
         }
       });
-      $$(".copy-mini", mask).forEach((b) => b.addEventListener("click", async () => {
-        if (await copyText(b.dataset.copy)) toast("已复制安装命令");
-      }));
+
+      // 后台拉取扫描结果
+      if (!_venvScanned) {
+        api("/api/env/venvs")
+          .then((data) => {
+            _venvScanned = data;
+            fillOptions(data);
+            updatePreview();
+            scanBtn.disabled = false;
+            scanBtn.textContent = "🔄 扫描";
+          })
+          .catch(() => {
+            scanBtn.disabled = false;
+            scanBtn.textContent = "🔄 扫描";
+          });
+      }
     },
   });
 }
 
-async function initEnv() {
-  if (!state.script) return;
-  const btn = $("#env-bar .btn.primary");
-  if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 初始化中…'; }
-  switchTab("console");
-  clearConsole();
-  try {
-    const res = await api(`/api/scripts/${state.script.id}/env/init`, { method: "POST" });
-    await connectWs(`/ws/env/${res.session_id}`, { envInit: true, scriptId: state.script.id });
-  } catch (e) {
-    toast("初始化失败：" + e.message, true);
-  }
-}
-
-/* ================= 虚拟环境选择 ================= */
-
-let _venvScanned = null; // 扫描缓存：{venvs:[...]}，避免每次切脚本都重复扫描
-
-/** 渲染「虚拟环境」选择器：下拉（默认 + 扫描到的环境）+ 扫描 + 手动输入 */
-function renderVenvPicker(rec) {
-  const wrap = $("#venv-picker");
-  wrap.innerHTML = "";
-  if (!rec) return;
-  const cur = (rec.venv_path || "").trim();
-
-  const row = document.createElement("div");
-  row.className = "venv-row";
-
-  const lbl = document.createElement("span");
-  lbl.className = "venv-lbl";
-  lbl.textContent = "虚拟环境";
-  lbl.title = "选择脚本使用的虚拟环境；默认使用脚本目录下的 .venv（有 uv 时优先 uv 运行）";
-
-  const sel = document.createElement("select");
-  sel.className = "f-input venv-select";
-
-  const scanBtn = document.createElement("button");
-  scanBtn.className = "btn mini ghost";
-  scanBtn.textContent = "🔄 扫描";
-
-  const customBtn = document.createElement("button");
-  customBtn.className = "btn mini ghost";
-  customBtn.textContent = "✎ 手动";
-
-  const customInput = document.createElement("input");
-  customInput.className = "f-input venv-custom";
-  customInput.placeholder = "输入虚拟环境路径（如 /path/to/venv）或 python 可执行文件，回车保存";
-  customInput.style.display = "none";
-
-  function fillOptions(data) {
-    const venvs = (data && data.venvs) || [];
-    sel.innerHTML = "";
-    const d = document.createElement("option");
-    d.value = "";
-    d.textContent = "默认（脚本目录 .venv）";
-    sel.appendChild(d);
-    if (venvs.length) {
-      const g = document.createElement("optgroup");
-      g.label = "已检测到的虚拟环境";
-      for (const v of venvs) {
-        const o = document.createElement("option");
-        o.value = v.path;
-        o.textContent = `${v.name}（${v.type}）`;
-        o.title = v.python;
-        g.appendChild(o);
-      }
-      sel.appendChild(g);
-    }
-    if (cur) {
-      const exists = [...sel.options].some((o) => o.value === cur);
-      if (!exists) {
-        const o = document.createElement("option");
-        o.value = cur;
-        o.textContent = "自定义：" + cur;
-        o.title = cur;
-        sel.appendChild(o);
-      }
-    }
-    sel.value = cur;
-  }
-
-  // 立即填充（有缓存时）；否则异步拉取
-  if (_venvScanned) fillOptions(_venvScanned);
-  else {
-    scanBtn.disabled = true;
-    scanBtn.textContent = "扫描中…";
-  }
-
-  async function applyVenv(v) {
-    if (v === cur) return;
-    try {
-      await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { venv_path: v } });
-      rec.venv_path = v;
-      toast(v ? "已切换虚拟环境" : "已恢复默认环境");
-      const env = await api(`/api/scripts/${rec.id}/env`);
-      rec.env = env;
-      renderEnvBar(env);
-    } catch (e) {
-      toast("保存失败：" + e.message, true);
-    }
-  }
-
-  scanBtn.onclick = async () => {
-    scanBtn.disabled = true;
-    scanBtn.textContent = "扫描中…";
-    try {
-      const data = await api("/api/env/venvs");
-      _venvScanned = data;
-      fillOptions(data);
-      toast("已扫描到 " + (data.venvs || []).length + " 个虚拟环境");
-    } catch (e) {
-      toast("扫描失败：" + e.message, true);
-    } finally {
-      scanBtn.disabled = false;
-      scanBtn.textContent = "🔄 扫描";
-    }
-  };
-
-  customBtn.onclick = () => {
-    const show = customInput.style.display === "none";
-    customInput.style.display = show ? "block" : "none";
-    customBtn.classList.toggle("active", show);
-    if (show) {
-      customInput.value = cur;
-      customInput.focus();
-    }
-  };
-  customInput.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") {
-      ev.preventDefault();
-      applyVenv(customInput.value.trim()).then(() => {
-        customInput.style.display = "none";
-        customBtn.classList.remove("active");
-      });
-    } else if (ev.key === "Escape") {
-      customInput.style.display = "none";
-      customBtn.classList.remove("active");
-    }
-  });
-
-  sel.addEventListener("change", () => applyVenv(sel.value));
-
-  row.append(lbl, sel, scanBtn, customBtn);
-  wrap.append(row, customInput);
-
-  // 后台拉取扫描结果（不阻塞渲染）
-  if (!_venvScanned) {
-    api("/api/env/venvs")
-      .then((data) => {
-        _venvScanned = data;
-        fillOptions(data);
-        scanBtn.disabled = false;
-        scanBtn.textContent = "🔄 扫描";
-      })
-      .catch(() => {
-        scanBtn.disabled = false;
-        scanBtn.textContent = "🔄 扫描";
-      });
-  }
-}
-
-/* ================= 预设 ================= */
+/* ================= 预设 ================= *//* ================= 预设 ================= */
 
 /** 预设展示分组：固定项排最前（不限个数），非固定按最近使用补足到 MAX_SHOWN 个，其余折叠 */
 const PRESET_MAX_SHOWN = 6;
@@ -3233,10 +3205,7 @@ async function connectWs(path, { envInit = false, scriptId = null } = {}) {
         if (r.ok) {
           toast("环境初始化完成");
           const env = await api(`/api/scripts/${scriptId}/env`);
-          if (state.script && state.script.id === scriptId) {
-            renderEnvBar(env);
-            renderVenvPicker(state.script);
-          }
+          if (state.script && state.script.id === scriptId) renderEnvBar(env);
         } else {
           toast("环境初始化失败：" + (r.message || ""), true);
         }
