@@ -721,8 +721,9 @@ function openVenvSettings() {
   const cur = (rec.venv_path || "").trim();
 
   openModal({
-    title: "更换虚拟环境",
+    title: "虚拟环境",
     bodyHTML: `
+      <div class="venv-sub">选择脚本运行所用的 Python 虚拟环境</div>
       <div class="venv-tabs">
         <span class="venv-pill" id="venv-pill"></span>
         <button class="venv-tab active" data-tab="select">选择环境</button>

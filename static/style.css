@@ -437,6 +437,11 @@ svg { flex-shrink: 0; }
 }
 
 /* ===== 更换虚拟环境弹窗（Tab 滑动胶囊，与主界面一致） ===== */
+.venv-sub {
+  margin: -2px 0 14px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
 .venv-tabs {
   position: relative;
   display: flex; gap: 2px;
