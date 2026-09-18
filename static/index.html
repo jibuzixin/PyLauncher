@@ -445,22 +445,25 @@ svg { flex-shrink: 0; }
 
 /* ===== 更换虚拟环境弹窗（Tab 双态） ===== */
 .venv-tabs {
-  display: flex; gap: 3px;
-  padding: 3px; margin-bottom: 12px;
-  background: rgba(0,0,0,0.05);
+  display: flex; gap: 20px;
+  padding: 0 8px; margin-bottom: 14px;
+  background: rgba(0,0,0,0.04);
   border-radius: 9px;
 }
 .venv-tab {
-  flex: 1; height: 30px;
+  position: relative;
+  height: 36px; padding: 0 2px;
   border: none; background: transparent;
-  border-radius: 7px;
-  font-size: 12.5px; color: var(--muted);
-  cursor: pointer; transition: all 0.18s;
+  font-size: 13px; color: var(--muted);
+  cursor: pointer; transition: color 0.18s;
 }
 .venv-tab:hover { color: var(--text); }
-.venv-tab.active {
-  background: #fff; color: var(--text); font-weight: 600;
-  box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+.venv-tab.active { color: var(--text); font-weight: 600; }
+.venv-tab.active::after {
+  content: "";
+  position: absolute; left: 0; right: 0; bottom: 0; height: 2.5px;
+  background: #1d1d1f;
+  border-radius: 2px;
 }
 .venv-panel { display: flex; gap: 8px; align-items: center; }
 .venv-sel { flex: 1; height: 36px; font-size: 13px; padding: 0 10px; }
