@@ -443,28 +443,39 @@ svg { flex-shrink: 0; }
   max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* ===== 更换虚拟环境弹窗（Tab 双态） ===== */
+/* ===== 更换虚拟环境弹窗（Tab 滑动胶囊，与主界面一致） ===== */
 .venv-tabs {
-  display: flex; gap: 20px;
-  padding: 0 8px; margin-bottom: 14px;
-  background: rgba(0,0,0,0.04);
-  border-radius: 9px;
+  position: relative;
+  display: flex; gap: 2px;
+  padding: 5px 12px 5px;
+  margin-bottom: 14px;
+  border-bottom: 1px solid rgba(0,0,0,0.08);
+}
+.venv-pill {
+  position: absolute; top: 4px; bottom: 4px; left: 0;
+  width: 0; border-radius: 999px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(255, 255, 255, 0.5));
+  backdrop-filter: blur(16px) saturate(170%);
+  -webkit-backdrop-filter: blur(16px) saturate(170%);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.07),
+    inset 0 1.5px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.45);
+  transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1), width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+  z-index: 0;
+  pointer-events: none;
 }
 .venv-tab {
-  position: relative;
-  height: 36px; padding: 0 2px;
+  position: relative; z-index: 1;
   border: none; background: transparent;
-  font-size: 13px; color: var(--muted);
-  cursor: pointer; transition: color 0.18s;
+  padding: 7px 15px; font-size: 13px; font-weight: 500;
+  color: var(--muted);
+  transition: color 0.2s ease;
+  white-space: nowrap; cursor: pointer;
 }
 .venv-tab:hover { color: var(--text); }
 .venv-tab.active { color: var(--text); font-weight: 600; }
-.venv-tab.active::after {
-  content: "";
-  position: absolute; left: 0; right: 0; bottom: 0; height: 2.5px;
-  background: #1d1d1f;
-  border-radius: 2px;
-}
 .venv-panel { display: flex; gap: 8px; align-items: center; }
 .venv-sel { flex: 1; height: 36px; font-size: 13px; padding: 0 10px; }
 .venv-scan {
@@ -2381,6 +2392,7 @@ function openVenvSettings() {
     title: "更换虚拟环境",
     bodyHTML: `
       <div class="venv-tabs">
+        <span class="venv-pill" id="venv-pill"></span>
         <button class="venv-tab active" data-tab="select">选择环境</button>
         <button class="venv-tab" data-tab="manual">手动输入</button>
       </div>
@@ -2406,14 +2418,23 @@ function openVenvSettings() {
       const panelSelect = $("#venv-panel-select", mask);
       const panelManual = $("#venv-panel-manual", mask);
 
+      function moveVenvPill() {
+        const pill = $("#venv-pill", mask);
+        const active = mask.querySelector(".venv-tab.active");
+        if (!pill || !active) return;
+        pill.style.width = active.offsetWidth + "px";
+        pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+      }
       function setTab(which) {
         tabSel.forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
         panelSelect.style.display = which === "select" ? "flex" : "none";
         panelManual.style.display = which === "manual" ? "block" : "none";
+        moveVenvPill();
         updatePreview();
         if (which === "manual") input.focus();
       }
       tabSel.forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
+      requestAnimationFrame(moveVenvPill);
 
       function fillOptions(data) {
         const venvs = (data && data.venvs) || [];

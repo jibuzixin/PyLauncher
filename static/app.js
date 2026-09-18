@@ -724,6 +724,7 @@ function openVenvSettings() {
     title: "更换虚拟环境",
     bodyHTML: `
       <div class="venv-tabs">
+        <span class="venv-pill" id="venv-pill"></span>
         <button class="venv-tab active" data-tab="select">选择环境</button>
         <button class="venv-tab" data-tab="manual">手动输入</button>
       </div>
@@ -749,14 +750,23 @@ function openVenvSettings() {
       const panelSelect = $("#venv-panel-select", mask);
       const panelManual = $("#venv-panel-manual", mask);
 
+      function moveVenvPill() {
+        const pill = $("#venv-pill", mask);
+        const active = mask.querySelector(".venv-tab.active");
+        if (!pill || !active) return;
+        pill.style.width = active.offsetWidth + "px";
+        pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+      }
       function setTab(which) {
         tabSel.forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
         panelSelect.style.display = which === "select" ? "flex" : "none";
         panelManual.style.display = which === "manual" ? "block" : "none";
+        moveVenvPill();
         updatePreview();
         if (which === "manual") input.focus();
       }
       tabSel.forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
+      requestAnimationFrame(moveVenvPill);
 
       function fillOptions(data) {
         const venvs = (data && data.venvs) || [];
