@@ -422,16 +422,24 @@ svg { flex-shrink: 0; }
 /* ===== 环境状态行（分隔符三态 + 更换） ===== */
 .env-bar .env-group { display: inline-flex; align-items: center; gap: 6px; }
 .env-bar .env-sep { color: rgba(0,0,0,0.18); margin: 0 3px; user-select: none; }
-.env-bar .btn.mini.ghost.venv-change {
-  height: 22px; padding: 0 8px; font-size: 11px;
-  color: var(--text);
-  border-color: rgba(0,0,0,0.12);
-  background: rgba(255,255,255,0.45);
+.env-bar .venv-change {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  border: none; background: transparent;
+  color: var(--muted); border-radius: 6px; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
 }
-.env-bar .btn.mini.ghost.venv-change:hover { background: rgba(255,255,255,0.85); border-color: rgba(0,0,0,0.25); }
+.env-bar .venv-change svg { width: 13px; height: 13px; }
+.env-bar .venv-change:hover { background: rgba(0,0,0,0.06); color: var(--text); }
+.env-bar .venv-path {
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 
 /* ===== 更换虚拟环境弹窗 ===== */
 .venv-manual-row { display: flex; gap: 8px; margin-top: 10px; }
+.venv-scan { display: inline-flex; align-items: center; gap: 5px; }
+.venv-scan svg { width: 13px; height: 13px; }
 .venv-manual-row .venv-manual-input { flex: 1; height: 34px; font-family: var(--mono); font-size: 12px; padding: 0 10px; }
 .venv-sel { height: 36px; width: 100%; font-size: 12.5px; padding: 0 10px; }
 .venv-preview {

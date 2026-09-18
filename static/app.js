@@ -639,7 +639,7 @@ function renderEnvBar(env) {
     groups.push(group(mkDot("ok"), mkText("uv " + (env.uv_version || ""), "ok")));
   }
 
-  // 2. 虚拟环境状态 + 更换/初始化
+  // 2. 虚拟环境状态 + 更换/初始化 + 路径
   const vels = [];
   if (env.venv_source === "custom") {
     if (env.venv_broken) {
@@ -656,10 +656,21 @@ function renderEnvBar(env) {
     vels.push(mkDot("warn"), mkText("未初始化虚拟环境", "warn"));
   }
   if (!env.has_inline_meta) {
+    // 路径：默认/自定义一律显示；无环境时显示占位说明
+    const pathEl = document.createElement("span");
+    pathEl.className = "venv-path";
+    if (env.venv_python) {
+      pathEl.textContent = env.venv_python;
+      pathEl.title = env.venv_python;
+    } else {
+      pathEl.textContent = "（无虚拟环境路径）";
+    }
+    vels.push(pathEl);
+    // 更换：纯图标按钮（无胶囊边框）
     const chg = document.createElement("button");
-    chg.className = "btn mini ghost venv-change";
-    chg.textContent = "更换";
-    chg.title = "选择脚本使用的虚拟环境（默认脚本目录 .venv）";
+    chg.className = "venv-change";
+    chg.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
+    chg.title = "更换虚拟环境";
     chg.onclick = openVenvSettings;
     vels.push(chg);
     if (!env.venv_source && !env.has_venv) {
@@ -729,7 +740,10 @@ function openVenvSettings() {
       <div class="venv-manual-row">
         <input class="f-input venv-manual-input" id="venv-manual-input"
                placeholder="或手动输入虚拟环境路径 / python 可执行文件">
-        <button class="btn mini ghost" id="venv-scan">🔄 扫描</button>
+        <button class="btn mini ghost venv-scan" id="venv-scan"
+                title="重新扫描本机已管理的虚拟环境">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>
+        </button>
       </div>
       <div class="venv-preview" id="venv-preview"></div>
     `,
@@ -811,14 +825,14 @@ function openVenvSettings() {
       if (_venvScanned) fillOptions(_venvScanned);
       else {
         scanBtn.disabled = true;
-        scanBtn.textContent = "扫描中…";
+        scanBtn.innerHTML = "<span>扫描中…</span>";
       }
       updatePreview();
 
       // 扫描
       scanBtn.onclick = async () => {
         scanBtn.disabled = true;
-        scanBtn.textContent = "扫描中…";
+        scanBtn.innerHTML = "<span>扫描中…</span>";
         try {
           const data = await api("/api/env/venvs");
           _venvScanned = data;
@@ -829,7 +843,7 @@ function openVenvSettings() {
           toast("扫描失败：" + e.message, true);
         } finally {
           scanBtn.disabled = false;
-          scanBtn.textContent = "🔄 扫描";
+          scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
         }
       };
 
@@ -858,11 +872,11 @@ function openVenvSettings() {
             fillOptions(data);
             updatePreview();
             scanBtn.disabled = false;
-            scanBtn.textContent = "🔄 扫描";
+            scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
           })
           .catch(() => {
             scanBtn.disabled = false;
-            scanBtn.textContent = "🔄 扫描";
+            scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
           });
       }
     },
