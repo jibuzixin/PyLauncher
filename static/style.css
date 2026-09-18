@@ -445,12 +445,8 @@ svg { flex-shrink: 0; }
 /* 无标题弹窗：隐藏 head，tab 行与关闭按钮同排顶格 */
 #modal.no-title .modal-head { display: none; }
 #modal.no-title .modal-body { padding-top: 14px; }
-.venv-top {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; margin-bottom: 14px;
-}
-.venv-top .venv-tabs { flex: 1; margin-bottom: 0; }
-.venv-top .modal-close { position: static; }
+.venv-top { margin-bottom: 14px; }
+.venv-top .venv-tabs { margin-bottom: 0; }
 .venv-tabs {
   position: relative;
   display: flex; gap: 2px;
