@@ -115,6 +115,13 @@
       <div class="fields" id="fields"></div>
     </div>
 
+    <div class="cmd-edit" id="cmd-edit">
+      <span class="cmd-edit-label">运行命令</span>
+      <input class="f-input mono cmd-edit-input" id="cmd-edit-input" spellcheck="false" autocomplete="off"
+        placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…），改参数后仅刷新参数段">
+      <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">重置</button>
+    </div>
+
     <div class="run-bar">
       <button class="btn primary big" id="btn-run">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>

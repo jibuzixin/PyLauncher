@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS executions (
     script_id INTEGER REFERENCES scripts(id) ON DELETE SET NULL,
     preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL,
     args TEXT NOT NULL DEFAULT '{}',
+    command TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'running',
     exit_code INTEGER,
     output TEXT NOT NULL DEFAULT '',
@@ -122,6 +123,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
     scols = {r[1] for r in conn.execute("PRAGMA table_info(scripts)")}
     if "venv_path" not in scols:
         conn.execute("ALTER TABLE scripts ADD COLUMN venv_path TEXT NOT NULL DEFAULT ''")
+    # presets 表迁移：固定 / 排序 / 最近使用
+    # executions 表迁移：实际执行命令（自定义命令回显）
+    ecols = {r[1] for r in conn.execute("PRAGMA table_info(executions)")}
+    if "command" not in ecols:
+        conn.execute("ALTER TABLE executions ADD COLUMN command TEXT NOT NULL DEFAULT ''")
     # presets 表迁移：固定 / 排序 / 最近使用
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(presets)")}
     if "pinned" not in pcols:
@@ -495,12 +501,12 @@ def set_schedule_runtime(
 # ---------- executions ----------
 
 def add_execution(
-    script_id: int | None, args: dict, preset_id: int | None = None
+    script_id: int | None, args: dict, preset_id: int | None = None, command: str = ""
 ) -> dict:
     with _lock, _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO executions(script_id, preset_id, args, status, started_at) VALUES(?,?,?,?,?)",
-            (script_id, preset_id, _dumps(args), "running", now_iso()),
+            "INSERT INTO executions(script_id, preset_id, args, command, status, started_at) VALUES(?,?,?,?,?,?)",
+            (script_id, preset_id, _dumps(args), command, "running", now_iso()),
         )
         return dict(conn.execute("SELECT * FROM executions WHERE id=?", (cur.lastrowid,)).fetchone())
 

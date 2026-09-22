@@ -8,6 +8,7 @@ import asyncio
 import json
 import os
 import platform
+import shlex
 import shutil
 import signal
 import subprocess
@@ -275,12 +276,13 @@ def inspect_env(script_path: str, deps_path: str = "", venv_path: str = "") -> d
 
 
 async def _stream_proc(
-    cmd: list[str],
+    cmd: list[str] | str,
     cwd: str,
     on_line: Callable[[str, str], Awaitable[None]],
     env_extra: Optional[dict] = None,
     new_group: bool = True,
     proc_holder: Optional[dict] = None,
+    use_shell: bool = False,
 ) -> tuple[int, asyncio.subprocess.Process]:
     """运行命令并流式回调 on_line(stream, text)。
 
@@ -288,7 +290,7 @@ async def _stream_proc(
     Windows 退回管道模式。回调收到的是原始字节块（可能含 \r\n、ANSI 转义、跨行）。
     """
     if USE_PTY:
-        return await _stream_proc_pty(cmd, cwd, on_line, env_extra, proc_holder)
+        return await _stream_proc_pty(cmd, cwd, on_line, env_extra, proc_holder, use_shell)
 
     # ---- Windows / 管道模式：按行读取 ----
     kwargs: dict[str, Any] = {"cwd": cwd, "stdout": asyncio.subprocess.PIPE, "stderr": asyncio.subprocess.PIPE}
@@ -305,7 +307,10 @@ async def _stream_proc(
         if new_group:
             kwargs["preexec_fn"] = os.setsid
 
-    proc = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+    if use_shell:
+        proc = await asyncio.create_subprocess_shell(cmd if isinstance(cmd, str) else " ".join(cmd), **kwargs)
+    else:
+        proc = await asyncio.create_subprocess_exec(*(cmd if isinstance(cmd, list) else ["/bin/sh", "-c", cmd]), **kwargs)
     if proc_holder is not None:
         proc_holder["proc"] = proc
 
@@ -327,11 +332,12 @@ async def _stream_proc(
 
 
 async def _stream_proc_pty(
-    cmd: list[str],
+    cmd: list[str] | str,
     cwd: str,
     on_line: Callable[[str, str], Awaitable[None]],
     env_extra: Optional[dict] = None,
     proc_holder: Optional[dict] = None,
+    use_shell: bool = False,
 ) -> tuple[int, asyncio.subprocess.Process]:
     """伪终端模式：stdout/stderr 合并到同一个 pty，按原始字节块流式回调。"""
     import fcntl
@@ -354,8 +360,8 @@ async def _stream_proc_pty(
         env.update(env_extra)
 
     proc = subprocess.Popen(
-        cmd, cwd=cwd, stdin=slave, stdout=slave, stderr=slave,
-        env=env, close_fds=True, preexec_fn=os.setsid,
+        cmd if isinstance(cmd, list) else cmd, cwd=cwd, stdin=slave, stdout=slave, stderr=slave,
+        env=env, close_fds=True, preexec_fn=os.setsid, shell=use_shell,
     )
     os.close(slave)
     if proc_holder is not None:
@@ -512,6 +518,50 @@ def build_command_ex(script_path: str, args: list[str], extra_args: list[str] | 
     if extra_args:
         cmd += extra_args
     return cmd, None
+
+
+async def run_command(
+    exec_id: int,
+    command_text: str,
+    cwd: str,
+    on_line: Callable[[str, str], Awaitable[None]],
+) -> dict[str, Any]:
+    """直接执行用户编辑的整条命令，cwd 指定工作目录。
+
+    兼容两类写法：
+    - 前缀环境变量：PYTHONPATH=/x:/y uv run ... → 提取为 env，其余正常解析；
+    - shell 语法（&& | > 等）：交给系统 shell 解释执行。
+    """
+    raw = command_text.strip()
+    if not raw:
+        await on_line("error", "✗ 命令为空\n")
+        return {"ok": False, "exit_code": -1, "terminated": False, "message": "命令为空"}
+    try:
+        tokens = shlex.split(raw)
+    except ValueError as e:
+        await on_line("error", f"✗ 命令解析失败：{e}\n")
+        return {"ok": False, "exit_code": -1, "terminated": False, "message": f"命令解析失败: {e}"}
+    env_extra: dict[str, str] = {}
+    while tokens and "=" in tokens[0] and not tokens[0].startswith("-"):
+        k, _, v = tokens.pop(0).partition("=")
+        if k.isidentifier():
+            env_extra[k] = v
+        else:
+            tokens.insert(0, k + "=" + v)
+            break
+    if not tokens:
+        await on_line("error", "✗ 命令为空\n")
+        return {"ok": False, "exit_code": -1, "terminated": False, "message": "命令为空"}
+    shell_ops = ("&&", "||", "|", ">", "<", ";", "&", "$(", "`")
+    use_shell = any(op in raw for op in shell_ops)
+    cmd: list[str] | str = raw if use_shell else tokens
+    holder = _RUNNING.setdefault(exec_id, {"proc": None, "terminated": False})
+    try:
+        code, proc = await _stream_proc(cmd, str(cwd), on_line, env_extra=env_extra or None, proc_holder=holder, use_shell=use_shell)
+        terminated = holder.get("terminated", False)
+        return {"ok": True, "exit_code": code, "terminated": terminated}
+    except asyncio.CancelledError:
+        return {"ok": False, "exit_code": -1, "terminated": holder.get("terminated", False), "message": "任务被取消"}
 
 
 async def run_script(

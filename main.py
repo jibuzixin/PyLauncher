@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shlex
 import subprocess
 import sys
 import time
@@ -102,6 +103,7 @@ class ExecuteReq(BaseModel):
     script_id: int
     args: dict
     preset_id: Optional[int] = None
+    command: Optional[str] = None  # 用户手动编辑的整条命令；为空则自动生成
 
 
 class CommandReq(BaseModel):
@@ -543,6 +545,26 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
     else:
         status = "failed"
 
+    chunks = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
+    lines = _merge_output_lines(chunks)
+    db.finish_execution(exec_id, status, result.get("exit_code"), lines)
+    await emit("info", f"· 执行结束：{status}（退出码 {result.get('exit_code')}）\n")
+    result["status"] = status
+    return result
+
+
+async def _execute_command_task(exec_id: int, command: str, script_path: str, emit: Callable) -> dict:
+    """直接执行用户编辑的整条命令，流式输出，结束后写库。"""
+    await emit("info", "· 使用自定义命令执行\n")
+    await emit("info", "$ " + command + "\n")
+    result = await executor.run_command(exec_id, command, str(Path(script_path).parent), emit)
+    terminated = result.get("terminated", False)
+    if terminated:
+        status = "terminated"
+    elif result.get("exit_code") == 0:
+        status = "success"
+    else:
+        status = "failed"
     chunks = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
     lines = _merge_output_lines(chunks)
     db.finish_execution(exec_id, status, result.get("exit_code"), lines)
@@ -1065,15 +1087,21 @@ async def execute(req: ExecuteReq):
     schema = json.loads(rec.get("args_schema") or "[]")
     arg_list = build_arg_list(schema, req.args)
     command = _build_command_text(rec["path"], arg_list, rec.get("venv_path") or "")
-    exec_row = db.add_execution(req.script_id, req.args, req.preset_id)
+    custom = (req.command or "").strip()
+    exec_row = db.add_execution(req.script_id, req.args, req.preset_id, command=custom or command)
     if req.preset_id:
         db.touch_preset_used(req.preset_id)
     exec_id = exec_row["id"]
     _new_session(exec_id)
-    asyncio.create_task(
-        _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit, rec.get("venv_path") or ""))
-    )
-    return {"ok": True, "execution_id": exec_id, "command": command}
+    if custom:
+        asyncio.create_task(
+            _run_in_session(exec_id, lambda emit: _execute_command_task(exec_id, custom, rec["path"], emit))
+        )
+    else:
+        asyncio.create_task(
+            _run_in_session(exec_id, lambda emit: _execute_task(exec_id, rec["path"], arg_list, emit, rec.get("venv_path") or ""))
+        )
+    return {"ok": True, "execution_id": exec_id, "command": custom or command}
 
 
 @app.post("/api/scripts/command")
@@ -1087,6 +1115,58 @@ async def script_command(req: CommandReq):
     cmd, err = executor.build_command_ex(rec["path"], arg_list, venv_path=rec.get("venv_path") or "")
     command = "" if err else " ".join(_shq(c) for c in cmd)
     return {"ok": True, "command": command, "error": err}
+
+
+def merge_command(script_path: str, schema_args: list[dict], values: dict, user_command: str) -> Optional[str]:
+    """保留用户手动修改的命令前缀（如 -m pytest、PYTHONPATH=...、改脚本路径），
+    只把参数段刷新为当前表单值。无法安全定位参数段时返回 None（保持整条命令）。"""
+    if not user_command or not user_command.strip():
+        return None
+    try:
+        tokens = shlex.split(user_command)
+    except ValueError:
+        return None
+    if not tokens:
+        return None
+    opt_map: dict[str, dict] = {}
+    for a in schema_args:
+        for o in (a.get("option_strings") or []):
+            if o.startswith("-"):
+                opt_map[o] = a
+                if "--" in o and "_" in o:
+                    opt_map[o.replace("_", "-")] = a
+    # 定位第一个被识别的参数 token（--key / -k / --key=value）；未知选项（-m、-X）视为前缀
+    first = None
+    for i, tok in enumerate(tokens):
+        if tok.startswith("-") and tok != "-":
+            base = tok.split("=", 1)[0]
+            if base in opt_map:
+                first = i
+                break
+            continue
+    if first is None:
+        return None
+    prefix = " ".join(tokens[:first])
+    arg_list = build_arg_list(schema_args, values)
+    args_text = " ".join(_shq(a) for a in arg_list)
+    merged = (prefix + " " + args_text).strip() if args_text else prefix
+    return merged
+
+
+class MergeCommandReq(BaseModel):
+    args: dict = {}
+    command: str = ""
+
+
+@app.post("/api/scripts/{script_id}/merge-command")
+async def merge_script_command(script_id: int, req: MergeCommandReq):
+    """按当前表单值刷新用户自定义命令的参数段，保留手动修改的前缀。merged 为空表示无法合并、保持整条。"""
+    rec = db.get_script(script_id)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
+    schema = json.loads(rec.get("args_schema") or "[]")
+    merged = merge_command(rec["path"], schema, req.args, req.command)
+    return {"ok": True, "merged": merged or ""}
 
 
 @app.post("/api/scripts/{script_id}/parse-command")

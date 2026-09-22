@@ -400,6 +400,7 @@ async function selectScript(id) {
     renderEnvBar(rec.env);
     renderPresets(rec.presets);
     renderFields(rec.args_schema, rec.auto_saved_args);
+    refreshCmdInput();
     setRunning(false);
     // 若历史面板当前可见，切脚本后同步为当前脚本的记录
     if ($("#history-wrap") && !$("#history-wrap").hidden) refreshHistory();
@@ -1411,6 +1412,7 @@ async function saveArgs(values) {
   try {
     await api(`/api/scripts/${state.script.id}/args`, { method: "PUT", body: { args: values } });
   } catch { /* 忽略保存失败 */ }
+  refreshCmdInput();
 }
 
 async function reloadDetail() {
@@ -1489,6 +1491,35 @@ async function buildCommandText() {
   }
 }
 
+let cmdInputTimer = null;
+function userCmdKey() { return "launcher_usercmd_" + (state.script ? state.script.id : 0); }
+async function refreshCmdInput() {
+  const inp = $("#cmd-edit-input");
+  if (!inp || !state.script) return;
+  const res = await buildCommandText();
+  if (!res || res.error) { inp.value = ""; return; }
+  const defaultCmd = res.command;
+  const saved = (localStorage.getItem(userCmdKey()) || "").trim();
+  if (saved) {
+    let merged = "";
+    try {
+      const mr = await api(`/api/scripts/${state.script.id}/merge-command`, { method: "POST", body: { args: collectValues(), command: saved } });
+      merged = (mr.ok && mr.merged) || "";
+    } catch (e) {}
+    inp.value = merged || saved; // 无法合并时保持整条用户命令
+  } else {
+    inp.value = defaultCmd;
+  }
+}
+function onCmdInput() {
+  clearTimeout(cmdInputTimer);
+  cmdInputTimer = setTimeout(() => {
+    const v = $("#cmd-edit-input").value.trim();
+    if (v) localStorage.setItem(userCmdKey(), v);
+    else localStorage.removeItem(userCmdKey());
+  }, 600);
+}
+
 async function run() {
   if (!state.script || state.running) return;
   const values = collectValues();
@@ -1508,10 +1539,11 @@ async function run() {
   $("#run-state").textContent = "启动中…";
   $("#run-state").className = "run-state run";
   try {
-    const res = await api("/api/execute", {
-      method: "POST",
-      body: { script_id: state.script.id, args: values, preset_id: state.activePresetId },
-    });
+    const cmdInput = $("#cmd-edit-input");
+    const customCmd = cmdInput ? cmdInput.value.trim() : "";
+    const body = { script_id: state.script.id, args: values, preset_id: state.activePresetId };
+    if (customCmd) body.command = customCmd;
+    const res = await api("/api/execute", { method: "POST", body });
     state.currentExecId = res.execution_id;
     connectWs(`/ws/run/${res.execution_id}`, {});
   } catch (e) {
@@ -1706,6 +1738,12 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-parse-cmd").addEventListener("click", openCommandImport);
+$("#cmd-edit-input").addEventListener("input", onCmdInput);
+$("#cmd-edit-reset").addEventListener("click", () => {
+  localStorage.removeItem(userCmdKey());
+  refreshCmdInput();
+  toast("已恢复默认命令");
+});
 $("#btn-copy-command").addEventListener("click", async () => {
   if (!state.script) return toast("请先选择一个脚本", true);
   const res = await buildCommandText();
