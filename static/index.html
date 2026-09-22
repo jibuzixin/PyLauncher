@@ -653,7 +653,6 @@ svg { flex-shrink: 0; }
 .fields-toolbar .sw-row .switch { width: 34px; height: 20px; }
 .fields-toolbar .sw-row .switch .slider::before { width: 14px; height: 14px; }
 .fields-toolbar .sw-row .switch input:checked + .slider::before { transform: translateX(14px); }
-.fields-toolbar #btn-parse-cmd { flex-shrink: 0; }
 .fields { display: flex; flex-direction: column; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field .f-label { display: flex; align-items: center; gap: 6px; font-weight: 550; font-size: 12.5px; }
@@ -1628,10 +1627,6 @@ select.f-input { appearance: none; padding-right: 30px;
             <span class="slider"></span>
           </span>
         </label>
-        <button class="btn mini ghost" id="btn-parse-cmd" title="粘贴命令行，自动解析参数并回填表单">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-          <span>命令行导入</span>
-        </button>
       </div>
       <div class="fields" id="fields"></div>
     </div>
@@ -1642,6 +1637,10 @@ select.f-input { appearance: none; padding-right: 30px;
         <span>执行</span>
       </button>
       <span class="run-state" id="run-state"></span>
+      <button class="btn ghost big" id="btn-parse-cmd" title="粘贴命令行，自动解析参数并回填表单">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        <span>命令行导入</span>
+      </button>
       <button class="btn ghost big" id="btn-copy-command" title="复制当前参数对应的 uv run 命令">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
         <span>复制命令</span>
