@@ -706,24 +706,50 @@ select.f-input { appearance: none; padding-right: 30px;
 }
 
 /* run bar */
-/* ===== 运行命令编辑区 ===== */
+/* ===== 运行命令编辑区（终端卡片） ===== */
 .cmd-edit {
-  display: flex; align-items: center; gap: 8px;
   margin: 2px 0 10px; flex-shrink: 0;
 }
+.cmd-edit-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px;
+}
 .cmd-edit-label {
-  font-size: 11px; font-weight: 500; color: var(--muted);
-  letter-spacing: .02em; flex-shrink: 0;
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 600; color: var(--text);
+  letter-spacing: .01em;
+}
+.cmd-edit-label svg { width: 13px; height: 13px; color: var(--muted); }
+.cmd-edit-hint {
+  font-size: 10.5px; font-weight: 400; color: var(--faint);
+  margin-left: 2px;
+}
+.cmd-edit-box {
+  display: flex; align-items: flex-start; gap: 8px;
+  background: rgba(0,0,0,.035);
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  padding: 8px 10px;
+  transition: border-color .15s, box-shadow .15s, background .15s;
+}
+.cmd-edit-box:focus-within {
+  background: #fff;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0,113,227,.13);
+}
+.cmd-edit-prompt {
+  font-family: var(--mono); font-size: 12.5px; font-weight: 700;
+  color: var(--accent); line-height: 19px; user-select: none;
+  flex-shrink: 0;
 }
 .cmd-edit-input {
-  flex: 1; min-width: 0; height: 32px;
-  font-family: var(--mono); font-size: 12px;
+  flex: 1; min-width: 0; resize: vertical;
+  border: none; outline: none; background: transparent;
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
   color: var(--text);
+  padding: 0;
 }
-.cmd-edit-input:focus {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(31,41,55,.12);
-}
+.cmd-edit-input::placeholder { color: var(--faint); }
 
 .run-bar {
   display: flex; align-items: center; gap: 12px;
@@ -1651,10 +1677,22 @@ select.f-input { appearance: none; padding-right: 30px;
     </div>
 
     <div class="cmd-edit" id="cmd-edit">
-      <span class="cmd-edit-label">运行命令</span>
-      <input class="f-input mono cmd-edit-input" id="cmd-edit-input" spellcheck="false" autocomplete="off"
-        placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…），改参数后仅刷新参数段">
-      <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">重置</button>
+      <div class="cmd-edit-head">
+        <span class="cmd-edit-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>运行命令</span>
+          <span class="cmd-edit-hint">可编辑 · 改参数仅刷新参数段</span>
+        </span>
+        <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          <span>重置</span>
+        </button>
+      </div>
+      <div class="cmd-edit-box">
+        <span class="cmd-edit-prompt">$</span>
+        <textarea class="cmd-edit-input" id="cmd-edit-input" rows="2" spellcheck="false" autocomplete="off"
+          placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…）"></textarea>
+      </div>
     </div>
 
     <div class="run-bar">
@@ -3257,11 +3295,17 @@ async function refreshCmdInput() {
   } else {
     inp.value = defaultCmd;
   }
+  inp.style.height = "auto";
+  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
 }
 function onCmdInput() {
+  const inp = $("#cmd-edit-input");
+  // 自动增高：内容 1~3 行内自适应，超出滚动
+  inp.style.height = "auto";
+  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
   clearTimeout(cmdInputTimer);
   cmdInputTimer = setTimeout(() => {
-    const v = $("#cmd-edit-input").value.trim();
+    const v = inp.value.trim();
     if (v) localStorage.setItem(userCmdKey(), v);
     else localStorage.removeItem(userCmdKey());
   }, 600);

@@ -116,10 +116,22 @@
     </div>
 
     <div class="cmd-edit" id="cmd-edit">
-      <span class="cmd-edit-label">运行命令</span>
-      <input class="f-input mono cmd-edit-input" id="cmd-edit-input" spellcheck="false" autocomplete="off"
-        placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…），改参数后仅刷新参数段">
-      <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">重置</button>
+      <div class="cmd-edit-head">
+        <span class="cmd-edit-label">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+          <span>运行命令</span>
+          <span class="cmd-edit-hint">可编辑 · 改参数仅刷新参数段</span>
+        </span>
+        <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+          <span>重置</span>
+        </button>
+      </div>
+      <div class="cmd-edit-box">
+        <span class="cmd-edit-prompt">$</span>
+        <textarea class="cmd-edit-input" id="cmd-edit-input" rows="2" spellcheck="false" autocomplete="off"
+          placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…）"></textarea>
+      </div>
     </div>
 
     <div class="run-bar">

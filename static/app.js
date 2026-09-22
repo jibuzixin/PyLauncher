@@ -1510,11 +1510,17 @@ async function refreshCmdInput() {
   } else {
     inp.value = defaultCmd;
   }
+  inp.style.height = "auto";
+  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
 }
 function onCmdInput() {
+  const inp = $("#cmd-edit-input");
+  // 自动增高：内容 1~3 行内自适应，超出滚动
+  inp.style.height = "auto";
+  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
   clearTimeout(cmdInputTimer);
   cmdInputTimer = setTimeout(() => {
-    const v = $("#cmd-edit-input").value.trim();
+    const v = inp.value.trim();
     if (v) localStorage.setItem(userCmdKey(), v);
     else localStorage.removeItem(userCmdKey());
   }, 600);
