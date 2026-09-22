@@ -116,35 +116,33 @@
     </div>
 
     <div class="cmd-edit" id="cmd-edit">
-      <button class="cmd-edit-strip" id="cmd-edit-toggle" title="点击展开编辑运行命令">
+      <button class="cmd-edit-strip" id="cmd-edit-toggle" title="点击编辑运行命令">
         <svg class="strip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         <span class="strip-label">运行命令</span>
-        <span class="strip-dot" id="cmd-edit-dot" hidden></span>
         <span class="cmd-edit-preview" id="cmd-edit-preview"></span>
+        <span class="strip-dot" id="cmd-edit-dot" hidden></span>
         <svg class="strip-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      <div class="cmd-edit-panel" id="cmd-edit-panel">
-        <div class="cmd-edit-head">
-          <span class="cmd-edit-label">
+      <div class="cmd-edit-pop" id="cmd-edit-pop" hidden>
+        <div class="cmd-edit-pop-head">
+          <span class="cmd-edit-pop-title">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            <span>运行命令</span>
-            <span class="cmd-edit-hint">可编辑 · 改参数仅刷新参数段</span>
+            编辑运行命令
           </span>
-          <span class="cmd-edit-actions">
-            <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              <span>重置</span>
-            </button>
-            <button class="btn mini ghost" id="cmd-edit-collapse" title="收起">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-              <span>收起</span>
-            </button>
-          </span>
+          <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            <span>重置</span>
+          </button>
         </div>
         <div class="cmd-edit-box">
           <span class="cmd-edit-prompt">$</span>
           <textarea class="cmd-edit-input" id="cmd-edit-input" rows="2" spellcheck="false" autocomplete="off"
             placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…）"></textarea>
+        </div>
+        <div class="cmd-edit-pop-foot">
+          <span class="cmd-edit-tip">改参数仅刷新参数段 · 清空即恢复默认</span>
+          <button class="btn ghost" id="cmd-edit-cancel">取消</button>
+          <button class="btn primary" id="cmd-edit-save">保存</button>
         </div>
       </div>
     </div>

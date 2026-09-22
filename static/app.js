@@ -1749,20 +1749,36 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-parse-cmd").addEventListener("click", openCommandImport);
-$("#cmd-edit-toggle").addEventListener("click", () => {
-  $("#cmd-edit").classList.add("open");
+function openCmdPop() {
+  const pop = $("#cmd-edit-pop");
+  pop.hidden = false;
   const inp = $("#cmd-edit-input");
   inp.focus();
   inp.setSelectionRange(inp.value.length, inp.value.length);
+}
+function closeCmdPop() {
+  $("#cmd-edit-pop").hidden = true;
+  refreshCmdInput(); // 还原为已保存/默认状态
+}
+$("#cmd-edit-toggle").addEventListener("click", openCmdPop);
+$("#cmd-edit-save").addEventListener("click", () => {
+  const v = $("#cmd-edit-input").value.trim();
+  if (v) localStorage.setItem(userCmdKey(), v);
+  else localStorage.removeItem(userCmdKey());
+  $("#cmd-edit-pop").hidden = true;
+  refreshCmdInput();
+  toast(v ? "命令已保存" : "已恢复默认命令");
 });
-$("#cmd-edit-collapse").addEventListener("click", () => {
-  $("#cmd-edit").classList.remove("open");
-});
+$("#cmd-edit-cancel").addEventListener("click", closeCmdPop);
 $("#cmd-edit-input").addEventListener("input", onCmdInput);
 $("#cmd-edit-reset").addEventListener("click", () => {
   localStorage.removeItem(userCmdKey());
+  $("#cmd-edit-pop").hidden = true;
   refreshCmdInput();
   toast("已恢复默认命令");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#cmd-edit-pop").hidden) closeCmdPop();
 });
 $("#btn-copy-command").addEventListener("click", async () => {
   if (!state.script) return toast("请先选择一个脚本", true);

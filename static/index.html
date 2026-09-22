@@ -706,22 +706,23 @@ select.f-input { appearance: none; padding-right: 30px;
 }
 
 /* run bar */
-/* ===== 运行命令编辑区（收起条 + 弹出卡片） ===== */
+/* ===== 运行命令编辑区（小状态条 + 浮动编辑卡片） ===== */
 .cmd-edit {
-  margin: 2px 0 10px; flex-shrink: 0;
+  position: relative;
+  margin: 0 0 10px; flex-shrink: 0;
 }
-/* 收起态：一小行 */
+/* 小状态条：一行，不改动下方按钮栏布局 */
 .cmd-edit-strip {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; height: 30px;
-  padding: 0 12px;
-  background: rgba(0,0,0,.03);
+  display: flex; align-items: center; gap: 7px;
+  width: 100%; height: 28px;
+  padding: 0 10px;
+  background: rgba(0,0,0,.025);
   border: 1px solid var(--hairline);
   border-radius: 8px;
   cursor: pointer;
   font: inherit;
-  transition: background .15s, border-color .15s, box-shadow .15s;
   color: var(--text);
+  transition: background .15s, border-color .15s;
 }
 .cmd-edit-strip:hover {
   background: rgba(0,0,0,.05);
@@ -731,57 +732,50 @@ select.f-input { appearance: none; padding-right: 30px;
 .cmd-edit-strip:focus-visible {
   outline: none; box-shadow: 0 0 0 3px rgba(0,113,227,.15);
 }
-.strip-icon { width: 13px; height: 13px; color: var(--muted); flex-shrink: 0; }
+.strip-icon { width: 12px; height: 12px; color: var(--muted); flex-shrink: 0; }
 .strip-label {
-  font-size: 11.5px; font-weight: 600; color: var(--text);
+  font-size: 11px; font-weight: 600; color: var(--text);
   flex-shrink: 0; letter-spacing: .01em;
+}
+.cmd-edit-preview {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
 }
 .strip-dot {
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--accent); flex-shrink: 0;
 }
-.cmd-edit-preview {
-  flex: 1; min-width: 0;
-  font-family: var(--mono); font-size: 11px; color: var(--muted);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  text-align: left;
-}
 .strip-chevron {
-  width: 13px; height: 13px; color: var(--faint); flex-shrink: 0;
-  transition: transform .2s;
+  width: 12px; height: 12px; color: var(--faint); flex-shrink: 0;
 }
-/* 展开态卡片 */
-.cmd-edit-panel {
-  display: none;
-  padding: 10px 12px 12px;
+/* 浮动编辑卡片：向上弹出，不挤压布局 */
+.cmd-edit-pop {
+  position: absolute;
+  left: 0; right: 0;
+  bottom: calc(100% + 8px);
+  z-index: 60;
+  padding: 12px;
   background: #fff;
   border: 1px solid var(--hairline-strong);
-  border-radius: 10px;
-  box-shadow: 0 4px 12px rgba(0,0,0,.06);
-  animation: cmdPanelIn .18s ease-out;
-  transform-origin: top;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.10);
+  animation: cmdPopIn .16s ease-out;
 }
-@keyframes cmdPanelIn {
-  from { opacity: 0; transform: translateY(-4px) scaleY(.98); }
+@keyframes cmdPopIn {
+  from { opacity: 0; transform: translateY(5px); }
   to   { opacity: 1; transform: none; }
 }
-.cmd-edit.open .cmd-edit-strip { display: none; }
-.cmd-edit.open .cmd-edit-panel { display: block; }
-.cmd-edit-head {
+.cmd-edit-pop-head {
   display: flex; align-items: center; justify-content: space-between;
   margin-bottom: 8px;
 }
-.cmd-edit-label {
+.cmd-edit-pop-title {
   display: inline-flex; align-items: center; gap: 6px;
-  font-size: 11.5px; font-weight: 600; color: var(--text);
-  letter-spacing: .01em;
+  font-size: 12px; font-weight: 600; color: var(--text);
 }
-.cmd-edit-label svg { width: 13px; height: 13px; color: var(--muted); }
-.cmd-edit-hint {
-  font-size: 10.5px; font-weight: 400; color: var(--faint);
-  margin-left: 2px;
-}
-.cmd-edit-actions { display: inline-flex; align-items: center; gap: 6px; }
+.cmd-edit-pop-title svg { width: 13px; height: 13px; color: var(--muted); }
 .cmd-edit-box {
   display: flex; align-items: flex-start; gap: 8px;
   background: rgba(0,0,0,.035);
@@ -808,6 +802,14 @@ select.f-input { appearance: none; padding-right: 30px;
   padding: 0;
 }
 .cmd-edit-input::placeholder { color: var(--faint); }
+.cmd-edit-pop-foot {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-top: 10px;
+}
+.cmd-edit-tip {
+  font-size: 10.5px; color: var(--faint); flex: 1;
+}
+.cmd-edit-pop-foot .btn { margin-left: 0; }
 
 /* ===== Panel (console / history) 浮动卡片 ===== */
 .panel {
@@ -1719,35 +1721,33 @@ select.f-input { appearance: none; padding-right: 30px;
     </div>
 
     <div class="cmd-edit" id="cmd-edit">
-      <button class="cmd-edit-strip" id="cmd-edit-toggle" title="点击展开编辑运行命令">
+      <button class="cmd-edit-strip" id="cmd-edit-toggle" title="点击编辑运行命令">
         <svg class="strip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
         <span class="strip-label">运行命令</span>
-        <span class="strip-dot" id="cmd-edit-dot" hidden></span>
         <span class="cmd-edit-preview" id="cmd-edit-preview"></span>
+        <span class="strip-dot" id="cmd-edit-dot" hidden></span>
         <svg class="strip-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      <div class="cmd-edit-panel" id="cmd-edit-panel">
-        <div class="cmd-edit-head">
-          <span class="cmd-edit-label">
+      <div class="cmd-edit-pop" id="cmd-edit-pop" hidden>
+        <div class="cmd-edit-pop-head">
+          <span class="cmd-edit-pop-title">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            <span>运行命令</span>
-            <span class="cmd-edit-hint">可编辑 · 改参数仅刷新参数段</span>
+            编辑运行命令
           </span>
-          <span class="cmd-edit-actions">
-            <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-              <span>重置</span>
-            </button>
-            <button class="btn mini ghost" id="cmd-edit-collapse" title="收起">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
-              <span>收起</span>
-            </button>
-          </span>
+          <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
+            <span>重置</span>
+          </button>
         </div>
         <div class="cmd-edit-box">
           <span class="cmd-edit-prompt">$</span>
           <textarea class="cmd-edit-input" id="cmd-edit-input" rows="2" spellcheck="false" autocomplete="off"
             placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…）"></textarea>
+        </div>
+        <div class="cmd-edit-pop-foot">
+          <span class="cmd-edit-tip">改参数仅刷新参数段 · 清空即恢复默认</span>
+          <button class="btn ghost" id="cmd-edit-cancel">取消</button>
+          <button class="btn primary" id="cmd-edit-save">保存</button>
         </div>
       </div>
     </div>
@@ -3591,20 +3591,36 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-parse-cmd").addEventListener("click", openCommandImport);
-$("#cmd-edit-toggle").addEventListener("click", () => {
-  $("#cmd-edit").classList.add("open");
+function openCmdPop() {
+  const pop = $("#cmd-edit-pop");
+  pop.hidden = false;
   const inp = $("#cmd-edit-input");
   inp.focus();
   inp.setSelectionRange(inp.value.length, inp.value.length);
+}
+function closeCmdPop() {
+  $("#cmd-edit-pop").hidden = true;
+  refreshCmdInput(); // 还原为已保存/默认状态
+}
+$("#cmd-edit-toggle").addEventListener("click", openCmdPop);
+$("#cmd-edit-save").addEventListener("click", () => {
+  const v = $("#cmd-edit-input").value.trim();
+  if (v) localStorage.setItem(userCmdKey(), v);
+  else localStorage.removeItem(userCmdKey());
+  $("#cmd-edit-pop").hidden = true;
+  refreshCmdInput();
+  toast(v ? "命令已保存" : "已恢复默认命令");
 });
-$("#cmd-edit-collapse").addEventListener("click", () => {
-  $("#cmd-edit").classList.remove("open");
-});
+$("#cmd-edit-cancel").addEventListener("click", closeCmdPop);
 $("#cmd-edit-input").addEventListener("input", onCmdInput);
 $("#cmd-edit-reset").addEventListener("click", () => {
   localStorage.removeItem(userCmdKey());
+  $("#cmd-edit-pop").hidden = true;
   refreshCmdInput();
   toast("已恢复默认命令");
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !$("#cmd-edit-pop").hidden) closeCmdPop();
 });
 $("#btn-copy-command").addEventListener("click", async () => {
   if (!state.script) return toast("请先选择一个脚本", true);
