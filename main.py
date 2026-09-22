@@ -70,6 +70,10 @@ class UpdateScriptReq(BaseModel):
     tags: Optional[list[str]] = None
 
 
+class ParseCommandReq(BaseModel):
+    command: str
+
+
 class FolderReq(BaseModel):
     name: str
 
@@ -255,6 +259,209 @@ def build_arg_list(schema_args: list[dict], values: dict) -> list[str]:
     return result
 
 
+def parse_command_args(schema_args: list[dict], command: str, script_path: str) -> dict:
+    """把用户粘贴的命令行解析为参数值 dict。支持：
+    - 完整命令（uv run ... script.py ...）与纯参数片段（--key value / -k value / --key=value）
+    - 换行多行（shlex 视空白与换行为等价分隔）
+    - 缺失参数（required 未填 → missing）、未知参数（unknown）、多余位置参数（extra）
+    - 类型转换失败 → errors（dest -> 说明），失败项保留原文便于人工修正
+    """
+    import shlex
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError as e:
+        return {"ok": False, "error": f"命令行无法解析（引号/转义不匹配）：{e}"}
+    if not tokens:
+        return {"ok": False, "error": "命令行内容为空"}
+
+    # ---- 1. 剥离执行前缀：定位脚本路径 token，其后才是参数 ----
+    script = Path(script_path)
+    script_names = {str(script), str(script.resolve()), script.name}
+    params: list[str] = []
+    idx = 0
+    n = len(tokens)
+    found_script = False
+    while idx < n:
+        t = tokens[idx]
+        if t in script_names:
+            found_script = True
+            idx += 1
+            break
+        # venv python 可执行文件绝对路径（/bin/python、Scripts\python.exe 等）
+        if t.endswith(("/python", "/python3", "\\python.exe", "/python.exe")):
+            idx += 1
+            continue
+        # uv run / python 等前缀及它们的带值选项
+        if t in ("uv", "run", "python", "python3", "-u", "-X", "--"):
+            idx += 1
+            continue
+        if t in ("--project", "--script", "--directory", "-p"):
+            idx += 2
+            continue
+        params.append(t)
+        idx += 1
+    if found_script:
+        if idx < n and tokens[idx] == "--":
+            idx += 1
+        params.extend(tokens[idx:])
+    else:
+        # 未匹配到脚本路径：跳过 uv run --project DIR python -u 等前缀，直到第一个参数
+        prefix_set = {"uv", "run", "python", "python3", "-u", "-X", "--", "-m"}
+        i = 0
+        while i < n:
+            t = tokens[i]
+            if t in prefix_set:
+                i += 1
+                continue
+            if t in ("--project", "--script", "--directory", "-p"):
+                i += 2
+                continue
+            if t.endswith(("/python", "/python3", "\\python.exe", "/python.exe")):
+                i += 1
+                continue
+            if t.endswith(".py"):
+                i += 1
+                continue
+            break
+        params = tokens[i:]
+
+    # ---- 2. 建立 option 映射与位置参数列表 ----
+    opt_map: dict[str, dict] = {}
+    positionals: list[dict] = []
+    for a in schema_args:
+        if a["kind"] == "positional":
+            positionals.append(a)
+        else:
+            for os_ in (a.get("option_strings") or [a["name"]]):
+                opt_map[os_] = a
+            # 兼容 dest 变体：--max_workers 与 --max-workers 等价
+            d = a["dest"]
+            opt_map.setdefault("--" + d, a)
+            opt_map.setdefault("--" + d.replace("_", "-"), a)
+
+    parsed: dict = {}
+    errors: dict = {}
+    unknown: list[str] = []
+    extra: list[str] = []
+    multi: dict = {}  # nargs/append 收集
+
+    def _is_known_flag(tok: str) -> bool:
+        return tok.startswith("-") and tok != "-" and tok in opt_map
+
+    def _conv(a: dict, raw: str):
+        t = a.get("type", "str")
+        try:
+            if t == "int":
+                return int(raw)
+            if t == "float":
+                return float(raw)
+            if t == "bool":
+                return raw.lower() in ("1", "true", "yes", "on", "y")
+            return raw
+        except (ValueError, TypeError):
+            return None
+
+    def _assign(a: dict, raw: str) -> None:
+        v = _conv(a, raw)
+        if v is None:
+            errors.setdefault(a["dest"], f"「{raw}」不是有效的 {a.get('type', 'str')}")
+            parsed[a["dest"]] = raw  # 保留原文，用户可直接修改
+        else:
+            parsed[a["dest"]] = v
+
+    def _assign_multi(a: dict, raws: list[str]) -> None:
+        vals = []
+        for r in raws:
+            v = _conv(a, r)
+            if v is None:
+                lst = errors.setdefault(a["dest"], [])
+                if isinstance(lst, list):
+                    lst.append(f"「{r}」不是有效的 {a.get('type', 'str')}")
+            else:
+                vals.append(v)
+        if a.get("action") == "append":
+            multi.setdefault(a["dest"], []).extend(vals)
+        else:
+            multi[a["dest"]] = vals
+
+    pos_i = 0
+    idx = 0
+    n = len(params)
+    while idx < n:
+        tok = params[idx]
+        if tok == "--":
+            idx += 1
+            while idx < n:
+                if pos_i < len(positionals):
+                    _assign(positionals[pos_i], params[idx])
+                    pos_i += 1
+                else:
+                    extra.append(params[idx])
+                idx += 1
+            break
+        if tok.startswith("-") and tok != "-" and len(tok) > 1:
+            if tok.startswith("--") and "=" in tok:
+                key, _, val = tok.partition("=")
+                arg = opt_map.get(key)
+                if arg is None:
+                    unknown.append(key)
+                    idx += 1
+                    continue
+                if arg.get("is_flag"):
+                    parsed[arg["dest"]] = val.lower() in ("1", "true", "yes", "on")
+                    idx += 1
+                    continue
+                _assign(arg, val)
+                idx += 1
+                continue
+            arg = opt_map.get(tok)
+            if arg is None:
+                unknown.append(tok)
+                idx += 1
+                continue
+            if arg.get("is_flag"):
+                parsed[arg["dest"]] = arg.get("action") == "store_true"
+                idx += 1
+                continue
+            if arg.get("action") == "append" or arg.get("nargs"):
+                vals: list[str] = []
+                idx += 1
+                while idx < n and not _is_known_flag(params[idx]) and params[idx] != "--":
+                    vals.append(params[idx])
+                    idx += 1
+                _assign_multi(arg, vals)
+                continue
+            if idx + 1 >= n:
+                errors.setdefault(arg["dest"], f"{tok} 缺少值")
+                idx += 1
+                continue
+            _assign(arg, params[idx + 1])
+            idx += 2
+            continue
+        # 位置参数
+        if pos_i < len(positionals):
+            _assign(positionals[pos_i], tok)
+            pos_i += 1
+        else:
+            extra.append(tok)
+        idx += 1
+
+    # ---- 3. 合并多值 ----
+    for d, vals in multi.items():
+        parsed[d] = vals
+
+    # choices 校验
+    for a in schema_args:
+        ch = a.get("choices")
+        if ch and a["dest"] in parsed and parsed[a["dest"]] not in ch and str(parsed[a["dest"]]) not in [str(c) for c in ch]:
+            errors.setdefault(a["dest"], f"值不在可选范围内：{'/'.join(str(c) for c in ch)}")
+
+    missing = [a["dest"] for a in schema_args if a.get("required") and a["dest"] not in parsed]
+    return {"ok": True, "parsed": parsed, "missing": missing, "unknown": unknown, "extra": extra, "errors": errors}
+
+
+
+
 def _merge_output_lines(chunks: list[str]) -> list[str]:
     """把原始输出块按终端语义合并为逻辑行：\r 覆盖当前行、\n（或 \r\n）换行。
 
@@ -288,11 +495,14 @@ def _merge_output_lines(chunks: list[str]) -> list[str]:
 
 
 def _shq(s: str) -> str:
-    """POSIX shell 单引号转义：仅含安全字符时原样返回，否则用单引号包裹。"""
+    """Shell 双引号转义：仅含安全字符时原样返回，否则用双引号包裹。
+
+    双引号在 macOS/Linux shell 与 Windows cmd 下均通用（单引号在 cmd 中不是字符串界定符）。
+    """
     s = str(s)
     if s and all(c.isalnum() or c in "-_./@:=+%" for c in s):
         return s
-    return "'" + s.replace("'", "'\\''") + "'"
+    return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"' 
 
 
 def _build_command_text(script_path: str, arg_list: list[str], venv_path: str = "") -> str:
@@ -877,6 +1087,18 @@ async def script_command(req: CommandReq):
     cmd, err = executor.build_command_ex(rec["path"], arg_list, venv_path=rec.get("venv_path") or "")
     command = "" if err else " ".join(_shq(c) for c in cmd)
     return {"ok": True, "command": command, "error": err}
+
+
+@app.post("/api/scripts/{script_id}/parse-command")
+async def parse_script_command(script_id: int, req: ParseCommandReq):
+    """把粘贴的命令行解析为参数值并回填表单。"""
+    rec = db.get_script(script_id)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
+    schema = json.loads(rec.get("args_schema") or "[]")
+    if not schema:
+        return {"ok": False, "error": "该脚本没有可解析的命令行参数"}
+    return parse_command_args(schema, req.command, rec["path"])
 
 
 @app.get("/api/executions")

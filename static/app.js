@@ -1318,6 +1318,68 @@ function collectValues() {
   return values;
 }
 
+function openCommandImport() {
+  if (!state.script) return toast("请先选择一个脚本", true);
+  const schema = state.script.args_schema || [];
+  if (!schema.length) return toast("该脚本没有可解析的命令行参数", true);
+  const hasPos = schema.some((a) => a.kind === "positional");
+  openModal({
+    title: "命令行导入参数",
+    bodyHTML: `
+      <div class="cmd-import-tip">粘贴完整命令或仅参数片段（支持换行、<code>--key value</code>、<code>--key=value</code>），解析后自动回填表单。${hasPos ? "位置参数按声明顺序解析。" : ""}</div>
+      <textarea class="f-input cmd-import-input" id="cmd-import-input" rows="6" spellcheck="false" autocomplete="off"
+        placeholder="例如：${hasPos ? "input.csv " : ""}--max-workers 3\n--flush-every 5\n或：uv run script.py --max-workers 3"></textarea>
+      <div class="cmd-import-result" id="cmd-import-result"></div>
+    `,
+    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="cmd-import-ok">解析并回填</button>`,
+    onMount: (mask) => {
+      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
+      $("#cmd-import-ok", mask).addEventListener("click", async () => {
+        const txt = $("#cmd-import-input", mask).value.trim();
+        const box = $("#cmd-import-result", mask);
+        if (!txt) return toast("请输入命令行", true);
+        let res;
+        try {
+          res = await api(`/api/scripts/${state.script.id}/parse-command`, { method: "POST", body: { command: txt } });
+        } catch (e) {
+          box.innerHTML = `<div class="result-tip err">请求失败：${escapeHtml(e.message)}</div>`;
+          return;
+        }
+        if (!res.ok) {
+          box.innerHTML = `<div class="result-tip err">${escapeHtml(res.error || "解析失败")}</div>`;
+          return;
+        }
+        const filled = Object.keys(res.parsed || {}).length;
+        let html = `<div class="result-tip ok">已解析 ${filled} 个参数并回填表单</div>`;
+        if (res.missing && res.missing.length) html += `<div class="result-tip warn">缺失必填：${escapeHtml(res.missing.join("、"))}</div>`;
+        if (res.unknown && res.unknown.length) html += `<div class="result-tip warn">未识别参数：${escapeHtml(res.unknown.join("、"))}</div>`;
+        if (res.extra && res.extra.length) html += `<div class="result-tip warn">多余位置参数：${escapeHtml(res.extra.join("、"))}</div>`;
+        if (res.errors && Object.keys(res.errors).length) {
+          const errs = Object.entries(res.errors)
+            .map(([k, v]) => `${k}：${Array.isArray(v) ? v.join("；") : v}`)
+            .join("<br>");
+          html += `<div class="result-tip err">${errs}</div>`;
+        }
+        box.innerHTML = html;
+        const hasIssue = !!(res.missing && res.missing.length) || !!(res.unknown && res.unknown.length)
+          || !!(res.extra && res.extra.length) || !!(res.errors && Object.keys(res.errors).length);
+        if (filled) {
+          fillValues(res.parsed);
+          saveArgs(collectValues());
+          if (!hasIssue) {
+            toast("已回填 " + filled + " 个参数");
+            closeModal();
+          } else {
+            toast("已回填 " + filled + " 个参数，请查看下方提示");
+          }
+        } else {
+          toast("未解析到可识别的参数", true);
+        }
+      });
+    },
+  });
+}
+
 function fillValues(values) {
   for (const field of $$("#fields .field")) {
     const dest = field.dataset.dest;
@@ -1643,6 +1705,7 @@ $("#btn-terminate").addEventListener("click", async () => {
 
 /* ================= 控制台工具 ================= */
 
+$("#btn-parse-cmd").addEventListener("click", openCommandImport);
 $("#btn-copy-command").addEventListener("click", async () => {
   if (!state.script) return toast("请先选择一个脚本", true);
   const res = await buildCommandText();
