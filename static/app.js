@@ -1512,6 +1512,11 @@ async function refreshCmdInput() {
   }
   inp.style.height = "auto";
   inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
+  // 收起条：命令摘要 + 自定义蓝点
+  const preview = $("#cmd-edit-preview");
+  const dot = $("#cmd-edit-dot");
+  if (preview) preview.textContent = inp.value || "（空）";
+  if (dot) dot.hidden = !saved;
 }
 function onCmdInput() {
   const inp = $("#cmd-edit-input");
@@ -1744,6 +1749,15 @@ $("#btn-terminate").addEventListener("click", async () => {
 /* ================= 控制台工具 ================= */
 
 $("#btn-parse-cmd").addEventListener("click", openCommandImport);
+$("#cmd-edit-toggle").addEventListener("click", () => {
+  $("#cmd-edit").classList.add("open");
+  const inp = $("#cmd-edit-input");
+  inp.focus();
+  inp.setSelectionRange(inp.value.length, inp.value.length);
+});
+$("#cmd-edit-collapse").addEventListener("click", () => {
+  $("#cmd-edit").classList.remove("open");
+});
 $("#cmd-edit-input").addEventListener("input", onCmdInput);
 $("#cmd-edit-reset").addEventListener("click", () => {
   localStorage.removeItem(userCmdKey());

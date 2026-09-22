@@ -699,13 +699,70 @@ select.f-input { appearance: none; padding-right: 30px;
 }
 
 /* run bar */
-/* ===== 运行命令编辑区（终端卡片） ===== */
+/* ===== 运行命令编辑区（收起条 + 弹出卡片） ===== */
 .cmd-edit {
   margin: 2px 0 10px; flex-shrink: 0;
 }
+/* 收起态：一小行 */
+.cmd-edit-strip {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; height: 30px;
+  padding: 0 12px;
+  background: rgba(0,0,0,.03);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  transition: background .15s, border-color .15s, box-shadow .15s;
+  color: var(--text);
+}
+.cmd-edit-strip:hover {
+  background: rgba(0,0,0,.05);
+  border-color: var(--hairline-strong);
+}
+.cmd-edit-strip:active { background: rgba(0,0,0,.07); }
+.cmd-edit-strip:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(0,113,227,.15);
+}
+.strip-icon { width: 13px; height: 13px; color: var(--muted); flex-shrink: 0; }
+.strip-label {
+  font-size: 11.5px; font-weight: 600; color: var(--text);
+  flex-shrink: 0; letter-spacing: .01em;
+}
+.strip-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--accent); flex-shrink: 0;
+}
+.cmd-edit-preview {
+  flex: 1; min-width: 0;
+  font-family: var(--mono); font-size: 11px; color: var(--muted);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  text-align: left;
+}
+.strip-chevron {
+  width: 13px; height: 13px; color: var(--faint); flex-shrink: 0;
+  transition: transform .2s;
+}
+/* 展开态卡片 */
+.cmd-edit-panel {
+  display: none;
+  padding: 10px 12px 12px;
+  background: #fff;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 4px 12px rgba(0,0,0,.06);
+  animation: cmdPanelIn .18s ease-out;
+  transform-origin: top;
+}
+@keyframes cmdPanelIn {
+  from { opacity: 0; transform: translateY(-4px) scaleY(.98); }
+  to   { opacity: 1; transform: none; }
+}
+.cmd-edit.open .cmd-edit-strip { display: none; }
+.cmd-edit.open .cmd-edit-panel { display: block; }
 .cmd-edit-head {
   display: flex; align-items: center; justify-content: space-between;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
 }
 .cmd-edit-label {
   display: inline-flex; align-items: center; gap: 6px;
@@ -717,6 +774,7 @@ select.f-input { appearance: none; padding-right: 30px;
   font-size: 10.5px; font-weight: 400; color: var(--faint);
   margin-left: 2px;
 }
+.cmd-edit-actions { display: inline-flex; align-items: center; gap: 6px; }
 .cmd-edit-box {
   display: flex; align-items: flex-start; gap: 8px;
   background: rgba(0,0,0,.035);
@@ -726,7 +784,7 @@ select.f-input { appearance: none; padding-right: 30px;
   transition: border-color .15s, box-shadow .15s, background .15s;
 }
 .cmd-edit-box:focus-within {
-  background: #fff;
+  background: #fafafa;
   border-color: var(--accent);
   box-shadow: 0 0 0 3px rgba(0,113,227,.13);
 }
@@ -743,22 +801,6 @@ select.f-input { appearance: none; padding-right: 30px;
   padding: 0;
 }
 .cmd-edit-input::placeholder { color: var(--faint); }
-
-.run-bar {
-  display: flex; align-items: center; gap: 12px;
-  flex-shrink: 0;
-  padding: 12px 22px 14px;
-  border-top: 1px solid var(--hairline);
-  background: linear-gradient(to bottom, rgba(255,255,255,0.35), rgba(255,255,255,0.62));
-  backdrop-filter: var(--blur-sm);
-  -webkit-backdrop-filter: var(--blur-sm);
-}
-.run-state { font-size: 12px; color: var(--text); flex: 1; }
-#btn-copy-command { margin-left: auto; }
-.run-state.run { color: var(--muted); }
-.run-state.ok { color: var(--ok); }
-.run-state.err { color: var(--danger); }
-.run-state.warn { color: var(--warning); }
 
 /* ===== Panel (console / history) 浮动卡片 ===== */
 .panel {
