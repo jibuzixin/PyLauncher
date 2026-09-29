@@ -1590,9 +1590,6 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
     line.className = "console-line" + (st.streamCls ? " " + st.streamCls : "");
     const no = document.createElement("div");
     no.className = "line-no";
-    const noNum = document.createElement("span");
-    noNum.className = "line-no-num";
-    noNum.textContent = lineNo;
     const tsEl = document.createElement("span");
     tsEl.className = "line-ts";
     tsEl.textContent = st.ts;
@@ -1602,9 +1599,9 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
     btn.onclick = async (e) => {
       e.stopPropagation();
       const txt = line.querySelector(".line-text").textContent || "";
-      if (await copyText(stripAnsi(txt))) toast("已复制第 " + lineNo + " 行");
+      if (await copyText(stripAnsi(txt))) toast("已复制该行");
     };
-    no.append(noNum, tsEl, btn);
+    no.append(tsEl, btn);
     const txt = document.createElement("div");
     txt.className = "line-text";
     line.append(no, txt);
@@ -2089,7 +2086,7 @@ function renderHistory(list) {
       ? `${formatTime(h.started_at)} → ${formatTime(h.finished_at)}`
       : `${formatTime(h.started_at)} → 进行中`;
     tm.title = `开始：${h.started_at}\n结束：${h.finished_at || "进行中"}`;
-    top.append(nm, st, tm);
+    top.append(nm, st);
     // 单条快速删除：双态确认（点击一次卡片变红提示，再点一次删除，无弹窗）
     const del = document.createElement("button");
     del.className = "hi-del";
@@ -2130,11 +2127,6 @@ function renderHistory(list) {
     });
     top.appendChild(del);
 
-    const argsLine = document.createElement("div");
-    argsLine.className = "hi-args";
-    argsLine.textContent = summarizeArgs(h.args);
-    argsLine.title = h.args;
-
     const tagsRow = document.createElement("div");
     tagsRow.className = "hi-tags";
     const tags = JSON.parse(h.tags || "[]");
@@ -2145,7 +2137,7 @@ function renderHistory(list) {
       tagsRow.appendChild(tag);
     }
 
-    item.append(top, argsLine, tagsRow);
+    item.append(top, tm, tagsRow);
     item.dataset.id = h.id;
     item.onclick = () => {
       if (item.classList.contains("confirm-del")) { disarm(); return; } // 警告态点击卡片任意处 → 取消确认
@@ -2496,7 +2488,7 @@ function renderStaticOutput(text, tsText) {
   return lines.map((ln, i) => {
     const no = i + 1;
     const ts = tss[i] || "";
-    return `<div class="console-line"><div class="line-no"><span class="line-no-num">${no}</span>${ts ? `<span class="line-ts">${escapeHtml(ts)}</span>` : ""}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
+    return `<div class="console-line"><div class="line-no">${ts ? `<span class="line-ts">${escapeHtml(ts)}</span>` : ""}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
   }).join("");
 }
 
@@ -2670,29 +2662,7 @@ async function renderSchedules(silent) {
     const argsSrc = document.createElement("span");
     argsSrc.className = "si-args-src" + (s.preset_name ? " preset" : "");
     argsSrc.textContent = s.preset_name ? "预设：「" + s.preset_name + "」" : "参数：手动输入";
-    argsSrc.title = "悬停查看参数详情";
-    // 悬停弹出小窗查看参数细节
-    const sArgsPop = document.createElement("div");
-    sArgsPop.className = "si-args-pop";
-    sArgsPop.hidden = true;
-    const popTitle = document.createElement("div");
-    popTitle.className = "si-pop-title";
-    popTitle.textContent = s.preset_name ? "参数（预设：" + s.preset_name + "）" : "参数（手动输入）";
-    const popBody = document.createElement("div");
-    popBody.className = "si-pop-body";
-    renderArgChips(popBody, (typeof s.args === "string" ? JSON.parse(s.args || "{}") : (s.args || {})));
-    sArgsPop.append(popTitle, popBody);
-    let popTimer = null;
-    argsSrc.addEventListener("mouseenter", () => {
-      clearTimeout(popTimer);
-      sArgsPop.hidden = false;
-    });
-    argsSrc.addEventListener("mouseleave", () => {
-      popTimer = setTimeout(() => { sArgsPop.hidden = true; }, 150);
-    });
-    sArgsPop.addEventListener("mouseenter", () => clearTimeout(popTimer));
-    sArgsPop.addEventListener("mouseleave", () => { sArgsPop.hidden = true; });
-    row.appendChild(sArgsPop);
+    argsSrc.title = "点击卡片查看完整参数";
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -2748,8 +2718,149 @@ async function renderSchedules(silent) {
     });
     ops.append(runBtn, editBtn, delBtn);
     row.append(head, cronRow, meta, ops);
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button, input, label, .switch")) return;
+      showScheduleDetail(s);
+    });
     wrap.appendChild(row);
   }
+}
+
+/* ================= 定时任务详情：点击卡片右侧滑入（只读） ================= */
+function openScheduleDetail() {
+  const detail = $("#schedule-detail");
+  if (!detail) return;
+  detail.hidden = false;
+  detail.classList.remove("open");
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => detail.classList.add("open"));
+  });
+}
+function closeScheduleDetail(instant) {
+  const detail = $("#schedule-detail");
+  if (!detail) return;
+  const done = () => { detail.hidden = true; };
+  detail.classList.remove("open");
+  if (instant) { done(); return; }
+  detail._closeTimer && clearTimeout(detail._closeTimer);
+  detail._closeTimer = setTimeout(done, 320);
+}
+async function showScheduleDetail(s) {
+  const detail = $("#schedule-detail");
+  if (!detail) return;
+  detail.innerHTML = "";
+  openScheduleDetail();
+
+  // 头部：返回 + 名称 + 状态
+  const head = document.createElement("div");
+  head.className = "hd-head";
+  const backBtn = document.createElement("button");
+  backBtn.className = "hd-back";
+  backBtn.innerHTML = "‹ 返回";
+  backBtn.title = "返回定时任务列表";
+  backBtn.onclick = () => closeScheduleDetail();
+  const titleBox = document.createElement("div");
+  titleBox.className = "hd-title";
+  const nameRow = document.createElement("div");
+  nameRow.className = "hd-name-row";
+  const nm = document.createElement("span");
+  nm.className = "hd-name";
+  nm.textContent = s.name || "（未命名）";
+  const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
+  const st = document.createElement("span");
+  st.className = "si-status " + (autoDone ? "done" : (s.enabled ? "on" : "off"));
+  st.textContent = autoDone ? `已完成 ${s.run_count}/${s.max_runs} 次` : (s.enabled ? "已启用" : "已停用");
+  nameRow.append(nm, st);
+  titleBox.append(nameRow);
+  head.append(backBtn, titleBox);
+
+  const info = document.createElement("div");
+  info.className = "sd-info";
+
+  const addRow = (label, valueEl) => {
+    const row = document.createElement("div");
+    row.className = "sd-row";
+    const lb = document.createElement("span");
+    lb.className = "sd-label";
+    lb.textContent = label;
+    row.append(lb, valueEl);
+    info.appendChild(row);
+  };
+
+  // 执行时间（cron）
+  const cronCode = document.createElement("code");
+  cronCode.className = "sd-cron";
+  cronCode.textContent = s.cron;
+  addRow("执行时间", cronCode);
+
+  // 执行次数
+  const runsVal = document.createElement("span");
+  runsVal.textContent = `${s.run_count || 0} / ${s.max_runs || "不限"}`;
+  addRow("执行次数", runsVal);
+
+  // 脚本
+  const scriptVal = document.createElement("span");
+  scriptVal.textContent = s.script_name || "（已删除）";
+  addRow("脚本", scriptVal);
+
+  // 参数来源
+  const srcVal = document.createElement("span");
+  srcVal.textContent = s.preset_name ? "预设：「" + s.preset_name + "」" : "手动输入";
+  addRow("参数来源", srcVal);
+
+  // 参数详情
+  const argsBlock = document.createElement("div");
+  argsBlock.className = "sd-block";
+  const argsTitle = document.createElement("div");
+  argsTitle.className = "sd-block-title";
+  argsTitle.textContent = "参数";
+  const argsChips = document.createElement("div");
+  argsChips.className = "sd-chips";
+  let argsObj = {};
+  try { argsObj = typeof s.args === "string" ? JSON.parse(s.args || "{}") : (s.args || {}); } catch { argsObj = {}; }
+  const keys = Object.keys(argsObj);
+  if (!keys.length) {
+    argsChips.textContent = "无参数";
+    argsChips.classList.add("muted");
+  } else {
+    renderArgChips(argsChips, argsObj);
+  }
+  argsBlock.append(argsTitle, argsChips);
+  info.appendChild(argsBlock);
+
+  // 上次执行
+  const lastVal = document.createElement("span");
+  lastVal.textContent = s.last_run ? fmtTime(s.last_run) : "尚未执行";
+  if (s.last_status) {
+    const ls = document.createElement("span");
+    const stt = s.last_status.toLowerCase();
+    let cls = "info";
+    if (stt.includes("running")) cls = "run";
+    else if (stt.includes("success") || stt.includes("完成")) cls = "succ";
+    else if (stt.includes("fail") || stt.includes("error") || stt.includes("terminated") || stt.includes("无效") || stt.includes("不存在")) cls = "fail";
+    ls.className = "si-last-status " + cls;
+    ls.textContent = " · " + s.last_status;
+    lastVal.appendChild(ls);
+  }
+  addRow("上次执行", lastVal);
+
+  // 下次执行
+  const nextVal = document.createElement("span");
+  if (s.enabled && s.next_run) {
+    nextVal.textContent = `${fmtTime(s.next_run)}（${relTime(s.next_run)}）`;
+  } else {
+    nextVal.textContent = s.enabled ? "待计算" : "已停用，无计划";
+  }
+  addRow("下次执行", nextVal);
+
+  // 创建时间
+  if (s.created_at) {
+    const crVal = document.createElement("span");
+    crVal.textContent = fmtTime(s.created_at);
+    addRow("创建时间", crVal);
+  }
+
+  detail.append(head, info);
 }
 
 // 下次执行的相对倒计时（精确到分/秒）
