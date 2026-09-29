@@ -905,19 +905,20 @@ select.f-input { appearance: none; padding-right: 30px;
 }
 .console-line:hover { background: rgba(0, 0, 0, 0.045); }
 .console-line .line-no {
-  width: 74px; flex-shrink: 0;
-  display: flex; flex-direction: row; align-items: center; gap: 5px;
-  padding-right: 8px;
+  width: 98px; flex-shrink: 0;
+  display: flex; flex-direction: row; align-items: center; gap: 3px;
+  padding-right: 6px;
   color: var(--faint); user-select: none;
   position: relative;
   font-family: var(--mono);
 }
 .console-line .line-no .line-ts {
-  font-size: 9px; line-height: 1;
+  font-size: 12px; line-height: 18px;
   color: var(--faint);
-  opacity: .85;
+  opacity: .9;
   letter-spacing: 0;
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .console-line .line-no .copy-btn {
   display: none;
@@ -1289,12 +1290,14 @@ select.f-input { appearance: none; padding-right: 30px;
   backdrop-filter: var(--blur-md);
   -webkit-backdrop-filter: var(--blur-md);
   box-shadow: var(--shadow-sm);
-  transition: border-color 0.15s, background 0.15s;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s, transform 0.12s;
 }
-/* 定时任务卡片不可点击，悬浮固定（无上浮动效） */
 .schedule-item:hover {
-  background: var(--glass-strong);
-  border-color: var(--glass-border);
+  transform: translateY(-1px);
+  background: rgba(255, 255, 255, 0.6);
+  border-color: rgba(255, 255, 255, 0.8);
+  box-shadow: var(--shadow-md);
 }
 .si-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
 .si-name { font-weight: 650; font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1314,12 +1317,12 @@ select.f-input { appearance: none; padding-right: 30px;
 .si-args-src {
   font-size: 11px;
   color: var(--faint);
-  cursor: default;
+  cursor: pointer;
 }
 .si-args-src.preset {
   color: var(--accent);
   font-weight: 600;
-  cursor: help;
+  cursor: pointer;
 }
 .schedule-detail {
   position: absolute; inset: 0;
