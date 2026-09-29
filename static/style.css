@@ -897,19 +897,31 @@ select.f-input { appearance: none; padding-right: 30px;
 
 .console-line {
   display: flex;
-  min-height: 18px;
+  min-height: 20px;
   line-height: 18px;
-  padding: 0 10px;
+  padding: 1px 10px;
   position: relative;
+  align-items: flex-start;
 }
 .console-line:hover { background: rgba(0, 0, 0, 0.045); }
 .console-line .line-no {
-  width: 44px; flex-shrink: 0;
-  text-align: right; padding-right: 10px;
+  width: 58px; flex-shrink: 0;
+  display: flex; flex-direction: column; align-items: flex-end;
+  padding-right: 8px;
   color: var(--faint); user-select: none;
-  font-size: 11px;
   position: relative;
   font-family: var(--mono);
+}
+.console-line .line-no .line-no-num {
+  font-size: 11px; line-height: 18px; text-align: right;
+}
+.console-line .line-no .line-ts {
+  font-size: 9px; line-height: 1;
+  color: var(--faint);
+  opacity: .8;
+  margin-top: 1px;
+  letter-spacing: 0;
+  text-align: right;
 }
 .console-line .line-no .copy-btn {
   position: absolute; right: 2px; top: 0;
@@ -1301,6 +1313,38 @@ select.f-input { appearance: none; padding-right: 30px;
 .si-next-label { font-size: 10.5px; color: var(--faint); }
 .si-next-time { font-size: 16px; font-weight: 600; }
 .si-next-rel { font-size: 11px; color: var(--muted); }
+
+/* ===== 定时任务：参数来源 + 悬停详情小窗 ===== */
+.si-args-src {
+  font-size: 11px;
+  color: var(--faint);
+  cursor: default;
+}
+.si-args-src.preset {
+  color: var(--accent);
+  font-weight: 600;
+  cursor: help;
+}
+.schedule-item { position: relative; }
+.si-args-pop {
+  position: absolute;
+  top: calc(100% - 2px);
+  left: 10px;
+  z-index: 55;
+  min-width: 220px;
+  max-width: 340px;
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.10);
+  animation: cmdPopIn .14s ease-out;
+}
+.si-pop-title {
+  font-size: 11px; font-weight: 600; color: var(--text);
+  margin-bottom: 7px;
+}
+.si-pop-body .arg-chip { margin-bottom: 4px; }
 
 .si-meta { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 12px; color: var(--muted); margin-bottom: 12px; padding-top: 10px; border-top: 1px dashed var(--hairline); }
 .si-last-status.succ { color: var(--ok); }

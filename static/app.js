@@ -1571,10 +1571,18 @@ async function run() {
    渲染器可实例化：主控制台与执行记录详情页各持一个，互不干扰 */
 
 function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
-  const st = { buf: "", cur: null, crPending: false, streamCls: "", lineCount: 0 };
+  const st = { buf: "", cur: null, crPending: false, streamCls: "", lineCount: 0, ts: "", userScrolled: false };
   const autoscroll = () => {
-    if (wrapEl && $("#opt-autoscroll").checked) wrapEl.scrollTop = wrapEl.scrollHeight;
+    if (!wrapEl || st.userScrolled) return;
+    if ($("#opt-autoscroll").checked) wrapEl.scrollTop = wrapEl.scrollHeight;
   };
+  // 用户手动滚动时暂停自动跟随（方便回看历史），滚回底部后自动恢复
+  if (wrapEl) {
+    wrapEl.addEventListener("scroll", () => {
+      const atBottom = wrapEl.scrollHeight - wrapEl.scrollTop - wrapEl.clientHeight < 24;
+      st.userScrolled = !atBottom && wrapEl.scrollTop > 0;
+    }, { passive: true });
+  }
   function ensure() {
     if (st.cur) return;
     const lineNo = st.lineCount + 1;
@@ -1582,7 +1590,12 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
     line.className = "console-line" + (st.streamCls ? " " + st.streamCls : "");
     const no = document.createElement("div");
     no.className = "line-no";
-    no.textContent = lineNo;
+    const noNum = document.createElement("span");
+    noNum.className = "line-no-num";
+    noNum.textContent = lineNo;
+    const tsEl = document.createElement("span");
+    tsEl.className = "line-ts";
+    tsEl.textContent = st.ts;
     const btn = document.createElement("button");
     btn.className = "copy-btn";
     btn.textContent = "复制";
@@ -1591,15 +1604,15 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
       const txt = line.querySelector(".line-text").textContent || "";
       if (await copyText(stripAnsi(txt))) toast("已复制第 " + lineNo + " 行");
     };
-    no.appendChild(btn);
+    no.append(noNum, tsEl, btn);
     const txt = document.createElement("div");
     txt.className = "line-text";
     line.append(no, txt);
     consoleEl.appendChild(line);
     st.lineCount++;
     st.cur = line;
-    // 控制控制台体量：最多保留 5000 行
-    while (consoleEl.children.length > 5000) consoleEl.removeChild(consoleEl.firstChild);
+    // 控制控制台体量：最多保留 1000 行（与执行记录口径一致），异常长输出不拖卡页面
+    while (consoleEl.children.length > 1000) consoleEl.removeChild(consoleEl.firstChild);
   }
   function update() {
     if (!st.buf && !st.cur) return;
@@ -1618,12 +1631,13 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
     st,
     clear() {
       consoleEl.innerHTML = "";
-      st.buf = ""; st.cur = null; st.crPending = false; st.streamCls = ""; st.lineCount = 0;
+      st.buf = ""; st.cur = null; st.crPending = false; st.streamCls = ""; st.lineCount = 0; st.ts = ""; st.userScrolled = false;
       if (placeholderEl) placeholderEl.style.display = "flex";
     },
-    append(stream, chunk) {
+    append(stream, chunk, ts) {
       if (placeholderEl) placeholderEl.style.display = "none";
       st.streamCls = stream === "info" ? "info" : stream === "stderr" ? "stderr" : "";
+      st.ts = ts || st.ts || "";
       let i = 0;
       const len = chunk.length;
       while (i < len) {
@@ -1657,7 +1671,7 @@ function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
 
 const mainConsole = createConsoleRenderer($("#console"), $("#console-wrap"), $("#console-placeholder"));
 function clearConsole() { mainConsole.clear(); }
-function appendStream(stream, chunk) { mainConsole.append(stream, chunk); }
+function appendStream(stream, chunk, ts) { mainConsole.append(stream, chunk, ts || ""); }
 
 // ANSI SGR 颜色映射（适配浅色控制台）
 const ANSI_FG = { 30: "#1a1a1a", 31: "#c62828", 32: "#2e7d32", 33: "#9e7d00", 34: "#1565c0", 35: "#8e24aa", 36: "#00796b", 37: "#424242" };
@@ -1703,12 +1717,16 @@ function ansiToHtml(text) {
 
 async function connectWs(path, { envInit = false, scriptId = null } = {}) {
   const proto = location.protocol === "https:" ? "wss" : "ws";
+  // 新运行开始：关闭上一个连接，避免多脚本同时运行时输出“打架”，
+  // 控制台只保留最新一次运行的实时输出；旧任务的输出进入执行记录详情。
+  if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
   const ws = new WebSocket(`${proto}://${location.host}${path}`);
   state.ws = ws;
   ws.onmessage = async (e) => {
+    if (state.ws !== ws) return; // 已被更新的连接取代，丢弃旧消息
     const m = JSON.parse(e.data);
     if (m.type === "line") {
-      appendStream(m.stream, m.line);
+      appendStream(m.stream, m.line, m.ts || "");
     } else if (m.type === "done") {
       const r = m.result || {};
       if (envInit) {
@@ -2067,7 +2085,10 @@ function renderHistory(list) {
     st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[h.status] || h.status;
     const tm = document.createElement("span");
     tm.className = "hi-time";
-    tm.textContent = formatTime(h.started_at);
+    tm.textContent = h.finished_at
+      ? `${formatTime(h.started_at)} → ${formatTime(h.finished_at)}`
+      : `${formatTime(h.started_at)} → 进行中`;
+    tm.title = `开始：${h.started_at}\n结束：${h.finished_at || "进行中"}`;
     top.append(nm, st, tm);
     // 单条快速删除：双态确认（点击一次卡片变红提示，再点一次删除，无弹窗）
     const del = document.createElement("button");
@@ -2327,7 +2348,10 @@ async function showHistoryDetail(id, itemEl) {
   st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[rec.status] || rec.status;
   const meta = document.createElement("div");
   meta.className = "hd-meta";
-  meta.textContent = `${formatTime(rec.started_at)} · 退出码 ${rec.exit_code ?? "-"}`;
+  const durText = rec.status === "running"
+    ? `开始 ${formatTime(rec.started_at)} · 进行中`
+    : `开始 ${formatTime(rec.started_at)} · 结束 ${rec.finished_at ? formatTime(rec.finished_at) : "-"}`;
+  meta.textContent = `${durText} · 退出码 ${rec.exit_code ?? "-"}`;
   nameRow.append(nm, st);
   titleBox.append(nameRow, meta);
   head.append(backBtn, titleBox);
@@ -2451,24 +2475,28 @@ async function showHistoryDetail(id, itemEl) {
   } else {
     const out = document.createElement("div");
     out.className = "hd-output";
-    const outputHtml = renderStaticOutput(rec.output);
+    const outputHtml = renderStaticOutput(rec.output, rec.output_ts);
     out.innerHTML = outputHtml || "（无输出）";
     const truncated = document.createElement("div");
     truncated.className = "hd-truncated";
     truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
     detail.append(head, argsBlock, tagsRow, out, truncated);
+    // 打开详情即滚动到最底部，无需手动翻到底
+    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight; });
   }
 }
 
-/* 静态输出渲染为带行号 + 复制按钮的行列表（与实时控制台风格一致） */
-function renderStaticOutput(text) {
+/* 静态输出渲染为带行号 + 时间戳 + 复制按钮的行列表（与实时控制台风格一致） */
+function renderStaticOutput(text, tsText) {
   if (!text) return "";
   const lines = String(text).split("\n");
+  const tss = tsText ? String(tsText).split("\n") : [];
   // 去掉末尾多余空行（最后一个 \n 产生的空串）
   while (lines.length && lines[lines.length - 1] === "") lines.pop();
   return lines.map((ln, i) => {
     const no = i + 1;
-    return `<div class="console-line"><div class="line-no">${no}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
+    const ts = tss[i] || "";
+    return `<div class="console-line"><div class="line-no"><span class="line-no-num">${no}</span>${ts ? `<span class="line-ts">${escapeHtml(ts)}</span>` : ""}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
   }).join("");
 }
 
@@ -2478,7 +2506,7 @@ function connectDetailWs(execId, renderer, detailId, itemEl) {
   ws.onmessage = async (e) => {
     const m = JSON.parse(e.data);
     if (m.type === "line") {
-      renderer.append(m.stream, m.line);
+      renderer.append(m.stream, m.line, m.ts || "");
     } else if (m.type === "done") {
       try { ws.close(); } catch {}
       if (state.detailWs === ws) state.detailWs = null;
@@ -2634,11 +2662,37 @@ async function renderSchedules(silent) {
     }
     cronRow.append(cron, runsBlock, next);
 
-    // 元信息：脚本 + 上次执行
+    // 元信息：脚本 + 参数来源 + 上次执行
     const meta = document.createElement("div");
     meta.className = "si-meta";
     const scriptNm = document.createElement("span");
     scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
+    const argsSrc = document.createElement("span");
+    argsSrc.className = "si-args-src" + (s.preset_name ? " preset" : "");
+    argsSrc.textContent = s.preset_name ? "预设：「" + s.preset_name + "」" : "参数：手动输入";
+    argsSrc.title = "悬停查看参数详情";
+    // 悬停弹出小窗查看参数细节
+    const sArgsPop = document.createElement("div");
+    sArgsPop.className = "si-args-pop";
+    sArgsPop.hidden = true;
+    const popTitle = document.createElement("div");
+    popTitle.className = "si-pop-title";
+    popTitle.textContent = s.preset_name ? "参数（预设：" + s.preset_name + "）" : "参数（手动输入）";
+    const popBody = document.createElement("div");
+    popBody.className = "si-pop-body";
+    renderArgChips(popBody, (typeof s.args === "string" ? JSON.parse(s.args || "{}") : (s.args || {})));
+    sArgsPop.append(popTitle, popBody);
+    let popTimer = null;
+    argsSrc.addEventListener("mouseenter", () => {
+      clearTimeout(popTimer);
+      sArgsPop.hidden = false;
+    });
+    argsSrc.addEventListener("mouseleave", () => {
+      popTimer = setTimeout(() => { sArgsPop.hidden = true; }, 150);
+    });
+    sArgsPop.addEventListener("mouseenter", () => clearTimeout(popTimer));
+    sArgsPop.addEventListener("mouseleave", () => { sArgsPop.hidden = true; });
+    row.appendChild(sArgsPop);
     const last = document.createElement("span");
     last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
     if (s.last_status) {
@@ -2652,7 +2706,7 @@ async function renderSchedules(silent) {
       st.textContent = " · " + s.last_status;
       last.appendChild(st);
     }
-    meta.append(scriptNm, last);
+    meta.append(scriptNm, argsSrc, last);
 
     // 操作按钮
     const ops = document.createElement("div");
@@ -2886,6 +2940,7 @@ async function scheduleModal(sched) {
   const selId = sched ? sched.script_id : (state.script ? state.script.id : (scripts[0] && scripts[0].id));
   let schema = [];
   let presets = [];
+  let savedPresetId = sched && sched.preset_id ? sched.preset_id : null;
   let savedArgs = sched ? (typeof sched.args === "string" ? JSON.parse(sched.args || "{}") : (sched.args || {})) : {};
   if (selId) {
     const rec = await api(`/api/scripts/${selId}`).catch(() => null);
@@ -2944,7 +2999,7 @@ async function scheduleModal(sched) {
         <div class="m-label">参数来源</div>
         <select class="f-input" id="sc-preset">
           <option value="">手动填写</option>
-          ${presets.map((p) => `<option value="${p.id}" data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("")}
+          ${presets.map((p) => `<option value="${p.id}" ${savedPresetId === p.id ? "selected" : ""} data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("")}
         </select>
       </div>
       <div class="m-field">
@@ -3035,9 +3090,10 @@ async function scheduleModal(sched) {
           if (isNaN(maxRuns) || maxRuns < 1) return toast("执行次数需为不小于 1 的整数", true);
         }
         const args = collectSchedFields(fieldsBox, schema);
-        const body = { name, cron, enabled, args, max_runs: maxRuns };
+        const presetId = $("#sc-preset", mask).value ? parseInt($("#sc-preset", mask).value, 10) : null;
+        const body = { name, cron, enabled, args, max_runs: maxRuns, preset_id: presetId };
         if (editing) {
-          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args, max_runs: maxRuns } });
+          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args, max_runs: maxRuns, preset_id: presetId } });
           toast("已保存修改");
         } else {
           await api("/api/schedules", { method: "POST", body: { ...body, script_id: parseInt(scriptSel.value, 10) } });

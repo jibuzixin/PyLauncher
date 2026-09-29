@@ -130,6 +130,7 @@ class ScheduleReq(BaseModel):
     args: dict = {}
     enabled: bool = True
     max_runs: Optional[int] = None
+    preset_id: Optional[int] = None
 
 
 class ScheduleUpdateReq(BaseModel):
@@ -138,6 +139,7 @@ class ScheduleUpdateReq(BaseModel):
     args: Optional[dict] = None
     enabled: Optional[bool] = None
     max_runs: Optional[int] = None
+    preset_id: Optional[int] = None
 
 
 class CronPreviewReq(BaseModel):
@@ -162,7 +164,15 @@ async def _emit(session_id: int, stream: str, line: str) -> None:
     sess = _SESSIONS.get(session_id)
     if not sess:
         return
-    sess["buffer"].append((stream, line))
+    # 记录接收时刻（HH:MM:SS），并限制 buffer 体积：只保留最近 1500 块，
+    # 避免超长输出（几千行）导致详情页 WS 重放卡顿；DB 落库时再截到 1000 行。
+    sess["buffer"].append((stream, line, datetime.now().strftime("%H:%M:%S")))
+    if len(sess["buffer"]) > 1500:
+        over = len(sess["buffer"]) - 1500
+        del sess["buffer"][:over]
+        # 截断会令活跃连接的读取指针错位：统一前移，避免丢行或重复
+        for h in sess["readers"]:
+            h[0] = max(0, h[0] - over)
     async with sess["cond"]:
         sess["cond"].notify_all()
 
@@ -177,7 +187,7 @@ async def _run_in_session(session_id: int, coro: Callable[[Callable], Any]) -> N
         result = {"ok": False, "message": "任务被取消"}
     except Exception as e:  # noqa: BLE001
         result = {"ok": False, "message": str(e)}
-    sess["buffer"].append(("__done__", result))
+    sess["buffer"].append(("__done__", result, ""))
     sess["done"] = True
     async with sess["cond"]:
         sess["cond"].notify_all()
@@ -185,7 +195,7 @@ async def _run_in_session(session_id: int, coro: Callable[[Callable], Any]) -> N
 
 
 def _new_session(session_id: int) -> None:
-    _SESSIONS[session_id] = {"buffer": [], "cond": asyncio.Condition(), "done": False}
+    _SESSIONS[session_id] = {"buffer": [], "cond": asyncio.Condition(), "done": False, "readers": []}
 
 
 async def _ws_pump(ws: WebSocket, session_id: int) -> None:
@@ -196,18 +206,27 @@ async def _ws_pump(ws: WebSocket, session_id: int) -> None:
         await ws.send_json({"type": "done", "result": {"ok": False, "message": "会话不存在"}})
         await ws.close()
         return
-    idx = 0
-    while True:
-        while idx < len(sess["buffer"]):
-            stream, data = sess["buffer"][idx]
-            idx += 1
-            if stream == "__done__":
-                await ws.send_json({"type": "done", "result": data})
-                await ws.close()
-                return
-            await ws.send_json({"type": "line", "stream": stream, "line": data})
-        async with sess["cond"]:
-            await sess["cond"].wait()
+    holder = [0]
+    sess["readers"].append(holder)
+    try:
+        while True:
+            idx = holder[0]
+            while idx < len(sess["buffer"]):
+                stream, data, ts = sess["buffer"][idx]
+                holder[0] = idx + 1
+                idx += 1
+                if stream == "__done__":
+                    await ws.send_json({"type": "done", "result": data})
+                    await ws.close()
+                    return
+                await ws.send_json({"type": "line", "stream": stream, "line": data, "ts": ts})
+            async with sess["cond"]:
+                await sess["cond"].wait()
+    finally:
+        try:
+            sess["readers"].remove(holder)
+        except ValueError:
+            pass
 
 
 # ---------------- 执行逻辑 ----------------
@@ -464,36 +483,45 @@ def parse_command_args(schema_args: list[dict], command: str, script_path: str) 
 
 
 
-def _merge_output_lines(chunks: list[str]) -> list[str]:
+def _merge_output_lines(chunks: list[tuple[str, str, str]]) -> tuple[list[str], list[str]]:
     """把原始输出块按终端语义合并为逻辑行：\r 覆盖当前行、\n（或 \r\n）换行。
 
-    保留 ANSI 转义序列（历史详情前端做 ANSI 渲染）。支持 pty 块与管道行混排。
+    保留 ANSI 转义序列（历史详情前端做 ANSI 渲染）。返回 (lines, ts_lines)，
+    ts_lines 与 lines 一一对应，为各逻辑行首次接收时刻（HH:MM:SS）。
     """
-    text = "".join(chunks)
     lines: list[str] = []
+    ts_lines: list[str] = []
     buf = ""
-    i, n = 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch == "\r":
-            if i + 1 < n and text[i + 1] == "\n":
-                lines.append(buf)
-                buf = ""
-                i += 2
+    buf_ts = None
+    for _stream, line, ts in chunks:
+        i, n = 0, len(line)
+        if buf_ts is None:
+            buf_ts = ts
+        while i < n:
+            ch = line[i]
+            if ch == "\r":
+                if i + 1 < n and line[i + 1] == "\n":
+                    lines.append(buf)
+                    ts_lines.append(buf_ts or ts)
+                    buf, buf_ts = "", None
+                    i += 2
+                    continue
+                # 单行进度条刷新：覆盖当前行，时间更新为当前块
+                buf, buf_ts = "", ts
+                i += 1
                 continue
-            buf = ""
+            if ch == "\n":
+                lines.append(buf)
+                ts_lines.append(buf_ts or ts)
+                buf, buf_ts = "", None
+                i += 1
+                continue
+            buf += ch
             i += 1
-            continue
-        if ch == "\n":
-            lines.append(buf)
-            buf = ""
-            i += 1
-            continue
-        buf += ch
-        i += 1
     if buf:
         lines.append(buf)
-    return lines
+        ts_lines.append(buf_ts or (chunks[-1][2] if chunks else ""))
+    return lines, ts_lines
 
 
 def _shq(s: str) -> str:
@@ -545,9 +573,9 @@ async def _execute_task(exec_id: int, script_path: str, arg_list: list[str], emi
     else:
         status = "failed"
 
-    chunks = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
-    lines = _merge_output_lines(chunks)
-    db.finish_execution(exec_id, status, result.get("exit_code"), lines)
+    chunks = [(s, l, t) for s, l, t in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
+    lines, ts_lines = _merge_output_lines(chunks)
+    db.finish_execution(exec_id, status, result.get("exit_code"), lines, ts_lines)
     await emit("info", f"· 执行结束：{status}（退出码 {result.get('exit_code')}）\n")
     result["status"] = status
     return result
@@ -565,9 +593,9 @@ async def _execute_command_task(exec_id: int, command: str, script_path: str, em
         status = "success"
     else:
         status = "failed"
-    chunks = [l for s, l in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
-    lines = _merge_output_lines(chunks)
-    db.finish_execution(exec_id, status, result.get("exit_code"), lines)
+    chunks = [(s, l, t) for s, l, t in _SESSIONS.get(exec_id, {"buffer": []})["buffer"] if s != "__done__"]
+    lines, ts_lines = _merge_output_lines(chunks)
+    db.finish_execution(exec_id, status, result.get("exit_code"), lines, ts_lines)
     await emit("info", f"· 执行结束：{status}（退出码 {result.get('exit_code')}）\n")
     result["status"] = status
     return result
@@ -775,7 +803,7 @@ async def create_schedule(req: ScheduleReq):
         _cron_next(cron, datetime.now().astimezone())
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
-    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs)
+    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs, preset_id=req.preset_id)
     _refresh_schedule_plan(s["id"], cron, bool(req.enabled))
     s = db.get_schedule(s["id"])
     return {"ok": True, "schedule": s}
@@ -800,6 +828,7 @@ async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
         args=req.args,
         enabled=req.enabled,
         max_runs=req.max_runs if "max_runs" in req.model_fields_set else db._UNSET,
+        preset_id=req.preset_id if "preset_id" in req.model_fields_set else db._UNSET,
     )
     # 表达式或启停变化后：清空旧计划并立即重算 next_run，前端保存后即刻看到新时间
     if req.cron is not None or req.enabled is not None or req.max_runs is not None:

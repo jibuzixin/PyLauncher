@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS executions (
     status TEXT NOT NULL DEFAULT 'running',
     exit_code INTEGER,
     output TEXT NOT NULL DEFAULT '',
+    output_ts TEXT NOT NULL DEFAULT '',
     tags TEXT NOT NULL DEFAULT '[]',
     started_at TEXT NOT NULL,
     finished_at TEXT
@@ -119,15 +120,19 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE schedules ADD COLUMN max_runs INTEGER")
     if "run_count" not in scols:
         conn.execute("ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0")
+    if "preset_id" not in scols:
+        conn.execute("ALTER TABLE schedules ADD COLUMN preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL")
     # scripts 表迁移：自定义虚拟环境（venv_path，空=默认脚本目录 .venv）
     scols = {r[1] for r in conn.execute("PRAGMA table_info(scripts)")}
     if "venv_path" not in scols:
         conn.execute("ALTER TABLE scripts ADD COLUMN venv_path TEXT NOT NULL DEFAULT ''")
     # presets 表迁移：固定 / 排序 / 最近使用
-    # executions 表迁移：实际执行命令（自定义命令回显）
+    # executions 表迁移：实际执行命令（自定义命令回显）+ 每行输出时间戳
     ecols = {r[1] for r in conn.execute("PRAGMA table_info(executions)")}
     if "command" not in ecols:
         conn.execute("ALTER TABLE executions ADD COLUMN command TEXT NOT NULL DEFAULT ''")
+    if "output_ts" not in ecols:
+        conn.execute("ALTER TABLE executions ADD COLUMN output_ts TEXT NOT NULL DEFAULT ''")
     # presets 表迁移：固定 / 排序 / 最近使用
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(presets)")}
     if "pinned" not in pcols:
@@ -410,8 +415,9 @@ def list_running_executions() -> list[dict]:
 
 def list_schedules(only_enabled: bool = False) -> list[dict]:
     sql = (
-        "SELECT s.*, sc.name AS script_name FROM schedules s "
-        "LEFT JOIN scripts sc ON s.script_id=sc.id"
+        "SELECT s.*, sc.name AS script_name, p.name AS preset_name FROM schedules s "
+        "LEFT JOIN scripts sc ON s.script_id=sc.id "
+        "LEFT JOIN presets p ON s.preset_id=p.id"
     )
     if only_enabled:
         sql += " WHERE s.enabled=1"
@@ -426,13 +432,14 @@ def get_schedule(schedule_id: int) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True, max_runs: Optional[int] = None) -> dict:
+def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True,
+                max_runs: Optional[int] = None, preset_id: Optional[int] = None) -> dict:
     now = now_iso()
     with _lock, _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO schedules(script_id, name, cron, args, enabled, max_runs, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?)",
-            (script_id, name, cron, _dumps(args), 1 if enabled else 0, max_runs, now, now),
+            "INSERT INTO schedules(script_id, name, cron, args, preset_id, enabled, max_runs, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?)",
+            (script_id, name, cron, _dumps(args), preset_id, 1 if enabled else 0, max_runs, now, now),
         )
         return dict(conn.execute("SELECT * FROM schedules WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -444,6 +451,7 @@ def update_schedule(
     args: Optional[dict] = None,
     enabled: Optional[bool] = None,
     max_runs=_UNSET,
+    preset_id=_UNSET,
 ) -> dict:
     fields, vals = [], []
     if name is not None:
@@ -456,6 +464,8 @@ def update_schedule(
         fields.append("enabled=?"); vals.append(1 if enabled else 0)
     if max_runs is not _UNSET:
         fields.append("max_runs=?"); vals.append(max_runs)
+    if preset_id is not _UNSET:
+        fields.append("preset_id=?"); vals.append(preset_id)
     fields.append("updated_at=?"); vals.append(now_iso())
     vals.append(schedule_id)
     with _lock, _conn() as conn:
@@ -511,13 +521,15 @@ def add_execution(
         return dict(conn.execute("SELECT * FROM executions WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
-def finish_execution(exec_id: int, status: str, exit_code: int | None, output_lines: list[str]) -> None:
-    """status: success / failed / terminated。output 只保留最后 OUTPUT_KEEP_LINES 行。"""
+def finish_execution(exec_id: int, status: str, exit_code: int | None, output_lines: list[str],
+                    ts_lines: list[str] | None = None) -> None:
+    """status: success / failed / terminated。output 只保留最后 OUTPUT_KEEP_LINES 行（含对应时间戳）。"""
     kept = output_lines[-OUTPUT_KEEP_LINES:] if output_lines else []
+    ts = (ts_lines or [])[-OUTPUT_KEEP_LINES:] if ts_lines else []
     with _lock, _conn() as conn:
         conn.execute(
-            "UPDATE executions SET status=?, exit_code=?, output=?, finished_at=? WHERE id=?",
-            (status, exit_code, "\n".join(kept), now_iso(), exec_id),
+            "UPDATE executions SET status=?, exit_code=?, output=?, output_ts=?, finished_at=? WHERE id=?",
+            (status, exit_code, "\n".join(kept), "\n".join(ts), now_iso(), exec_id),
         )
 
 
