@@ -1,3600 +1,3031 @@
-/* Tool Launcher · 前端逻辑 v0.0.2 */
-"use strict";
+/* ==========================================================================
+   ToolLauncher v2 · 前端逻辑
+   分区：0 基础工具 / 1 控制台与终端 / 2 脚本卡片 / 3 脚本抽屉 / 4 历史
+        5 定时任务 / 6 弹窗 / 7 顶栏与初始化
+   ========================================================================== */
+'use strict';
+
+/* 全局兜底：未捕获异常一律进 console，便于定位界面级报错 */
+window.addEventListener('error', (e) => {
+  console.error('[window.error]', e.message, e.filename + ':' + e.lineno + ':' + e.colno, e.error && e.error.stack);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  console.error('[unhandled]', e.reason && (e.reason.stack || e.reason.message) || e.reason);
+});
+
+/* ========================= 0. 基础工具 ========================= */
 
 const $ = (sel, root = document) => root.querySelector(sel);
-const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-const state = {
-  scripts: [],
-  selectedId: null,
-  script: null,          // 当前脚本详情（含 schema / presets / env）
-  activePresetId: null,
-  currentExecId: null,
-  runningByScript: {},   // script_id -> running 执行列表（卡片徽章 / 任务 popover）
-  popoverScriptId: null, // 当前打开的 popover 对应脚本
-  detailExec: null,      // 当前打开的详情记录（running 时用于实时输出/终止）
-  lineCount: 0,
-  ws: null,
-  running: false,
-  uvOk: null,
-  selectedTags: new Set(), // 标签过滤（多选）
-};
-
-/* ================= UI 偏好持久化（重启后保留） ================= */
-const PREFS_KEY = "launcher_prefs";
-function loadPrefs() {
-  try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "{}"); } catch { return {}; }
-}
-function savePrefs() {
-  const p = {
-    tags: [...state.selectedTags],
-    hideEmpty: $("#opt-hide-empty").checked,
-    historyScope,
-    autoscroll: $("#opt-autoscroll").checked,
-    mono: $("#opt-mono").checked,
-  };
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch {}
-}
-function applyPrefs() {
-  const p = loadPrefs();
-  if (Array.isArray(p.tags)) state.selectedTags = new Set(p.tags);
-  if (p.hideEmpty !== undefined) $("#opt-hide-empty").checked = !!p.hideEmpty;
-  if (p.historyScope === "script" || p.historyScope === "all") historyScope = p.historyScope;
-  if (p.autoscroll !== undefined) $("#opt-autoscroll").checked = !!p.autoscroll;
-  if (p.mono !== undefined) $("#opt-mono").checked = !!p.mono;
-  // 同步按钮与控制台样式
-  const scopeBtn = $("#btn-history-scope");
-  if (scopeBtn) {
-    scopeBtn.textContent = historyScope === "script" ? "当前脚本" : "全部";
-    scopeBtn.classList.toggle("active", historyScope === "all");
+/** 统一请求封装：后端错误一律为 {ok:false,error} + 4xx/5xx */
+async function api(path, { method = 'GET', body } = {}) {
+  const opts = { method, headers: {} };
+  if (body !== undefined) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
   }
-  const consoleEl = $("#console");
-  if (consoleEl) consoleEl.classList.toggle("mono", $("#opt-mono").checked);
-}
-
-/* ================= 基础工具 ================= */
-
-async function api(path, opts = {}) {
-  const conf = { method: opts.method || "GET", headers: {} };
-  if (opts.body !== undefined) {
-    conf.headers["Content-Type"] = "application/json";
-    conf.body = JSON.stringify(opts.body);
-  }
-  const res = await fetch(path, conf);
+  const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok && !data.ok) throw new Error(data.error || `请求失败 ${res.status}`);
   return data;
 }
 
-// 顶部通知：多 toast 堆叠（各自独立计时与动画，连续触发可同时存在多个）
-const TOAST_ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="m7.8 12.4 2.9 2.9 5.5-6"/></svg>';
-const TOAST_ICON_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
-const TOAST_ICON_ERR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9.5"/><path d="M12 7.5v5"/><path d="M12 16.2h.01"/></svg>';
-function toast(msg, type = "ok", duration = 2400) {
-  // 兼容旧调用：toast(msg, true) 视为错误
-  if (type === true) type = "err";
-  const kind = type === "warn" ? "warn" : type === "err" ? "err" : "ok";
-  const icon = kind === "warn" ? TOAST_ICON_WARN : kind === "err" ? TOAST_ICON_ERR : TOAST_ICON_OK;
-  let box = $("#toast-box");
-  if (!box) {
-    box = document.createElement("div");
-    box.id = "toast-box";
-    document.body.appendChild(box);
-  }
-  // 旧 toast 立即退场：上移淡出（明显），动画结束再移除
-  document.querySelectorAll("#toast-box .toast-item:not(.out)").forEach(el => {
-    el.classList.remove("in");
-    el.classList.add("out");
-    el.addEventListener("animationend", () => el.remove(), { once: true });
-  });
-  const el = document.createElement("div");
-  el.className = "toast-item " + kind;
-  el.innerHTML = '<span class="t-ic">' + icon + '</span><span class="t-txt"></span>';
-  el.querySelector(".t-txt").textContent = msg;
-  box.appendChild(el);
-  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add("in")));
-  setTimeout(() => {
-    el.classList.remove("in");
-    el.classList.add("out");
-    el.addEventListener("animationend", () => el.remove(), { once: true });
-  }, duration);
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+/** 安全 JSON.parse：列表接口里 args/tags/args_schema 可能是字符串 */
+function jparse(v, fallback) {
+  if (v == null) return fallback;
+  if (typeof v !== 'string') return v;
+  try { return JSON.parse(v); } catch { return fallback; }
+}
+
+function debounce(fn, ms) {
+  let t = null;
+  return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
 async function copyText(text) {
+  const s = String(text == null ? '' : text);
   try {
-    await navigator.clipboard.writeText(text);
-    return true;
+    await navigator.clipboard.writeText(s);
   } catch {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      document.body.appendChild(ta);
-      ta.select();
-      document.execCommand("copy");
-      ta.remove();
-      return true;
-    } catch { return false; }
+    const ta = document.createElement('textarea');
+    ta.value = s;
+    ta.style.cssText = 'position:fixed;opacity:0;left:-9999px';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch { /* 忽略 */ }
+    ta.remove();
   }
 }
 
-function escapeHtml(s) {
-  return String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+/* ---------- Toast ---------- */
+const TOAST_ICON = {
+  ok: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>',
+  warn: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M12 8v5"/><path d="M12 17h.01"/><circle cx="12" cy="12" r="9"/></svg>',
+  err: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+};
+
+function toast(msg, type = 'ok', duration = 2600) {
+  if (type === true) type = 'err';
+  if (type === 'err') console.error('[toast:err]', msg);
+  const box = $('#toast-box');
+  $$('.toast', box).forEach(t => { t.classList.remove('in'); t.classList.add('out'); });
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `${TOAST_ICON[type] || TOAST_ICON.ok}<span>${escapeHtml(msg)}</span>`;
+  box.appendChild(el);
+  requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('in')));
+  setTimeout(() => {
+    el.classList.remove('in');
+    el.classList.add('out');
+    el.addEventListener('animationend', () => el.remove(), { once: true });
+    setTimeout(() => el.remove(), 400);
+  }, duration);
 }
 
-/* ================= Modal ================= */
-
-function openModal({ title, bodyHTML, footHTML, onMount, hideTitle } = {}) {
-  const mask = $("#modal");
-  $("#modal-title").textContent = title || "";
-  mask.classList.toggle("no-title", !!hideTitle);
-  $("#modal-body").innerHTML = bodyHTML || "";
-  $("#modal-foot").innerHTML = footHTML || "";
-  mask.hidden = false;
-  if (onMount) onMount(mask);
+/* ---------- 时间格式化 ---------- */
+function fmtTime(iso, withSec = true) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  const base = `${d.getMonth() + 1}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  return withSec ? `${base}:${p(d.getSeconds())}` : base;
 }
-function closeModal() { $("#modal").hidden = true; }
-$("#modal-close").addEventListener("click", closeModal);
-$("#modal").addEventListener("click", (e) => { if (e.target.id === "modal") closeModal(); });
+function fmtFull(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+/** 相对时间：3 分钟前 / 2 小时后 */
+/** 近几天用「今天/明天/后天/大后天（昨天）」，再远就显示 M-D HH:MM */
+function smartTime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  const now = new Date();
+  const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const day1 = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const diff = Math.round((day1 - day0) / 86400000);
+  const p = (n) => String(n).padStart(2, '0');
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`;
+  if (diff === 0) return `今天 ${hm}`;
+  if (diff === 1) return `明天 ${hm}`;
+  if (diff === 2) return `后天 ${hm}`;
+  if (diff === 3) return `大后天 ${hm}`;
+  if (diff === -1) return `昨天 ${hm}`;
+  return fmtTime(iso, false);
+}
+function relTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return '';
+  const diff = d.getTime() - Date.now();
+  const abs = Math.abs(diff), fut = diff > 0;
+  const units = [[86400000, '天'], [3600000, '小时'], [60000, '分钟']];
+  for (const [ms, label] of units) {
+    if (abs >= ms) {
+      const n = Math.floor(abs / ms);
+      return fut ? `${n} ${label}后` : `${n} ${label}前`;
+    }
+  }
+  return fut ? '即将' : '刚刚';
+}
+function durText(startIso, endIso) {
+  if (!startIso) return '';
+  const s = new Date(startIso).getTime();
+  const e = endIso ? new Date(endIso).getTime() : Date.now();
+  if (isNaN(s) || isNaN(e)) return '';
+  let sec = Math.max(0, Math.round((e - s) / 1000));
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60), h = Math.floor(m / 60);
+  sec %= 60;
+  return h ? `${h}h${m}m` : `${m}m${sec}s`;
+}
 
-/** 删除等危险操作的二次确认弹窗 */
-function confirmModal({ title = "确认操作", message, confirmText = "删除", onConfirm, onCancel } = {}) {
-  const mask = $("#modal");
-  // 清理上一次挂载的遮罩监听，避免回调残留
-  if (mask._confirmCleanup) { try { mask._confirmCleanup(); } catch {} mask._confirmCleanup = null; }
-  const handleMask = (e) => {
-    if (e.target.id === "modal") {
-      closeModal();
-      if (onCancel) onCancel();
+/* ---------- ANSI ---------- */
+const ANSI_FG = { 30: '#3b4048', 31: '#d03050', 32: '#0aa32e', 33: '#c47d10', 34: '#1456f0', 35: '#8a4bd0', 36: '#0e8f9e', 37: '#606a76' };
+const ANSI_FG_BRIGHT = { 90: '#6b7684', 91: '#f0526e', 92: '#2bbf4a', 93: '#ffa32e', 94: '#4d8bff', 95: '#b47bf0', 96: '#31c5d6', 97: '#8b95a1' };
+const ANSI_BG = { 40: '#e9ebee', 41: '#ffd7de', 42: '#d6f5df', 43: '#ffeccc', 44: '#dbe7ff', 45: '#ecdfff', 46: '#d6f2f5', 47: '#e4e7eb' };
+
+/** 只解析 SGR 序列；所有文本片段都先转义再拼接 */
+function ansiToHtml(text) {
+  const src = String(text == null ? '' : text);
+  let out = '', color = null, bold = false, bg = null;
+  const re = /\x1b\[([0-9;]*)m/g;
+  let last = 0, m;
+  const open = () => {
+    const style = [];
+    if (color) style.push(`color:${color}`);
+    if (bg) style.push(`background:${bg}`);
+    if (bold) style.push('font-weight:700');
+    return `<span style="${style.join(';')}">`;
+  };
+  const push = (t) => { if (t) out += `<span style="${[color && `color:${color}`, bg && `background:${bg}`, bold && 'font-weight:700'].filter(Boolean).join(';')}">${escapeHtml(t)}</span>`; };
+  while ((m = re.exec(src)) !== null) {
+    push(src.slice(last, m.index));
+    last = re.lastIndex;
+    const codes = (m[1] || '0').split(';').filter(x => x !== '').map(Number);
+    if (!codes.length) codes.push(0);
+    for (const code of codes) {
+      if (code === 0) { color = null; bg = null; bold = false; }
+      else if (code === 1) bold = true;
+      else if (code === 22) bold = false;
+      else if (code === 39) color = null;
+      else if (code === 49) bg = null;
+      else if (ANSI_FG[code]) color = ANSI_FG[code];
+      else if (ANSI_FG_BRIGHT[code]) color = ANSI_FG_BRIGHT[code];
+      else if (ANSI_BG[code]) bg = ANSI_BG[code];
+    }
+  }
+  push(src.slice(last));
+  void open;
+  return out;
+}
+function stripAnsi(s) {
+  return String(s == null ? '' : s).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+}
+/** 无 ANSI 时按语义上色（用于 db 落库的静态输出快照） */
+function decorateText(text) {
+  const t = String(text == null ? '' : text);
+  if (!t) return '&nbsp;';
+  if (/\x1b\[/.test(t)) return ansiToHtml(t);
+  const head = t.trim();
+  if (t.startsWith('$ ')) return `<span class="t-dim">${escapeHtml(t)}</span>`;
+  if (/^[✓✔]/.test(head) || /成功|success/i.test(head)) return `<span class="t-ok">${escapeHtml(t)}</span>`;
+  if (/^[✗✘×]/.test(head) || /Traceback|Error|失败|错误/.test(head)) return `<span class="t-err">${escapeHtml(t)}</span>`;
+  if (/^⚠/.test(head) || /警告|warn/i.test(head)) return `<span class="t-warn">${escapeHtml(t)}</span>`;
+  return escapeHtml(t);
+}
+
+/* ---------- 全局状态 ---------- */
+const state = {
+  scripts: [],
+  script: null,            // 当前选中脚本的详情（含 args_schema / presets / env）
+  selectedId: null,
+  activePresetId: null,
+  running: false,
+  currentExecId: null,
+  ws: null,
+  detailWs: null,
+  detailId: null,
+  detailStream: null,
+  runningExecs: [],
+  lastStatus: {},          // script_id -> 'success' | 'failed' | 'running'
+  filter: 'all',
+  kw: '',
+  activeTag: null,
+  favs: new Set(),
+  view: 'scripts',
+  uvOk: null,
+  venvScanned: null,
+  schedPatch: {},
+  historyMulti: false,
+  selectedHistory: new Set(),
+  historyScope: 'all',
+  histSig: null,
+  schedSig: null,
+  schedAnimated: false,
+  historyDetailMode: false,
+  tabs: [],
+  activeTab: 'welcome',
+  offlineStreak: 0,
+};
+
+/* ---------- 偏好持久化 ---------- */
+const PREF_KEY = 'launcher_prefs';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREF_KEY) || '{}'); } catch { return {}; }
+}
+function savePrefs() {
+  try {
+    localStorage.setItem(PREF_KEY, JSON.stringify({
+      favs: Array.from(state.favs),
+      hideEmpty: $('#opt-hide-empty').checked,
+      historyScope: state.historyScope,
+      autoscroll: $('#opt-autoscroll').checked,
+    }));
+  } catch { /* 隐私模式下忽略 */ }
+}
+function applyPrefs() {
+  const p = loadPrefs();
+  state.favs = new Set((Array.isArray(p.favs) ? p.favs : []).map(Number));
+  state.historyScope = p.historyScope === 'script' ? 'script' : 'all';
+  $('#opt-hide-empty').checked = !!p.hideEmpty;
+  $('#opt-autoscroll').checked = p.autoscroll !== false;
+}
+const userCmdKey = (id) => `launcher_usercmd_${id}`;
+
+/* ========================= 1. 控制台与终端 ========================= */
+
+/**
+ * 流式渲染器：还原终端语义（\r 覆盖当前行、\r\n 换行），保留 ANSI 颜色，
+ * 最多 max 行；用户手动上滚后暂停自动跟随。
+ * scrollEl 是滚动容器，contentEl 是行容器（每个终端 tab 独立持有，
+ * 因此切 tab 不会丢失尚未换行的半行缓冲）。
+ */
+class Stream {
+  constructor(scrollEl, contentEl, { max = 1000 } = {}) {
+    this.scrollEl = scrollEl;
+    this.contentEl = contentEl || scrollEl;
+    this.max = max;
+    this.buf = '';
+    this.bufTs = '';
+    this.crPending = false;
+    this.streamCls = '';
+    this.userScrolled = false;
+    this.count = 0;
+    this.cursorRow = null;
+    scrollEl.addEventListener('scroll', () => {
+      this.userScrolled = (scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight) >= 24;
+    }, { passive: true });
+  }
+  clear() {
+    this.buf = ''; this.crPending = false; this.count = 0; this.cursorRow = null;
+    this.contentEl.innerHTML = '';
+    this.userScrolled = false;
+  }
+  _row(ts, cls, html, raw) {
+    const row = document.createElement('div');
+    row.className = `con-line ${cls || ''}`;
+    const no = document.createElement('div');
+    no.className = 'con-no';
+    no.innerHTML = `<span class="con-ts">${escapeHtml(ts || '')}</span><span class="con-copy" title="复制该行">复制</span>`;
+    const txt = document.createElement('div');
+    txt.className = 'con-text';
+    txt.innerHTML = html || '&nbsp;';
+    row.append(no, txt);
+    row._raw = raw;
+    return row;
+  }
+  _push(ts, cls, html, raw) {
+    if (this.cursorRow) { this.cursorRow.remove(); this.cursorRow = null; }
+    this.contentEl.appendChild(this._row(ts, cls, html, raw));
+    this.count += 1;
+    while (this.count > this.max && this.contentEl.firstChild) {
+      this.contentEl.removeChild(this.contentEl.firstChild);
+      this.count -= 1;
+    }
+    this._follow();
+  }
+  _flush(ts) {
+    const text = this.buf;
+    this.buf = '';
+    const html = ansiToHtml(text);
+    this._push(this.bufTs || ts || '', this.streamCls, html || '&nbsp;', text);
+    this.bufTs = '';
+  }
+  append(stream, chunk, ts) {
+    const cls = stream === 'stdout' ? '' : (stream || '');
+    if (cls !== this.streamCls) { if (this.buf) this._flush(ts); this.streamCls = cls; }
+    let s = String(chunk == null ? '' : chunk);
+    if (this.crPending) {
+      if (s.startsWith('\n')) { this._flush(ts); s = s.slice(1); }
+      else { this.buf = ''; this.bufTs = ts; }
+      this.crPending = false;
+    }
+    let i = 0;
+    while (i < s.length) {
+      const ch = s[i];
+      if (ch === '\r') {
+        if (s[i + 1] === '\n') { this._flush(ts); i += 2; continue; }
+        if (i + 1 < s.length) { this.buf = ''; this.bufTs = ts; i += 1; continue; }
+        this.crPending = true; i += 1; continue;
+      }
+      if (ch === '\n') { this._flush(ts); i += 1; continue; }
+      this.buf += ch; i += 1;
+    }
+    if (this.cursorRow) this._follow();
+  }
+  /** 运行中在末尾显示闪烁光标 */
+  setLive(live) {
+    if (live && !this.cursorRow) {
+      const row = this._row('', '', '<span class="cursor"></span>', '');
+      row.classList.add('cursor-row');
+      this.contentEl.appendChild(row);
+      this.cursorRow = row;
+      this._follow();
+    } else if (!live && this.cursorRow) {
+      this.cursorRow.remove();
+      this.cursorRow = null;
+    }
+  }
+  /** 静态快照：数据库落库的输出 */
+  renderSnapshot(text, tsText) {
+    this.clear();
+    const lines = String(text || '').split('\n');
+    const tss = String(tsText || '').split('\n');
+    while (lines.length && lines[lines.length - 1] === '') { lines.pop(); tss.pop(); }
+    lines.forEach((l, i) => this._push(tss[i] || '', '', decorateText(l), l));
+    this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+  _follow() {
+    const opt = $('#opt-autoscroll');
+    if (!this.userScrolled && (!opt || opt.checked)) this.scrollEl.scrollTop = this.scrollEl.scrollHeight;
+  }
+}
+
+/* ---------- 终端 dock ---------- */
+function initDock() {
+  const termOut = $('#term-out');
+  const welcomeBox = document.createElement('div');
+  welcomeBox.innerHTML = [
+    '<div class="term-empty">',
+    '<div><span class="k">ToolLauncher v2.0</span> — 本地脚本启动器</div>',
+    '<div>点脚本卡片 → 填参数 → 运行，输出会在这里新开一个 tab。</div>',
+    '<div>提示：拖动顶部横条调高度；<span class="k">Esc</span> 关闭弹层；拖选输出可一键复制。</div>',
+    '</div>',
+  ].join('');
+  const welcomeContent = document.createElement('div');
+  welcomeContent.appendChild(welcomeBox);
+  state.welcomeTab = { id: 'welcome', name: 'welcome', status: '', content: welcomeContent };
+  termOut.appendChild(welcomeContent);
+
+  const dock = $('#dock');
+  const ICON_COLLAPSE = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>';
+  const ICON_EXPAND = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>';
+  const setDockCollapsed = (collapsed) => {
+    dock.classList.toggle('collapsed', !!collapsed);
+    $('#dock-collapse').innerHTML = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
+    syncDockEff();
+  };
+  const toggleDock = () => setDockCollapsed(!dock.classList.contains('collapsed'));
+  $('#dock-collapse').addEventListener('click', toggleDock);
+  // 双击标题条 / 折叠条即可展开或收起，不必去够右边那个小按钮
+  dock.addEventListener('dblclick', (e) => {
+    if (e.target.closest('.term-dock-actions, .term-out, .dock-resize')) return;
+    toggleDock();
+  });
+  $('#dock-clear').addEventListener('click', () => {
+    const tab = currentTab();
+    if (!tab) return;
+    if (tab.id === 'welcome') { switchTab('welcome'); return; }
+    tab.stream.clear();
+    toast('已清空该任务的输出显示（数据库记录不受影响）');
+  });
+  $('#dock-terminate').addEventListener('click', terminateCurrent);
+  $('#opt-autoscroll').addEventListener('change', savePrefs);
+  setupDockResize();
+  syncDockEff();
+  setupCopyFloat();
+  renderTabs();
+}
+
+function currentTab() {
+  if (state.activeTab === 'welcome') return state.welcomeTab;
+  return state.tabs.find(t => t.id === state.activeTab) || null;
+}
+function getTab(id) { return state.tabs.find(t => t.id === id) || null; }
+
+/** 每次执行开一个独立 tab，输出流互不干扰 */
+function newTab(id, name) {
+  let tab = getTab(id);
+  if (!tab) {
+    const content = document.createElement('div');
+    tab = { id, name, status: 'running', content, stream: new Stream($('#term-out'), content, { max: 1000 }) };
+    state.tabs.push(tab);
+    renderTabs();
+  }
+  switchTab(id);
+  return tab;
+}
+function closeTab(id) {
+  const idx = state.tabs.findIndex(t => t.id === id);
+  if (idx < 0) return;
+  state.tabs.splice(idx, 1);
+  renderTabs();
+  if (state.activeTab === id) switchTab(state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : 'welcome');
+}
+function switchTab(id) {
+  state.activeTab = id;
+  const tab = currentTab();
+  const termOut = $('#term-out');
+  termOut.innerHTML = '';
+  if (tab) termOut.appendChild(tab.content);
+  if (tab && tab.stream) tab.stream.setLive(tab.status === 'running');
+  if (tab) termOut.scrollTop = termOut.scrollHeight;
+  renderTabs();
+}
+function setTabStatus(id, status) {
+  const tab = getTab(id);
+  if (!tab) return;
+  tab.status = status;
+  if (state.activeTab === id) tab.stream.setLive(status === 'running');
+  renderTabs();
+}
+function renderTabs() {
+  const box = $('#dock-tabs');
+  $$('.term-tab', box).forEach(n => n.remove());
+  const actions = $('.term-dock-actions', box);
+  const mk = (tab, isWelcome) => {
+    const b = document.createElement('button');
+    b.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
+    b.dataset.tab = tab.id;
+    b.innerHTML = `<span class="dot"></span><span class="nm">${escapeHtml(tab.name)}</span>`
+      + (isWelcome ? '' : '<span class="close" title="关闭">×</span>');
+    b.addEventListener('click', (e) => {
+      if (e.target.classList.contains('close')) { e.stopPropagation(); closeTab(tab.id); return; }
+      switchTab(tab.id);
+    });
+    box.insertBefore(b, actions);
+  };
+  mk(state.welcomeTab, true);
+  state.tabs.forEach(t => mk(t, false));
+}
+
+/* ---------- 控制台拖选复制 ---------- */
+function setupCopyFloat() {
+  const float = $('#copy-float');
+  const update = () => {
+    const sel = window.getSelection();
+    const termOut = $('#term-out');
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { float.hidden = true; return; }
+    const range = sel.getRangeAt(0);
+    const host = range.commonAncestorContainer.nodeType === 1
+      ? range.commonAncestorContainer
+      : range.commonAncestorContainer.parentElement;
+    const container = host && host.closest ? host.closest('.term-out, .hist-detail-out') : null;
+    if (!container) { float.hidden = true; return; }
+    let n = 0;
+    $$('.con-line', container).forEach(line => { if (range.intersectsNode(line)) n += 1; });
+    if (!n) { float.hidden = true; return; }
+    const rect = range.getBoundingClientRect();
+    float.hidden = false;
+    $('#copy-count').textContent = n;
+    float.style.left = Math.max(10, Math.min(rect.left + rect.width / 2 - 60, window.innerWidth - 140)) + 'px';
+    float.style.top = Math.max(10, rect.top - 36) + 'px';
+  };
+  document.addEventListener('mouseup', () => setTimeout(update, 0));
+  document.addEventListener('keyup', () => setTimeout(update, 0));
+  float.addEventListener('click', async () => {
+    const sel = window.getSelection();
+    if (sel) { await copyText(sel.toString()); toast(`已复制 ${$('#copy-count').textContent} 行`); }
+    float.hidden = true;
+    window.getSelection().removeAllRanges();
+  });
+}
+
+/* ---------- 底部 dock 高度拖拽 ---------- */
+/** 控制台实际占位高度（展开/收起/拖拽/改窗口后都要同步），供右侧抽屉与 toast 定位使用 */
+function syncDockEff() {
+  const d = $('#dock');
+  if (!d) return;
+  document.documentElement.style.setProperty('--dock-eff', `${Math.round(d.getBoundingClientRect().height)}px`);
+}
+
+function setupDockResize() {
+  const handle = $('#dock-resize');
+  const dock = $('#dock');
+  let startY = 0, startH = 0;
+  handle.addEventListener('mousedown', (e) => {
+    e.preventDefault();
+    startY = e.clientY; startH = dock.offsetHeight;
+    document.body.classList.add('dragging');
+    const onMove = (ev) => {
+      const h = Math.min(Math.max(startH - (ev.clientY - startY), 80), window.innerHeight - 220);
+      dock.style.height = h + 'px';
+      document.documentElement.style.setProperty('--dock-h', h + 'px');
+      syncDockEff();
+    };
+    const onUp = () => {
+      document.body.classList.remove('dragging');
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      syncDockEff();
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  });
+  window.addEventListener('resize', syncDockEff);
+}
+/* ========================= 2. 脚本卡片 ========================= */
+
+function statusOf(scriptId) {
+  return state.lastStatus[scriptId] || '';
+}
+function statusMeta(st) {
+  return {
+    idle: ['idle', '就绪'],
+    running: ['running', '运行中'],
+    success: ['ok', '上次成功'],
+    failed: ['err', '上次失败'],
+    terminated: ['err', '上次终止'],
+  }[st] || ['idle', '就绪'];
+}
+function scriptArgCount(s) {
+  return jparse(s.args_schema, []).length;
+}
+
+async function loadScripts() {
+  state.scripts = await api('/api/scripts');
+  renderTagBar();
+  renderGrid();
+  updateFilterCounts();
+}
+
+/** 卡片状态只做局部更新，避免整列重绘打断交互 */
+function updateRunBadges() {
+  const byScript = new Map();
+  for (const r of state.runningExecs) {
+    if (!byScript.has(r.script_id)) byScript.set(r.script_id, []);
+    byScript.get(r.script_id).push(r);
+  }
+  $$('.scard').forEach(card => {
+    const id = Number(card.dataset.id);
+    const runs = byScript.get(id) || [];
+    let badge = $('.run-badge', card);
+    if (runs.length) {
+      card.classList.add('running');
+      if (!badge) {
+        badge = document.createElement('span');
+        badge.className = 'run-badge';
+        badge.innerHTML = '● 1';
+        $('.card-foot .right', card).prepend(badge);
+      }
+      badge.textContent = `● ${runs.length}`;
+    } else {
+      card.classList.remove('running');
+      if (badge) badge.remove();
+    }
+    const st = runs.length ? 'running' : statusOf(id);
+    const [cls, label] = statusMeta(st);
+    const stEl = $('.st', card);
+    stEl.className = `st ${cls}`;
+    stEl.innerHTML = `<i></i>${label}`;
+  });
+}
+
+function renderGrid() {
+  const grid = $('#grid');
+  const kw = state.kw.trim().toLowerCase();
+  const list = state.scripts.filter(s => {
+    if (state.filter === 'fav' && !state.favs.has(s.id)) return false;
+    if (state.filter === 'running' && !(state.runningExecs || []).some(r => r.script_id === s.id)) return false;
+    if (state.filter === 'failed' && !['failed', 'terminated'].includes(statusOf(s.id))) return false;
+    if (state.activeTag && !(s.tags || []).includes(state.activeTag)) return false;
+    if (kw) {
+      const hay = `${s.name} ${s.path} ${(s.tags || []).join(' ')} ${s.description || ''}`.toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+
+  if (!list.length) {
+    grid.innerHTML = `<div class="empty">没有匹配的脚本。<div class="empty-act">
+      <button class="btn btn-ghost" onclick="document.getElementById('btn-add').click()">导入脚本</button></div></div>`;
+    return;
+  }
+
+  grid.innerHTML = '';
+  for (const s of list) grid.appendChild(scriptCard(s));
+  updateRunBadges();
+}
+
+function scriptCard(s) {
+  const card = document.createElement('div');
+  card.className = 'scard' + (state.selectedId === s.id ? ' sel' : '');
+  card.dataset.id = s.id;
+  const n = scriptArgCount(s);
+  card.innerHTML = `
+    <div class="scard-top">
+      <div class="fname">${escapeHtml(s.name)}</div>
+      <button class="fav ${state.favs.has(s.id) ? 'on' : ''}" title="收藏">${state.favs.has(s.id) ? '♥' : '♡'}</button>
+    </div>
+    <div class="sc-path" title="${escapeHtml(s.path)}">${escapeHtml(s.path)}</div>
+    <div class="desc">${escapeHtml(s.description || '')}</div>
+    <div class="tags"></div>
+    <div class="card-foot">
+      <span class="st idle"><i></i>就绪</span>
+      <span class="right">${n ? `${n} 参数` : '无参数'}</span>
+    </div>`;
+
+  const tags = $('.tags', card);
+  (s.tags || []).slice(0, 3).forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'tag';
+    el.dataset.tag = t;
+    el.textContent = '#' + t;
+    tags.appendChild(el);
+  });
+  if ((s.tags || []).length > 3) {
+    const more = document.createElement('span');
+    more.className = 'tag more';
+    more.textContent = `+${s.tags.length - 3}`;
+    tags.appendChild(more);
+  }
+  if (s.has_inline_meta) {
+    const el = document.createElement('span');
+    el.className = 'tag env';
+    el.textContent = 'PEP 723';
+    el.title = '内联依赖声明，由 uv 自动管理';
+    tags.appendChild(el);
+  }
+  return card;
+}
+
+/** 卡片区事件委托：列表重绘不会丢事件 */
+function initGridEvents() {
+  $('#grid').addEventListener('click', (e) => {
+    const card = e.target.closest('.scard');
+    if (!card) return;
+    const id = Number(card.dataset.id);
+    const s = state.scripts.find(x => x.id === id);
+    if (!s) return;
+    const badge = e.target.closest('.run-badge');
+    if (badge) {
+      const runs = state.runningExecs.filter(r => r.script_id === id);
+      if (runs.length) openRunPopover(badge, runs);
+      return;
+    }
+    const fav = e.target.closest('.fav');
+    if (fav) {
+      if (state.favs.has(id)) state.favs.delete(id); else state.favs.add(id);
+      savePrefs();
+      if (state.filter === 'fav') renderGrid();
+      else {
+        fav.classList.toggle('on', state.favs.has(id));
+        fav.textContent = state.favs.has(id) ? '♥' : '♡';
+      }
+      updateFilterCounts();
+      return;
+    }
+    const tag = e.target.closest('.tag[data-tag]');
+    if (tag) {
+      state.activeTag = state.activeTag === tag.dataset.tag ? null : tag.dataset.tag;
+      renderTagBar(); renderGrid();
+      return;
+    }
+    selectScript(id);
+  });
+}
+
+function renderTagBar() {
+  const bar = $('#tag-bar');
+  const tags = [...new Set(state.scripts.flatMap(s => s.tags || []))]
+    .sort((a, b) => a.localeCompare(b, 'zh'));
+  if (!tags.length) { bar.innerHTML = ''; return; }
+  bar.innerHTML = '<span class="lbl">标签</span>' + tags.map(t =>
+    `<button class="tag-chip ${state.activeTag === t ? 'on' : ''}" data-tag="${escapeHtml(t)}">#${escapeHtml(t)}</button>`).join('')
+    + (state.activeTag ? '<button class="tag-chip" id="btn-tag-clear">清除筛选</button>' : '');
+  $$('[data-tag]', bar).forEach(b => b.addEventListener('click', () => {
+    state.activeTag = state.activeTag === b.dataset.tag ? null : b.dataset.tag;
+    renderTagBar(); renderGrid();
+  }));
+  const clear = $('#btn-tag-clear');
+  if (clear) clear.addEventListener('click', () => { state.activeTag = null; renderTagBar(); renderGrid(); });
+}
+
+function updateFilterCounts() {
+  $('#c-all').textContent = state.scripts.length;
+  $('#c-fav').textContent = state.scripts.filter(s => state.favs.has(s.id)).length;
+  $('#c-run').textContent = new Set(state.runningExecs.map(r => r.script_id)).size;
+  $('#c-fail').textContent = state.scripts.filter(s => ['failed', 'terminated'].includes(statusOf(s.id))).length;
+}
+
+/* ---------- 运行中任务浮层 ---------- */
+let popTimer = null;
+function openRunPopover(anchor, runs) {
+  const pop = $('#run-popover');
+  pop.innerHTML = '<div class="rp-head"><span>运行中的任务</span><span class="mono">' + runs.length + ' 个</span></div>';
+  for (const r of runs) {
+    const item = document.createElement('div');
+    item.className = 'rp-item';
+    item.innerHTML = `<div class="rp-args" title="${escapeHtml(summarizeArgs(r.args))}">${escapeHtml(summarizeArgs(r.args) || '（无参数）')}</div>
+      <div class="rp-meta"><span class="mono" data-t="${r.id}">${escapeHtml(fmtTime(r.started_at))}</span>
+      <span>· 已运行 <span class="mono" data-d="${r.id}">${durText(r.started_at)}</span></span></div>`;
+    item.addEventListener('click', () => { closeRunPopover(); jumpToExecution(r.id); });
+    pop.appendChild(item);
+  }
+  const rect = anchor.getBoundingClientRect();
+  pop.classList.add('show');
+  const w = 330;
+  pop.style.left = Math.max(10, Math.min(rect.left, window.innerWidth - w - 10)) + 'px';
+  pop.style.top = (rect.bottom + 6) + 'px';
+  clearInterval(popTimer);
+  popTimer = setInterval(() => {
+    for (const r of runs) {
+      const el = $(`[data-d="${r.id}"]`, pop);
+      if (el) el.textContent = durText(r.started_at);
+    }
+  }, 1000);
+}
+function closeRunPopover() {
+  $('#run-popover').classList.remove('show');
+  clearInterval(popTimer);
+}
+function summarizeArgs(args) {
+  const a = typeof args === 'string' ? jparse(args, {}) : (args || {});
+  return Object.entries(a)
+    .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `--${k} ${Array.isArray(v) ? v.join(',') : v}`)
+    .join(' ');
+}
+function jumpToExecution(id) {
+  switchView('history');
+  refreshHistory().then(() => {
+    const row = $(`.hist-row[data-id="${id}"]`);
+    if (row) showHistoryDetail(Number(id), row);
+    else toast('该执行记录已不存在', 'warn');
+  });
+}
+
+/* ========================= 3. 脚本抽屉 ========================= */
+
+async function selectScript(id, { keepDrawer = false } = {}) {
+  try {
+    const script = await api(`/api/scripts/${id}`);
+    state.script = script;
+    state.selectedId = id;
+    state.activePresetId = null;
+    try { localStorage.setItem('last_script_id', String(id)); } catch { /* ignore */ }
+    if (!keepDrawer) openDrawer();
+    renderScriptHead();
+    renderEnvBar();
+    renderDepsRow();
+    renderPresets();
+    renderFields();
+    refreshCmd();
+    setRunning(false);
+    $$('.scard').forEach(c => c.classList.toggle('sel', Number(c.dataset.id) === id));
+  } catch (e) {
+    toast(e.message, 'err');
+  }
+}
+
+function openDrawer() {
+  $('#drawer').classList.add('show');
+  $('#drawer-mask').classList.add('show');
+}
+function closeDrawer() {
+  $('#drawer').classList.remove('show');
+  $('#drawer-mask').classList.remove('show');
+}
+
+function renderScriptHead() {
+  const rec = state.script;
+  if (!rec) return;
+  $('#d-name').textContent = rec.name;
+  $('#d-desc').innerHTML = escapeHtml(rec.description || '') || '<span style="color:var(--ink-4)">（点击添加描述）</span>';
+  $('#d-path').textContent = rec.path;
+  renderScriptTags();
+}
+
+/* 名称 / 描述：contenteditable，失焦即存，Esc 撤销 */
+function bindEditable(el, { placeholder, save }) {
+  el.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); el.blur(); }
+    if (e.key === 'Escape') { e.dataset.cancel = '1'; el.blur(); }
+  });
+  el.addEventListener('paste', (e) => {
+    e.preventDefault();
+    const t = (e.clipboardData || window.clipboardData).getData('text');
+    document.execCommand('insertText', false, t.replace(/\n/g, ' '));
+  });
+  el.addEventListener('blur', async () => {
+    const cancel = el.dataset.cancel === '1';
+    el.dataset.cancel = '0';
+    const raw = el.innerText.trim();
+    const value = raw || placeholder;
+    el.textContent = value;
+    if (cancel || value === el.dataset.saved) return;
+    el.dataset.saved = value;
+    try { await save(value); } catch (e) { toast(e.message, 'err'); }
+  });
+}
+function initEditables() {
+  const nameEl = $('#d-name');
+  nameEl.dataset.placeholder = '';
+  bindEditable(nameEl, {
+    placeholder: '',
+    save: async (v) => {
+      if (!v) { nameEl.textContent = state.script.name; toast('名称不能为空', 'warn'); return; }
+      await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { name: v } });
+      state.script.name = v;
+      toast('已重命名');
+      await loadScripts();
+    },
+  });
+  const descEl = $('#d-desc');
+  bindEditable(descEl, {
+    placeholder: '',
+    save: async (v) => {
+      await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { description: v } });
+      state.script.description = v;
+      descEl.innerHTML = escapeHtml(v) || '<span style="color:var(--ink-4)">（点击添加描述）</span>';
+      await loadScripts();
+    },
+  });
+}
+
+function renderScriptTags() {
+  const box = $('#d-tags');
+  const tags = state.script.tags || [];
+  box.innerHTML = '<span style="font-size:11px;color:var(--ink-4)">标签</span>';
+  tags.forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'tag';
+    el.innerHTML = `#${escapeHtml(t)}<span class="x" title="移除标签">×</span>`;
+    $('.x', el).addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const next = tags.filter(x => x !== t);
+      await setScriptTags(next);
+    });
+    box.appendChild(el);
+  });
+  const inp = document.createElement('input');
+  inp.className = 'tag-input mono';
+  inp.placeholder = '+ 标签';
+  inp.addEventListener('keydown', async (e) => {
+    if (e.key !== 'Enter') return;
+    const v = inp.value.trim();
+    if (!v) return;
+    if (tags.includes(v)) { inp.value = ''; return; }
+    inp.value = '';
+    await setScriptTags([...tags, v]);
+  });
+  box.appendChild(inp);
+}
+async function setScriptTags(tags) {
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { tags } });
+    state.script.tags = r.script ? r.script.tags : tags;
+    renderScriptTags();
+    await loadScripts();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------- 环境条 ---------- */
+function renderEnvBar() {
+  const bar = $('#d-env-bar');
+  const env = state.script && state.script.env;
+  if (!env) { bar.innerHTML = ''; return; }
+  const items = [];
+  // uv
+  if (state.uvOk === false) {
+    if (env.has_venv || env.has_inline_meta) items.push('<span class="env-item">未装 uv · 用项目环境运行</span>');
+    else items.push('<span class="env-item err">未检测到 uv</span>');
+  } else if (env.uv_version) {
+    items.push(`<span class="env-item ok" title="${escapeHtml(env.uv_version)}">${escapeHtml(env.uv_version.split(/\s+/).pop())}</span>`);
+  }
+  // 虚拟环境
+  let venvNode = '';
+  if (env.venv_source === 'custom') {
+    venvNode = env.venv_broken
+      ? '<span class="env-item err">指定环境不可用</span>'
+      : `<span class="env-item ok" title="${escapeHtml(env.venv_python || '')}">指定环境</span>`;
+  } else if (env.has_inline_meta) {
+    venvNode = `<span class="env-item ok">PEP 723 内联${env.inline_deps && env.inline_deps.length ? ` · ${env.inline_deps.length} 依赖` : ''}</span>`;
+  } else if (env.has_venv) {
+    venvNode = `<span class="env-item ok" title="${escapeHtml(env.venv_python || '')}">venv 已就绪</span>`;
+  } else {
+    venvNode = '<span class="env-item warn">未初始化虚拟环境</span>';
+  }
+  items.push(venvNode);
+  // 依赖
+  items.push(env.has_deps
+    ? `<span class="env-item ok" title="${escapeHtml(env.requirements_path || '')}">${escapeHtml(env.deps_name || '依赖文件')}</span>`
+    : '<span class="env-item">无依赖文件</span>');
+
+  const actions = [];
+  if (!env.has_inline_meta) {
+    actions.push('<span class="env-action" id="env-venv-set">更换环境</span>');
+    if (!env.venv_source && !env.has_venv) actions.push('<span class="env-action" id="env-init">初始化环境</span>');
+    else actions.push('<span class="env-action" id="env-init">安装依赖</span>');
+  }
+  bar.innerHTML = items.join('') + `<span class="env-sp"></span>${actions.join('')}`;
+  const setBtn = $('#env-venv-set');
+  if (setBtn) setBtn.addEventListener('click', openVenvSettings);
+  const initBtn = $('#env-init');
+  if (initBtn) initBtn.addEventListener('click', () => startEnvInit());
+}
+
+function renderDepsRow() {
+  const row = $('#d-deps-row');
+  const env = state.script && state.script.env;
+  if (!env || env.has_inline_meta) { row.style.display = 'none'; return; }
+  row.style.display = 'flex';
+  row.innerHTML = `<label>依赖文件</label>
+    <input class="mono" id="deps-input" value="${escapeHtml(state.script.deps_path || '')}" placeholder="留空自动检测脚本目录 requirements.txt">
+    <button class="quick-btn" id="deps-save">保存并安装</button>`;
+  $('#deps-save').addEventListener('click', async () => {
+    const v = $('#deps-input').value.trim();
+    try {
+      await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { deps_path: v } });
+      state.script.deps_path = v;
+      toast('已保存依赖文件路径');
+      await reloadEnv();
+      startEnvInit();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+}
+
+async function reloadEnv() {
+  try {
+    const env = await api(`/api/scripts/${state.selectedId}/env`);
+    state.script.env = env;
+    renderEnvBar();
+    renderDepsRow();
+  } catch { /* 忽略 */ }
+}
+
+/** 环境初始化：走 /ws/env 流式会话（旧版这里没有实现，属于修复） */
+async function startEnvInit() {
+  if (!state.selectedId) return;
+  const deps = $('#deps-input') ? $('#deps-input').value.trim() : '';
+  const id = `env-${state.selectedId}`;
+  let tab = getTab(id);
+  if (tab) { tab.stream.clear(); setTabStatus(id, 'running'); switchTab(id); }
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}/env/init`, { method: 'POST', body: { deps_path: deps } });
+    tab = newTab(r.session_id, '环境初始化');
+    tab.id = r.session_id;
+    tab.name = `env · ${state.script.name}`;
+    renderTabs();
+    connectWs(`/ws/env/${r.session_id}`, { tabId: r.session_id, envInit: true });
+    toast('开始初始化环境…');
+  } catch (e) {
+    toast(e.message, 'err');
+    if (tab) setTabStatus(tab.id, 'err');
+  }
+}
+
+/* ---------- 预设 ---------- */
+function presetDisplayGroups(all) {
+  const pinned = all.filter(p => p.pinned);
+  const unpinned = all.filter(p => !p.pinned);
+  const max = 6;
+  const shown = unpinned.slice(0, Math.max(0, max - pinned.length));
+  return { pinned, shown, rest: unpinned.slice(shown.length) };
+}
+function renderPresets() {
+  const box = $('#preset-chips');
+  const all = (state.script && state.script.presets) || [];
+  const { pinned, shown, rest } = presetDisplayGroups(all);
+  box.innerHTML = '';
+  if (!all.length) {
+    box.innerHTML = '<span style="font-size:11px;color:var(--ink-4)">还没有预设，填好参数后点右侧「保存」</span>';
+  }
+  [...pinned, ...shown].forEach(p => box.appendChild(presetChip(p)));
+  const more = document.createElement('button');
+  more.className = 'more-bubble';
+  more.textContent = rest.length ? `⋯ +${rest.length}` : '⋯ 管理';
+  more.title = '管理全部预设';
+  more.addEventListener('click', () => openPresetManager(all));
+  box.appendChild(more);
+}
+function presetChip(p) {
+  const chip = document.createElement('button');
+  chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '') + (state.activePresetId === p.id ? ' on' : '');
+  chip.innerHTML = `${p.pinned ? '<span title="已固定">📌</span>' : ''}<span class="nm">${escapeHtml(p.name)}</span><span class="x" title="删除预设">×</span>`;
+  chip.addEventListener('click', (e) => {
+    if (e.target.classList.contains('x')) { e.stopPropagation(); askDeletePreset(chip, p, () => renderPresets()); return; }
+    applyPreset(p);
+  });
+  return chip;
+}
+async function applyPreset(p) {
+  state.activePresetId = p.id;
+  fillValues(p.args || {});
+  await saveArgs(p.args || {});
+  renderPresets();
+  refreshCmd();
+  toast(`已应用预设「${p.name}」`);
+  api(`/api/presets/${p.id}`, { method: 'PATCH', body: { touch: true } }).catch(() => {});
+}
+function askDeletePreset(chip, p, after) {
+  if (chip.classList.contains('confirm-del')) {
+    clearTimeout(chip._delTimer);
+    api(`/api/presets/${p.id}`, { method: 'DELETE' })
+      .then(async () => {
+        toast(`已删除预设「${p.name}」`);
+        if (state.script) state.script.presets = (state.script.presets || []).filter(x => x.id !== p.id);
+        renderPresets();
+        if (after) after();
+      })
+      .catch(e => toast(e.message, 'err'));
+    return;
+  }
+  chip.classList.add('confirm-del');
+  toast('再次点击 × 确认删除该预设', 'warn');
+  chip._delTimer = setTimeout(() => chip.classList.remove('confirm-del'), 3000);
+}
+
+/* ---------- 参数表单 ---------- */
+function typeLabelOf(a) {
+  if (a.is_flag) return 'bool';
+  if (a.choices && a.choices.length) return 'enum';
+  if (a.nargs || a.action === 'append') return 'list';
+  if (a.type === 'int') return 'int';
+  if (a.type === 'float') return 'float';
+  return 'str';
+}
+function renderFields() {
+  const box = $('#d-fields');
+  const schema = (state.script && state.script.args_schema) || [];
+  const saved = (state.script && state.script.auto_saved_args) || {};
+  if (!schema.length) {
+    box.innerHTML = '<div class="empty" style="padding:32px 12px">该脚本没有定义任何命令行参数。</div>';
+    return;
+  }
+  box.innerHTML = '';
+  for (const a of schema) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field' + (a.is_flag ? ' field-switch' : '');
+    wrap.dataset.dest = a.dest;
+    const t = typeLabelOf(a);
+    const opts = (a.option_strings || []).join(' / ');
+    const positionalNote = a.kind === 'positional' ? '位置参数' : (opts || '');
+    wrap.innerHTML = `<label><span class="name">${escapeHtml(a.dest)}</span>
+        ${a.required ? '<span class="req">*</span>' : ''}
+        <span class="opt">${escapeHtml(positionalNote)}</span>
+        <span class="type ${t}">${t}</span></label>`;
+
+    const initial = saved[a.dest] !== undefined && saved[a.dest] !== null ? saved[a.dest] : a.default;
+    if (a.is_flag) {
+      const sw = document.createElement('label');
+      sw.className = 'switch';
+      const on = a.action === 'store_false' ? !initial : !!initial;
+      sw.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span class="track"></span><span class="sw-val">${on ? '开启' : '关闭'}</span>`;
+      sw.querySelector('input').addEventListener('change', (e) => {
+        $('.sw-val', sw).textContent = e.target.checked ? '开启' : '关闭';
+        autoSave();
+      });
+      wrap.appendChild(sw);
+    } else if (a.choices && a.choices.length) {
+      const sel = document.createElement('select');
+      sel.innerHTML = `<option value="">${a.required ? '请选择…' : '（不传）'}</option>`
+        + a.choices.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+      sel.value = initial == null ? '' : String(initial);
+      sel.addEventListener('change', autoSave);
+      wrap.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      const multi = a.nargs || a.action === 'append';
+      inp.type = (a.type === 'int' || a.type === 'float') ? 'number' : 'text';
+      if (a.type === 'int') inp.step = '1';
+      if (multi) inp.placeholder = '多个值用英文逗号分隔';
+      inp.value = Array.isArray(initial) ? initial.join(', ') : (initial == null ? '' : String(initial));
+      inp.addEventListener('input', autoSave);
+      wrap.appendChild(inp);
+    }
+    const help = a.help || '';
+    if (help) {
+      const h = document.createElement('div');
+      h.className = 'help';
+      h.textContent = help;
+      wrap.appendChild(h);
+    }
+    box.appendChild(wrap);
+  }
+  applyEmptyFilter();
+}
+
+function fieldInputs(dest) {
+  const f = $(`.field[data-dest="${CSS.escape(dest)}"]`, $('#d-fields'));
+  return f ? { field: f, cb: $('input[type=checkbox]', f), input: $('input[type=text],input[type=number]', f), sel: $('select', f) } : null;
+}
+function collectValues() {
+  const schema = (state.script && state.script.args_schema) || [];
+  const values = {};
+  for (const a of schema) {
+    const got = fieldInputs(a.dest);
+    if (!got) continue;
+    if (a.is_flag) { values[a.dest] = !!(got.cb && got.cb.checked); continue; }
+    if (a.choices && a.choices.length) { values[a.dest] = got.sel ? got.sel.value : ''; continue; }
+    const raw = (got.input ? got.input.value : '').trim();
+    if (a.nargs || a.action === 'append') { values[a.dest] = raw ? raw.split(/[,，\s]+/).filter(Boolean) : []; continue; }
+    if (a.type === 'int' || a.type === 'float') { values[a.dest] = raw === '' ? '' : Number(raw); continue; }
+    values[a.dest] = raw;
+  }
+  return values;
+}
+function fillValues(values) {
+  const schema = (state.script && state.script.args_schema) || [];
+  for (const [dest, v] of Object.entries(values || {})) {
+    if (v === undefined) continue;
+    const got = fieldInputs(dest);
+    if (!got) continue;
+    const a = schema.find(x => x.dest === dest) || {};
+    if (a.is_flag) { if (got.cb) { got.cb.checked = !!v; $('.sw-val', got.field).textContent = got.cb.checked ? '开启' : '关闭'; } }
+    else if (got.sel) got.sel.value = String(v);
+    else if (got.input) got.input.value = Array.isArray(v) ? v.join(', ') : String(v);
+  }
+  applyEmptyFilter();
+}
+function applyEmptyFilter() {
+  const hide = $('#opt-hide-empty').checked;
+  $$('.field', $('#d-fields')).forEach(f => {
+    if (f.classList.contains('field-switch')) { f.style.display = ''; return; }
+    const ctrl = $('select', f) || $('input', f);
+    const val = ctrl ? String(ctrl.value || '') : '';
+    f.style.display = (hide && val === '') ? 'none' : '';
+  });
+}
+
+const autoSave = debounce(async () => {
+  const values = collectValues();
+  state.script.auto_saved_args = values;
+  await saveArgs(values);
+  refreshCmd();
+}, 500);
+async function saveArgs(values) {
+  if (!state.selectedId) return;
+  try { await api(`/api/scripts/${state.selectedId}/args`, { method: 'PUT', body: { args: values } }); }
+  catch { /* 自动保存失败不打扰用户 */ }
+}
+
+/* ---------- 命令预览 / 编辑 ---------- */
+async function buildCommandText(values) {
+  if (!state.selectedId) return { command: '' };
+  try {
+    const r = await api('/api/scripts/command', { method: 'POST', body: { script_id: state.selectedId, args: values || collectValues() } });
+    if (r.error) return { command: '', error: r.error };
+    return { command: r.command || '' };
+  } catch (e) { return { command: '', error: e.message }; }
+}
+async function refreshCmd() {
+  if (!state.selectedId) return;
+  const saved = localStorage.getItem(userCmdKey(state.selectedId));
+  const { command } = await buildCommandText();
+  let text = command;
+  if (saved && saved.trim()) {
+    try {
+      const r = await api(`/api/scripts/${state.selectedId}/merge-command`, {
+        method: 'POST', body: { args: collectValues(), command: saved },
+      });
+      text = r.merged || saved;
+    } catch { text = saved; }
+  }
+  $('#cmd-input').value = text;
+  $('#cmd-preview').textContent = text || '（空）';
+  $('#cmd-dot').hidden = !saved;
+}
+function initCmdStrip() {
+  const strip = $('#cmd-strip');
+  const pop = $('#cmd-edit-pop');
+  const open = () => {
+    strip.classList.add('open', 'pop');
+    const ta = $('#cmd-input');
+    refreshCmd();
+    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
+  };
+  const close = () => { strip.classList.remove('open', 'pop'); };
+  $('#cmd-strip-toggle').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (strip.classList.contains('open')) close(); else open();
+  });
+  $('#cmd-strip').addEventListener('click', (e) => {
+    if (e.target.closest('.cmd-edit-pop')) e.stopPropagation();
+  });
+  $('#cmd-cancel').addEventListener('click', (e) => { e.stopPropagation(); close(); refreshCmd(); });
+  $('#cmd-reset').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    localStorage.removeItem(userCmdKey(state.selectedId));
+    close();
+    await refreshCmd();
+    toast('已恢复为自动生成的命令');
+  });
+  $('#cmd-save').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const v = $('#cmd-input').value.trim();
+    if (v) localStorage.setItem(userCmdKey(state.selectedId), v);
+    else localStorage.removeItem(userCmdKey(state.selectedId));
+    close();
+    await refreshCmd();
+    toast(v ? '命令已保存，将按此执行' : '已恢复为自动生成的命令');
+  });
+  const debouncedSave = debounce(() => {
+    const v = $('#cmd-input').value.trim();
+    if (v) localStorage.setItem(userCmdKey(state.selectedId), v);
+  }, 600);
+  $('#cmd-input').addEventListener('input', debouncedSave);
+}
+
+/* ---------- 执行 ---------- */
+function setRunning(running) {
+  state.running = running;
+  const btn = $('#btn-run');
+  btn.classList.toggle('running', running);
+  $('#run-label').textContent = running ? '■ 终止' : '▶ 运行';
+  $('#dock-terminate').hidden = !running;
+  $('#q-run-status').className = 'quick-btn';
+  const stEl = $('#q-run-status .st') || $('#q-run-status');
+  const [cls, label] = running ? ['running', '运行中'] : statusMeta(statusOf(state.selectedId));
+  stEl.className = `st ${cls}`;
+  stEl.innerHTML = `<i></i>${label}`;
+  $$('.scard').forEach(c => c.classList.toggle('running', running && Number(c.dataset.id) === state.selectedId));
+  if (state.selectedId) {
+    const card = $(`.scard[data-id="${state.selectedId}"]`);
+    if (card) {
+      const badge = $('.run-badge', card);
+      if (running && !badge) {
+        const b = document.createElement('span');
+        b.className = 'run-badge';
+        b.textContent = '● 1';
+        $('.card-foot .right', card).prepend(b);
+      }
+    }
+  }
+}
+
+async function runScript() {
+  if (!state.script) { toast('请先选择一个脚本', 'warn'); return; }
+  if (state.running) { terminateCurrent(); return; }
+  const schema = state.script.args_schema || [];
+  const values = collectValues();
+  const missing = schema.filter(a => a.required
+    && (values[a.dest] === undefined || values[a.dest] === null || values[a.dest] === ''
+      || (Array.isArray(values[a.dest]) && !values[a.dest].length)))
+    .map(a => a.dest);
+  if (missing.length) { toast(`缺少必选参数：${missing.join(', ')}`, 'err'); return; }
+
+  await saveArgs(values);
+  const custom = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
+  const payload = { script_id: state.selectedId, args: values, preset_id: state.activePresetId };
+  if (custom) payload.command = custom;
+
+  setRunning(true);
+  setRunState('启动中…', 'run');
+  try {
+    const r = await api('/api/execute', { method: 'POST', body: payload });
+    state.currentExecId = r.execution_id;
+    const tab = newTab(r.execution_id, state.script.name);
+    tab.name = state.script.name;
+    tab.execId = r.execution_id;
+    renderTabs();
+    connectWs(`/ws/run/${r.execution_id}`, { tabId: r.execution_id });
+    refreshRunning();
+  } catch (e) {
+    setRunning(false);
+    setRunState(e.message, 'err');
+    toast('执行失败：' + e.message, 'err');
+  }
+}
+function setRunState(text, kind) {
+  const el = $('#q-run-status .st');
+  if (!el) return;
+  el.innerHTML = `<i></i>${escapeHtml(text)}`;
+  el.className = `st ${kind === 'ok' ? 'ok' : kind === 'err' ? 'err' : kind === 'warn' ? 'ok' : 'running'}`;
+}
+
+async function terminateCurrent() {
+  if (!state.currentExecId) return;
+  try {
+    await api(`/api/executions/${state.currentExecId}/terminate`, { method: 'POST' });
+    toast('已发送终止信号', 'warn');
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+function connectWs(path, { tabId, envInit = false } = {}) {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  if (state.ws) { try { state.ws.close(); } catch { /* ignore */ } }
+  const ws = new WebSocket(`${proto}//${location.host}${path}`);
+  state.ws = ws;
+  const tab = getTab(tabId);
+  ws.onmessage = (ev) => {
+    if (state.ws !== ws) return;
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === 'line') {
+      if (tab) tab.stream.append(msg.stream, msg.line, msg.ts);
+      return;
+    }
+    if (msg.type === 'done') {
+      const r = msg.result || {};
+      ws.close();
+      if (tab) setTabStatus(tab.id, r.ok === false && !r.status ? 'err' : (r.status === 'success' ? 'ok' : r.status === 'failed' ? 'err' : 'warn'));
+      if (envInit) {
+        if (r.ok) { toast('环境初始化完成'); reloadEnv(); }
+        else toast('环境初始化失败：' + (r.message || '未知错误'), 'err');
+        return;
+      }
+      const map = { success: ['ok', '执行成功'], failed: ['err', '执行失败'], terminated: ['err', '已终止'] };
+      const [cls, text] = map[r.status] || ['err', '执行结束'];
+      setRunState(`${text} · 退出码 ${r.exit_code == null ? '-' : r.exit_code}`, cls);
+      setRunning(false);
+      refreshRunning();
+      refreshHistory();
+      state.lastStatus[state.selectedId] = r.status || 'failed';
+      updateRunBadges();
+      updateFilterCounts();
     }
   };
-  openModal({
-    title,
-    bodyHTML: `<div class="result-tip err" style="margin-bottom:0">${escapeHtml(message)}</div>`,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn danger primary" id="confirm-ok">${confirmText}</button>`,
-    onMount: (mask) => {
-      mask._confirmCleanup = () => mask.removeEventListener("click", handleMask);
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", () => { closeModal(); if (onCancel) onCancel(); }));
-      $("#confirm-ok", mask).addEventListener("click", async () => {
-        closeModal();
-        try { await onConfirm(); } catch (e) { toast(e.message, true); }
-      });
-      mask.addEventListener("click", handleMask);
-    },
+  ws.onerror = () => toast('实时连接断开', 'err');
+  ws.onclose = () => { if (state.ws === ws) state.ws = null; };
+}
+/* ========================= 4. 执行记录 ========================= */
+
+state.executions = [];
+
+const STATUS_TEXT = { success: '成功', failed: '失败', running: '运行中', terminated: '已终止' };
+
+/** 数据指纹：轮询时用它判断是否真的变了，避免无谓重绘造成的闪烁 */
+function signature(list, fields) {
+  return list.map(x => fields.map(f => {
+    const v = x[f];
+    return typeof v === 'object' ? JSON.stringify(v) : v;
+  }).join('|')).join(';');
+}
+
+async function refreshHistory() {
+  try {
+    const list = await api('/api/executions?limit=200');
+    state.executions = list;
+    // 用最新一次执行推导每个脚本的状态（卡片徽章 + 失败筛选）
+    const latest = {};
+    for (const h of [...list].reverse()) {
+      if (h.script_id && !latest[h.script_id]) latest[h.script_id] = h.status;
+    }
+    state.lastStatus = latest;
+    // 只有列表内容真的变了才重绘，否则 6 秒轮询会让整页反复闪
+    const sig = signature(list, ['id', 'status', 'finished_at', 'tags', 'script_name']);
+    const changed = sig !== state.histSig;
+    state.histSig = sig;
+    if (changed) renderHistory();
+    updateRunBadges();
+    updateFilterCounts();
+    updatePageBadge();
+    hideOffline();
+  } catch (e) {
+    markOffline();
+    $('#hist-rows').innerHTML = `<div class="empty">加载执行记录失败：${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function updatePageBadge() {
+  const n = state.scripts.length, m = state.executions.length;
+  const running = state.runningExecs.length;
+  const el = $('#page-badge');
+  el.textContent = `${n} 脚本 · ${m} 记录${running ? ` · ${running} 运行中` : ''}`;
+  el.classList.remove('bad');
+}
+
+function historyFiltered() {
+  const kw = ($('#history-search').value || '').trim().toLowerCase();
+  return state.executions.filter(h => {
+    if (state.historyScope === 'script' && state.selectedId && h.script_id !== state.selectedId) return false;
+    if (!kw) return true;
+    const tags = jparse(h.tags, []).join(' ');
+    const hay = `${h.script_name || ''} ${h.status} ${STATUS_TEXT[h.status] || ''} ${tags} ${h.command || ''}`.toLowerCase();
+    return hay.includes(kw);
   });
 }
 
-/* ================= 顶部：导入 / 扫描 ================= */
+function renderHistory() {
+  const box = $('#hist-rows');
+  const list = historyFiltered();
+  $('#hist-multi-bar').classList.toggle('show', state.historyMulti);
+  $('#hm-count').textContent = `已选 ${state.selectedHistory.size} 条`;
+  $('#btn-history-multi').textContent = state.historyMulti ? '取消多选' : '多选';
+  $('#btn-history-multi').classList.toggle('active', state.historyMulti);
 
-function openAddModal() {
-  const lastDir = localStorage.getItem("last_scan_dir") || "";
-  openModal({
-    title: "脚本导入",
-    bodyHTML: `
-      <div class="m-field">
-        <div class="m-radio">
-          <label><input type="radio" name="add-mode" value="file" checked> 导入单个脚本</label>
-          <label><input type="radio" name="add-mode" value="scan"> 扫描目录</label>
-        </div>
-        <div class="m-hint">导入模式可填路径或选择本地 .py 文件；扫描模式递归查找并自动导入</div>
+  if (!list.length) {
+    box.innerHTML = `<div class="empty">${state.executions.length ? '没有匹配的记录。' : '还没有执行记录。'}</div>`;
+    return;
+  }
+  box.innerHTML = '';
+  for (const h of list) {
+    const row = document.createElement('div');
+    row.className = 'hist-row' + (state.detailId === h.id ? ' sel' : '');
+    row.dataset.id = h.id;
+    const tags = jparse(h.tags, []);
+    const scopeNote = state.historyScope === 'script' && !state.selectedId ? '（未选择脚本，显示全部）' : '';
+    row.innerHTML = `
+      ${state.historyMulti ? `<input type="checkbox" class="hi-cb" ${state.selectedHistory.has(h.id) ? 'checked' : ''}>` : '<span></span>'}
+      <div class="main">
+        <div class="script">${escapeHtml(h.script_name || '（脚本已删除）')}</div>
+        <div class="meta">${tags.map(t => `<span class="tg">#${escapeHtml(t)}</span>`).join('')}${escapeHtml(fmtTime(h.started_at, false))} → ${h.finished_at ? escapeHtml(fmtTime(h.finished_at, false)) : '进行中'} · ${escapeHtml(durText(h.started_at, h.finished_at))}${scopeNote}</div>
       </div>
-      <div class="m-field" id="path-field">
-        <div class="m-label">路径</div>
-        <div class="path-row">
-          <input class="f-input mono" id="add-path" placeholder="/path/to/scripts 或 /path/to/script.py" value="${escapeHtml(lastDir)}" autocomplete="off">
-          <button class="btn ghost" id="add-browse" title="打开文件选择器">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>
-            选择文件…
-          </button>
-        </div>
-        <div class="m-hint" id="path-hint">选择文件会把脚本复制到启动器管理目录（imported/）</div>
-        <input type="file" id="add-file" accept=".py" style="display:none">
-      </div>
-      <div class="m-field" id="name-field">
-        <div class="m-label">显示名称（可选，留空使用脚本名）</div>
-        <input class="f-input" id="add-name" placeholder="例如：数据清洗工具" autocomplete="off">
-      </div>
-      <div class="m-field" id="desc-field">
-        <div class="m-label">描述（可选，留空自动取脚本内 description）</div>
-        <input class="f-input" id="add-desc" placeholder="这个脚本用来做什么…" autocomplete="off">
-      </div>
-      <div class="m-field" id="recursive-wrap">
-        <label class="chk"><input type="checkbox" id="add-recursive" checked> 递归扫描子目录</label>
-      </div>
-    `,
-    footHTML: `<button class="btn ghost" id="add-cancel">取消</button><button class="btn primary" id="add-confirm">确定</button>`,
-    onMount: (mask) => {
-      $("#add-cancel", mask).addEventListener("click", closeModal);
-      $("#add-confirm", mask).addEventListener("click", doAdd);
-      const mode = () => $('input[name="add-mode"]:checked').value;
-      const syncMode = () => {
-        const m = mode();
-        $("#recursive-wrap").style.display = m === "scan" ? "" : "none";
-        $("#name-field").style.display = m === "scan" ? "none" : "";
-        $("#desc-field").style.display = m === "scan" ? "none" : "";
-        $("#path-hint").style.display = m === "scan" ? "none" : "";
-      };
-      $$('input[name="add-mode"]', mask).forEach(r => r.addEventListener("change", syncMode));
-      syncMode(); // 初始按当前 radio（扫描）显示正确字段
-      // 文件选择器
-      $("#add-browse", mask).addEventListener("click", () => { $('input[name="add-mode"][value="file"]').checked = true; syncMode(); $("#add-file", mask).click(); });
-      $("#add-file", mask).addEventListener("change", async (e) => {
-        const f = e.target.files[0];
-        if (!f) return;
-        if (await uploadScript(f)) closeModal();
+      <div style="display:flex;align-items:center;gap:6px">
+        <span class="status-pill ${escapeHtml(h.status)}">${escapeHtml(STATUS_TEXT[h.status] || h.status)}</span>
+        <button class="hi-del" title="删除记录">×</button>
+      </div>`;
+    if (state.historyMulti) {
+      $('.hi-cb', row).addEventListener('click', (e) => e.stopPropagation());
+    }
+    box.appendChild(row);
+  }
+}
+
+/** 记录列表事件委托：轮询重绘不会丢事件 */
+function initHistoryRowEvents() {
+  $('#hist-rows').addEventListener('click', (e) => {
+    const row = e.target.closest('.hist-row');
+    if (!row) return;
+    const id = Number(row.dataset.id);
+    const rec = state.executions.find(h => h.id === id);
+    if (state.historyMulti) {
+      if (e.target.closest('.hi-del')) return;
+      if (state.selectedHistory.has(id)) state.selectedHistory.delete(id); else state.selectedHistory.add(id);
+      renderHistory();
+      return;
+    }
+    if (e.target.closest('.hi-del')) { armDeleteRow(row, id); return; }
+    if (row.classList.contains('confirm-del') && !e.target.closest('.hi-del')) {
+      // 点击黄色卡片任意处 = 取消确认
+      clearTimeout(row._arm);
+      row.classList.remove('confirm-del');
+      const b = $('.hi-del', row);
+      if (b) b.textContent = '×';
+      return;
+    }
+    if (rec) showHistoryDetail(id);
+  });
+}
+
+function armDeleteRow(row, id) {
+  if (row.classList.contains('confirm-del')) {
+    clearTimeout(row._arm);
+    row.classList.remove('confirm-del');
+    api(`/api/executions/${id}`, { method: 'DELETE' }).then(async () => {
+      state.selectedHistory.delete(id);
+      if (state.detailId === id) clearHistoryDetail();
+      toast('已删除该记录');
+      await refreshHistory();
+    }).catch(e => toast(e.message, 'err'));
+    return;
+  }
+  row.classList.add('confirm-del');
+  $('.hi-del', row).textContent = '确认删除';
+  row._arm = setTimeout(() => {
+    row.classList.remove('confirm-del');
+    const b = $('.hi-del', row);
+    if (b) b.textContent = '×';
+  }, 3000);
+}
+
+function clearHistoryDetail() {
+  state.detailId = null;
+  setDetailMode(false);
+  if (state.detailWs) { try { state.detailWs.close(); } catch { /* ignore */ } state.detailWs = null; }
+  $('#hd-script').textContent = '选择左侧记录查看详情';
+  $('#hd-ops').innerHTML = '';
+  $('#hd-sub').innerHTML = '';
+  $('#hd-tags-bar').innerHTML = '';
+  $('#hd-out').textContent = '—';
+  setOutputFullscreen(false);
+  $$('.hist-row').forEach(r => r.classList.remove('sel'));
+}
+
+/** 窄屏下切换「列表 / 详情」两种模式（宽屏时该类名无副作用） */
+function setDetailMode(on) {
+  state.historyDetailMode = !!on;
+  $('#hist-layout').classList.toggle('show-detail', state.historyDetailMode);
+}
+/** 运行日志全屏：详情整块铺满视口，头部按钮仍在，方便退出 */
+function setOutputFullscreen(on) {
+  const box = $('#hist-detail-box');
+  box.classList.toggle('out-full', !!on);
+  const b = $('[data-op-fs]', box);
+  if (b) { b.textContent = on ? '退出全屏' : '全屏日志'; b.title = on ? '退出全屏' : '全屏查看运行日志'; }
+}
+
+async function showHistoryDetail(id) {
+  try {
+    const rec = await api(`/api/executions/${id}`);
+    state.detailId = id;
+    setDetailMode(true);
+    $$('.hist-row').forEach(r => r.classList.toggle('sel', Number(r.dataset.id) === id));
+    $('#hd-script').textContent = rec.script_name || '（脚本已删除）';
+
+    // 操作区
+    const ops = $('#hd-ops');
+    ops.innerHTML = '';
+    const mk = (label, title, cls = 'quick-btn') => {
+      const b = document.createElement('button');
+      b.className = cls; b.textContent = label; b.title = title;
+      ops.appendChild(b);
+      return b;
+    };
+    if (rec.status === 'running') {
+      const t = mk('终止', '终止该次执行', 'quick-btn danger');
+      t.addEventListener('click', async () => {
+        t.disabled = true; t.textContent = '终止中…';
+        try { await api(`/api/executions/${id}/terminate`, { method: 'POST' }); toast('已发送终止信号', 'warn'); }
+        catch (e) { t.disabled = false; t.textContent = '终止'; toast(e.message, 'err'); }
       });
+    }
+    mk('复制命令', '复制这次执行使用的命令').addEventListener('click', async () => {
+      if (!rec.command) { toast('无法生成命令', 'warn'); return; }
+      await copyText(rec.command);
+      toast('命令已复制');
+    });
+    mk('↻ 重跑', '用这次参数重新填入表单').addEventListener('click', () => rerunExecution(rec));
+    mk('删除', '删除该记录', 'quick-btn danger').addEventListener('click', async () => {
+      const ok = await confirmModal({ title: '删除执行记录', message: '该记录及其输出将一并删除，无法恢复。', okText: '删除', danger: true });
+      if (!ok) return;
+      if (state.detailWs) { try { state.detailWs.close(); } catch { /* ignore */ } state.detailWs = null; }
+      await api(`/api/executions/${id}`, { method: 'DELETE' });
+      state.detailId = null;
+      toast('已删除');
+      await refreshHistory();
+    });
+    const fsBtn = mk('全屏日志', '全屏查看运行日志');
+    fsBtn.dataset.opFs = '1';
+    fsBtn.addEventListener('click', () => setOutputFullscreen(!$('#hist-detail-box').classList.contains('out-full')));
+
+    // 参数 + 命令（数量多时默认折叠，把纵向空间让给运行日志）
+    const args = rec.args || {};
+    const entries = Object.entries(args)
+      .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length));
+    const chips = entries
+      .map(([k, v]) => `<span class="arg-chip"><b>${escapeHtml(k)}</b>=${escapeHtml(Array.isArray(v) ? v.join(',') : v)}</span>`).join('');
+    const cmdTxt = rec.command || '';
+    const argTitle = entries.map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(',') : v}`).join('\n');
+    state.argsOpen = entries.length <= 5;
+    $('#hd-sub').innerHTML = `
+      <div class="hd-meta-row">
+        <span class="status-pill ${escapeHtml(rec.status)}">${escapeHtml(STATUS_TEXT[rec.status] || rec.status)}</span>
+        <span>${escapeHtml(fmtTime(rec.started_at))} → ${rec.finished_at ? escapeHtml(fmtTime(rec.finished_at)) : '进行中'}</span>
+        <span>耗时 ${escapeHtml(durText(rec.started_at, rec.finished_at))}</span>
+        <span>退出码 ${rec.exit_code == null ? '—' : escapeHtml(rec.exit_code)}</span>
+      </div>
+      <div class="hd-args-box${state.argsOpen ? '' : ' collapsed'}">
+        <button class="hd-args-toggle" title="${escapeHtml(argTitle)}">
+          <span class="caret">${state.argsOpen ? '▾' : '▸'}</span>参数 <b>${entries.length}</b>${cmdTxt ? ` · 命令 <b>${cmdTxt.length}</b> 字符` : ''}
+        </button>
+        <div class="hd-args">
+          ${chips || '<span style="color:var(--ink-4)">无参数</span>'}
+          ${cmdTxt ? `<div class="cmd" title="${escapeHtml(cmdTxt)}">${escapeHtml(cmdTxt)}</div>` : ''}
+        </div>
+      </div>`;
+    const argsBox = $('.hd-args-box', $('#hd-sub'));
+    // 注意：这里是 class 选择器，#hd-sub 内动态生成的按钮并没有 id
+    const argsToggle = argsBox && $('.hd-args-toggle', argsBox);
+    if (argsToggle) argsToggle.addEventListener('click', () => {
+      state.argsOpen = argsBox.classList.contains('collapsed');
+      argsBox.classList.toggle('collapsed', !state.argsOpen);
+      $('.caret', argsBox).textContent = state.argsOpen ? '▾' : '▸';
+    });
+
+    renderDetailTags(rec);
+
+    // 输出
+    const out = $('#hd-out');
+    out.className = 'hist-detail-out';
+    const content = document.createElement('div');
+    out.innerHTML = '';
+    out.appendChild(content);
+    const stream = new Stream(out, content, { max: 1000 });
+
+    if (rec.status === 'running') {
+      content.innerHTML = '<div class="t-placeholder">任务运行中，等待实时输出…</div>';
+      const ph = content.firstChild;
+      if (state.detailWs) { try { state.detailWs.close(); } catch { /* ignore */ } }
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${proto}//${location.host}/ws/run/${id}`);
+      state.detailWs = ws;
+      ws.onmessage = (ev) => {
+        if (state.detailWs !== ws) return;
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (m.type === 'line') {
+          if (ph) { ph.remove(); }
+          stream.append(m.stream, m.line, m.ts);
+        } else if (m.type === 'done') {
+          ws.close();
+          state.detailWs = null;
+          refreshRunning();
+          refreshHistory().then(() => showHistoryDetail(id));
+        }
+      };
+      ws.onerror = () => { if (state.detailWs === ws) state.detailWs = null; };
+    } else {
+      stream.renderSnapshot(rec.output, rec.output_ts);
+      if (!rec.output) content.innerHTML = '<div class="t-placeholder">（无输出）</div>';
+    }
+    state.detailStream = stream;
+  } catch (e) {
+    console.error('[showHistoryDetail]', e && (e.stack || e.message) || e);
+    toast(e.message, 'err');
+  }
+}
+
+function renderDetailTags(rec) {
+  const bar = $('#hd-tags-bar');
+  const tags = jparse(rec.tags, []);
+  bar.innerHTML = '<span>标签</span>';
+  tags.forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'tag';
+    el.innerHTML = `#${escapeHtml(t)}<span class="x" style="cursor:pointer;margin-left:3px;color:var(--ink-4)">×</span>`;
+    $('.x', el).addEventListener('click', () => setDetailTags(rec, tags.filter(x => x !== t)));
+    bar.appendChild(el);
+  });
+  const inp = document.createElement('input');
+  inp.className = 'tag-input mono';
+  inp.placeholder = '+ 标签';
+  inp.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const v = inp.value.trim();
+    if (!v || tags.includes(v)) { inp.value = ''; return; }
+    inp.value = '';
+    setDetailTags(rec, [...tags, v]);
+  });
+  bar.appendChild(inp);
+}
+async function setDetailTags(rec, tags) {
+  try {
+    await api(`/api/executions/${rec.id}/tags`, { method: 'PUT', body: { tags } });
+    rec.tags = tags;
+    renderDetailTags(rec);
+    await refreshHistory();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+async function rerunExecution(rec) {
+  if (!rec.script_id) { toast('原脚本已删除，无法重跑', 'warn'); return; }
+  await selectScript(rec.script_id);
+  const args = typeof rec.args === 'string' ? jparse(rec.args, {}) : (rec.args || {});
+  fillValues(args);
+  await saveArgs(args);
+  state.activePresetId = rec.preset_id;
+  renderPresets();
+  toast('已载入该次执行的参数，确认后点击「运行」');
+}
+
+/* ---------- 历史工具栏 ---------- */
+function initHistoryView() {
+  const search = debounce(() => renderHistory(), 220);
+  $('#history-search').addEventListener('input', search);
+  $('#btn-history-scope').addEventListener('click', () => {
+    state.historyScope = state.historyScope === 'all' ? 'script' : 'all';
+    updateHistoryScopeBtn();
+    savePrefs();
+    renderHistory();
+  });
+  $('#btn-history-multi').addEventListener('click', () => {
+    state.historyMulti = !state.historyMulti;
+    if (!state.historyMulti) state.selectedHistory.clear();
+    if (state.historyMulti) setDetailMode(false);
+    renderHistory();
+  });
+  $('#hist-back').addEventListener('click', () => setDetailMode(false));
+  $('#detail-back').addEventListener('click', () => { clearHistoryDetail(); setDetailMode(false); });
+  // 窄屏详情是右侧抽屉：点遮罩或按 Esc 都能退回列表
+  $('#hd-mask').addEventListener('click', () => clearHistoryDetail());
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if ($('#hist-detail-box').classList.contains('out-full')) { setOutputFullscreen(false); return; }
+    if (state.historyDetailMode) clearHistoryDetail();
+  });
+  $('#hm-select-all').addEventListener('click', () => {
+    const list = historyFiltered();
+    const allOn = list.every(h => state.selectedHistory.has(h.id));
+    if (allOn) list.forEach(h => state.selectedHistory.delete(h.id));
+    else list.forEach(h => state.selectedHistory.add(h.id));
+    renderHistory();
+  });
+  $('#hm-delete').addEventListener('click', async () => {
+    const ids = Array.from(state.selectedHistory);
+    if (!ids.length) { toast('请先选择要删除的记录', 'warn'); return; }
+    const ok = await confirmModal({ title: '批量删除', message: `将删除 ${ids.length} 条执行记录（运行中的记录会自动跳过）。`, okText: '删除', danger: true });
+    if (!ok) return;
+    try {
+      const r = await api('/api/executions/delete', { method: 'POST', body: { ids } });
+      const skip = (r.skipped_running || []).length;
+      toast(skip ? `已删除 ${r.deleted} 条，跳过 ${skip} 条运行中记录` : `已删除 ${r.deleted} 条记录`);
+      state.selectedHistory.clear();
+      state.detailId = null;
+      await refreshHistory();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#btn-clear-history').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: '清空执行记录', message: `将清空全部 ${state.executions.length} 条执行记录，无法恢复。`, okText: '清空', danger: true });
+    if (!ok) return;
+    try {
+      const r = await api('/api/executions/clear', { method: 'POST', body: {} });
+      state.detailId = null;
+      state.tabs.forEach(t => t.stream.clear());
+      toast(`已清空 ${r.deleted} 条记录`);
+      await refreshHistory();
+    } catch (e) { toast(e.message, 'err'); }
+  });
+}
+function updateHistoryScopeBtn() {
+  const b = $('#btn-history-scope');
+  b.textContent = state.historyScope === 'all' ? '全部' : '当前脚本';
+  b.classList.toggle('active', state.historyScope === 'script');
+  b.title = state.historyScope === 'all' ? '显示全部脚本的记录' : '只显示当前选中脚本的记录';
+}
+
+/* ========================= 轮询与连接状态 ========================= */
+
+async function refreshRunning() {
+  try {
+    const r = await api('/api/executions/running');
+    state.runningExecs = r.running || [];
+    state.runningExecs.forEach(x => { state.lastStatus[x.script_id] = 'running'; });
+    updateRunBadges();
+    updateFilterCounts();
+    updatePageBadge();
+    hideOffline();
+    refreshDetailStatus();
+    // 定时任务页可见时同步刷新
+    if (state.view === 'schedules') renderSchedules(true);
+  } catch { markOffline(); }
+}
+
+function refreshDetailStatus() {
+  if (!state.detailId) return;
+  const still = state.runningExecs.some(r => r.id === state.detailId);
+  const row = $(`.hist-row[data-id="${state.detailId}"]`);
+  const rowStatus = row ? ($('.status-pill', row).className.match(/status-pill (\w+)/) || [])[1] : null;
+  if (!still && rowStatus === 'running') showHistoryDetail(state.detailId);
+}
+
+function markOffline() {
+  state.offlineStreak += 1;
+  if (state.offlineStreak >= 2) $('#offline').classList.add('show');
+}
+function hideOffline() {
+  state.offlineStreak = 0;
+  $('#offline').classList.remove('show');
+}
+
+async function checkUv() {
+  try {
+    const r = await api('/api/system/uv');
+    state.uvOk = r.ok;
+    state.uvHint = r.install_hint;
+    const note = $('#uv-note');
+    if (r.ok) {
+      note.textContent = '';
+      note.className = 'toolbar-note mono';
+    } else {
+      // 不再弹窗打断：只在工具条留一行可点击的提示，需要时点开看安装方式
+      note.className = 'toolbar-note mono warn-note';
+      note.innerHTML = '未检测到 uv · 点此查看安装方式';
+      note.onclick = () => showUvInstall(r.install_hint);
+    }
+  } catch { state.uvOk = null; }
+}
+/* ========================= 5. 定时任务 ========================= */
+
+const CRON_QUICK = [
+  ['* * * * *', '每分钟'], ['*/5 * * * *', '每 5 分钟'], ['*/10 * * * *', '每 10 分钟'],
+  ['0 * * * *', '每小时'], ['0 */2 * * *', '每 2 小时'], ['0 9 * * *', '每天 09:00'],
+  ['0 9 * * 1-5', '工作日 09:00'], ['0 9 * * 0', '每周日 09:00'], ['0 9 1 * *', '每月 1 号'],
+];
+const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
+
+async function fetchSchedules() {
+  return api('/api/schedules');
+}
+
+async function renderSchedules(silent = false) {
+  const wrap = $('#sched-grid');
+  if (silent && wrap.contains(document.activeElement)
+      && /^(INPUT|SELECT|TEXTAREA)$/.test(document.activeElement.tagName)) return;
+  let list = [];
+  try { list = await fetchSchedules(); } catch (e) { if (!silent) toast(e.message, 'err'); return; }
+  // 乐观补丁（立即运行时的临时状态）
+  list = list.map(s => (state.schedPatch[s.id] ? { ...s, ...state.schedPatch[s.id] } : s));
+  // 静默轮询：数据没变就整块跳过，否则每 3 秒重绘一次会不停闪烁
+  const sig = signature(list, SCHED_SIG_FIELDS);
+  if (silent && sig === state.schedSig) return;
+  state.schedSig = sig;
+  state.schedules = list;
+
+  const enabled = list.filter(s => s.enabled).length;
+  const badge = $('#sched-badge');
+  badge.hidden = enabled === 0;
+  badge.textContent = enabled;
+
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty">还没有定时任务。<div class="empty-act">
+      <button class="btn btn-solid" onclick="document.getElementById('btn-new-sched').click()">新建定时任务</button></div></div>`;
+    return;
+  }
+  wrap.innerHTML = '';
+  // 入场动画只在「本次进入定时任务视图后的首绘」播放；之后所有刷新（轮询 / 运行完成 /
+  // 编辑保存 / 删除）都不重播，否则每张卡片都会闪一下。
+  const animate = !state.schedAnimated;
+  state.schedAnimated = true;
+  for (const s of list) wrap.appendChild(scheduleCard(s, animate));
+}
+
+function lastStatusClass(txt) {
+  const t = String(txt || '').toLowerCase();
+  if (t.includes('running') || t.includes('运行')) return 'last-run';
+  if (t.includes('success') || t.includes('成功')) return 'last-ok';
+  if (t.includes('fail') || t.includes('error') || t.includes('终止') || t.includes('无效') || t.includes('不存在')) return 'last-fail';
+  return '';
+}
+
+/** 判断两批定时任务是否等价（轮询时据此决定要不要重绘） */
+const SCHED_SIG_FIELDS = ['id', 'enabled', 'cron', 'max_runs', 'run_count', 'next_run', 'last_run', 'last_status'];
+
+/** 上次执行状态 → 简单状态标签（对齐 demo：只显示 成功 / 失败 / 运行中 / 终止 / 暂停） */
+function schedStatusPill(lastRun, lastStatus) {
+  if (!lastRun) return '<span class="status-pill paused">暂停</span>';
+  const cls = lastStatusClass(lastStatus);
+  const map = { 'last-ok': ['success', '成功'], 'last-fail': ['failed', '失败'], 'last-run': ['running', '运行中'], '': ['paused', '暂停'] };
+  const [c, txt] = map[cls] || map[''];
+  return `<span class="status-pill ${c}">${txt}</span>`;
+}
+
+/** 只刷新某一张卡片的执行状态，不整块重绘（整块重绘会重放入场动画，看着很闪） */
+function setScheduleStatusDom(id, s) {
+  const card = $(`.sched-card[data-id="${id}"]`);
+  const el = card ? $('.sched-status', card) : null;
+  if (el) el.innerHTML = schedStatusPill(s.last_run, s.last_status);
+}
+/** 重新拉取并只更新这一张卡片的状态 */
+async function refreshScheduleStatusDom(id) {
+  let list = [];
+  try { list = await fetchSchedules(); } catch { return; }
+  const s = list.find(x => x.id === id);
+  if (!s) return;
+  setScheduleStatusDom(id, s);
+  // 重算指纹：真实数据变了下一次轮询才会整块刷新，没变就继续跳过，避免无谓重绘
+  state.schedSig = signature(list, SCHED_SIG_FIELDS);
+}
+
+function scheduleCard(s, animate = true) {
+  const card = document.createElement('div');
+  card.className = 'sched-card' + (animate ? '' : ' no-anim');
+  const maxRuns = s.max_runs;
+  const autoDone = !s.enabled && maxRuns && (s.run_count || 0) >= maxRuns;
+  const badgeCls = autoDone ? 'done' : s.enabled ? 'on' : 'off';
+  const badgeTxt = autoDone ? `已完成 ${s.run_count}/${maxRuns}` : s.enabled ? '已启用' : '已停用';
+  // 下次执行：两行排版「下次 / 明天 13:15 · 3 小时后」，近几天用口语化说法
+  const nextTxt = !s.enabled
+    ? '下次<br><span class="t">—</span>'
+    : s.next_run
+      ? `下次<br><span class="t">${escapeHtml(smartTime(s.next_run))}</span>${relTime(s.next_run) ? ` · ${escapeHtml(relTime(s.next_run))}` : ''}`
+      : '下次<br><span class="t">待计算</span>';
+  const presetTxt = s.preset_name ? `预设：「${s.preset_name}」` : '参数：手动输入';
+  const lastTxt = `上次：${s.last_run ? smartTime(s.last_run) : '尚未执行'}`;
+
+  card.dataset.id = s.id;
+  card.innerHTML = `
+    <div class="sched-head">
+      <div class="sched-head-left">
+        <div class="sched-title" title="点击查看完整参数">${escapeHtml(s.name)}</div>
+        <div class="sched-sub mono" title="${escapeHtml(s.script_name || '')}">${escapeHtml(s.script_name || '（脚本已删除）')}</div>
+      </div>
+      <div class="sched-head-right">
+        <span class="sched-badge ${badgeCls}" ${autoDone ? 'title="重新启用后将从 0 重新计数"' : ''}>${escapeHtml(badgeTxt)}</span>
+        <label class="sw" title="启用 / 停用">
+          <input type="checkbox" ${s.enabled ? 'checked' : ''}><span class="track"></span>
+        </label>
+      </div>
+    </div>
+    <div class="sched-cron-row">
+      <input class="sched-cron-in" value="${escapeHtml(s.cron)}" title="cron 表达式，失焦自动保存">
+      <span class="sched-runs">
+        次数 <span class="cur">${s.run_count || 0}</span>/<input type="number" min="-1" value="${maxRuns ? maxRuns : -1}" class="${maxRuns ? 'limited' : ''}" title="执行次数上限，-1 为不限">
+      </span>
+      <span class="sched-next">${nextTxt}</span>
+    </div>
+    <div class="sched-meta">
+      <span class="preset m-ellip" title="${escapeHtml(presetTxt)}">${escapeHtml(presetTxt)}</span>
+      <span class="m-last m-ellip" title="${escapeHtml(lastTxt)}">${escapeHtml(lastTxt)}</span>
+      <span class="sched-status">${schedStatusPill(s.last_run, s.last_status)}</span>
+    </div>
+    <div class="sched-ops">
+      <button class="btn btn-solid" data-op="run">▶ 立即运行</button>
+      <button class="btn btn-ghost" data-op="edit">编辑</button>
+      <button class="btn btn-danger" data-op="del">删除</button>
+    </div>`;
+
+  // 启停
+  $('.sw input', card).addEventListener('change', async (e) => {
+    try {
+      await api(`/api/schedules/${s.id}`, { method: 'PUT', body: { enabled: e.target.checked } });
+      toast(e.target.checked ? `已启用「${s.name}」` : `已停用「${s.name}」`);
+      await renderSchedules();
+    } catch (err) { toast(err.message, 'err'); e.target.checked = !e.target.checked; }
+  });
+
+  // cron 行内编辑
+  bindInlineNumber($('.sched-cron-in', card), {
+    get: () => s.cron,
+    validate: (v) => {
+      if (!v) return 'cron 不能为空';
+      if (v.split(/\s+/).length !== 5) return 'cron 需要 5 段：分 时 日 月 周';
+      return null;
+    },
+    transform: (v) => v.trim(),
+    save: async (v) => { await api(`/api/schedules/${s.id}`, { method: 'PUT', body: { cron: v } }); toast('执行时间已更新'); },
+    after: () => renderSchedules(),
+  });
+
+  // 次数上限行内编辑（-1 = 不限 → 传 null）
+  bindInlineNumber($('.sched-runs input', card), {
+    get: () => (s.max_runs ? s.max_runs : -1),
+    validate: (v) => {
+      const n = parseInt(v, 10);
+      if (isNaN(n)) return '执行次数需为不小于 1 的整数或 -1（不限）';
+      if (n !== -1 && n < 1) return '执行次数需为不小于 1 的整数或 -1（不限）';
+      return null;
+    },
+    transform: (v) => { const n = parseInt(v, 10); return n === -1 ? null : n; },
+    save: async (v) => { await api(`/api/schedules/${s.id}`, { method: 'PUT', body: { max_runs: v } }); toast(v === null ? '已设为不限次数' : `执行次数上限已设为 ${v} 次`); },
+    after: () => {
+      if (!s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs) {
+        toast('该任务已达上限停用，重新启用后将从 0 重新计数', 'warn');
+      }
+      renderSchedules();
     },
   });
+
+  $('[data-op=run]', card).addEventListener('click', (e) => { e.stopPropagation(); runScheduleNow(s); });
+  $('[data-op=edit]', card).addEventListener('click', (e) => { e.stopPropagation(); openScheduleModal(s); });
+  $('[data-op=del]', card).addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const ok = await confirmModal({ title: '删除定时任务', message: `「${s.name}」将被删除，已产生的执行记录不受影响。`, okText: '删除', danger: true });
+    if (!ok) return;
+    try {
+      await api(`/api/schedules/${s.id}`, { method: 'DELETE' });
+      toast('已删除');
+      await renderSchedules();
+    } catch (err) { toast(err.message, 'err'); }
+  });
+  card.addEventListener('click', (e) => {
+    if (e.target.closest('button, input, label, .sw')) return;
+    showScheduleDetail(s);
+  });
+  return card;
+}
+
+/** 通用「失焦保存」行内编辑：Enter 提交，Esc 还原 */
+function bindInlineNumber(input, { get, validate, transform, save, after }) {
+  let saving = false;
+  const commit = async () => {
+    if (saving) return;
+    const raw = input.value.trim();
+    if (String(raw) === String(get())) return;
+    const err = validate(raw);
+    if (err) { input.value = get(); toast(err, 'err'); return; }
+    const value = transform ? transform(raw) : raw;
+    saving = true;
+    try {
+      await save(value);
+      if (after) await after();
+    } catch (e) {
+      input.value = get();
+      toast(e.message, 'err');
+    } finally { saving = false; }
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') { input.value = get(); input.blur(); }
+  });
+}
+
+async function runScheduleNow(s) {
+  // 只把这张卡片的状态标签改成「运行中」，不整块重绘，避免闪烁
+  state.schedPatch[s.id] = { last_status: 'running' };
+  setScheduleStatusDom(s.id, { ...s, last_status: 'running' });
+  const done = () => { delete state.schedPatch[s.id]; refreshScheduleStatusDom(s.id); };
+  try {
+    await api(`/api/schedules/${s.id}/run`, { method: 'POST' });
+    toast(`已触发「${s.name}」`);
+    setTimeout(done, 3000);
+  } catch (e) {
+    toast(e.message, 'err');
+    setTimeout(done, 3000);
+  }
+}
+
+function showScheduleDetail(s) {
+  const args = jparse(s.args, {});
+  const argChips = Object.entries(args)
+    .filter(([, v]) => v !== '' && v != null && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `<span class="arg-chip"><b>${escapeHtml(k)}</b>=${escapeHtml(Array.isArray(v) ? v.join(',') : v)}</span>`).join('');
+  const rows = [
+    ['执行时间', `<span class="mono">${escapeHtml(s.cron)}</span>`],
+    ['执行次数', `${s.run_count || 0} / ${s.max_runs || '不限'}`],
+    ['脚本', escapeHtml(s.script_name || '（已删除）')],
+    ['参数来源', s.preset_name ? `预设：「${escapeHtml(s.preset_name)}」` : '手动输入'],
+    ['参数', argChips ? `<div class="arg-preview">${argChips}</div>` : '无参数'],
+    ['上次执行', s.last_run ? `${escapeHtml(fmtTime(s.last_run))}${s.last_status ? ` · <span class="${lastStatusClass(s.last_status)}">${escapeHtml(s.last_status)}</span>` : ''}` : '尚未执行'],
+    ['下次执行', s.enabled ? (s.next_run ? `${escapeHtml(fmtTime(s.next_run))} <span style="color:var(--ink-4)">（${escapeHtml(relTime(s.next_run))}）</span>` : '待计算') : '已停用'],
+    ['创建时间', s.created_at ? escapeHtml(fmtFull(s.created_at)) : '—'],
+  ];
+  openModal({
+    title: '定时任务详情',
+    body: `<div class="detail-rows">${rows.map(([k, v]) =>
+      `<div class="detail-row"><div class="k">${escapeHtml(k)}</div><div class="v">${v}</div></div>`).join('')}</div>`,
+    foot: [{ label: '关闭' }, { label: '编辑', primary: true, onClick: () => { closeModal(); openScheduleModal(s); } }],
+  });
+}
+
+/* ---------- 新建 / 编辑定时任务 ---------- */
+let schedCtx = { scripts: [], scriptId: null, schema: [], presets: [] };
+
+async function openScheduleModal(sched) {
+  const isEdit = !!sched;
+  schedCtx = { scripts: [], scriptId: null, schema: [], presets: [], editingId: isEdit ? sched.id : null };
+  let scripts = [];
+  try { scripts = await api('/api/scripts'); } catch { scripts = []; }
+  if (!scripts.length) { toast('请先导入脚本', 'warn'); return; }
+  schedCtx.scripts = scripts;
+
+  const current = sched ? {
+    name: sched.name,
+    scriptId: sched.script_id,
+    cron: sched.cron,
+    maxRuns: sched.max_runs ? sched.max_runs : -1,
+    enabled: !!sched.enabled,
+    presetId: sched.preset_id || null,
+    args: jparse(sched.args, {}),
+  } : {
+    name: '', scriptId: scripts[0].id, cron: '0 9 * * *', maxRuns: -1, enabled: true, presetId: null, args: {},
+  };
+  schedCtx.current = current;
+
+  const body = `
+    <div class="mfield"><label>任务名称 <span class="req">*</span></label>
+      <input type="text" id="sc-name" value="${escapeHtml(current.name || '')}" placeholder="如：每日数据同步"></div>
+    <div class="mfield"><label>选择脚本 <span class="req">*</span></label>
+      <select id="sc-script">${scripts.map(s =>
+        `<option value="${s.id}" ${s.id === current.scriptId ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select></div>
+    <div class="mfield"><label>参数预设</label>
+      <select id="sc-preset"><option value="">手动输入参数</option></select></div>
+    <div class="mfield"><label>cron 表达式 <span class="req">*</span></label>
+      <input type="text" class="mono" id="sc-cron" value="${escapeHtml(current.cron)}" placeholder="0 9 * * *">
+      <div class="hint" id="sc-preview">分 时 日 月 周</div>
+      <div class="cron-quick">${CRON_QUICK.map(([c, l]) =>
+        `<button data-cron="${escapeHtml(c)}">${escapeHtml(l)}</button>`).join('')}</div></div>
+    <div class="mfield"><label>可视化构建</label>
+      <div class="builder">
+        <div class="builder-row">
+          <label>频率</label>
+          <select id="sc-freq">
+            <option value="minute">按分钟</option><option value="hour">按小时</option>
+            <option value="daily">每天</option><option value="weekly">每周</option><option value="monthly">每月</option>
+          </select>
+          <span id="sc-builder-opts" style="display:flex;gap:8px;flex-wrap:wrap;align-items:center"></span>
+        </div>
+      </div></div>
+    <div class="mfield"><label>参数（来自预设或手动填写）</label>
+      <div id="sc-fields"></div></div>
+    <div class="mfield-row">
+      <div class="mfield"><label>执行次数上限</label>
+        <input type="number" id="sc-max-runs" value="${current.maxRuns}" min="-1">
+        <div class="hint">-1 表示不限次数</div></div>
+      <div class="mfield"><label>状态</label>
+        <label class="switch" style="margin-top:8px"><input type="checkbox" id="sc-enabled" ${current.enabled ? 'checked' : ''}><span class="track"></span><span class="sw-val">${current.enabled ? '启用' : '停用'}</span></label></div>
+    </div>`;
+
+  openModal({
+    title: isEdit ? '编辑定时任务' : '新建定时任务',
+    wide: true,
+    body,
+    foot: [
+      ...(isEdit ? [{ label: '删除', danger: true, left: true, onClick: async () => {
+        closeModal();
+        const ok = await confirmModal({ title: '删除定时任务', message: `「${sched.name}」将被删除。`, okText: '删除', danger: true });
+        if (!ok) return;
+        await api(`/api/schedules/${sched.id}`, { method: 'DELETE' });
+        toast('已删除');
+        await renderSchedules();
+      } }] : []),
+      { label: '取消' },
+      { label: isEdit ? '保存' : '创建', primary: true, onClick: submitSchedule },
+    ],
+  });
+
+  // 脚本切换 → 重新拉 schema / presets / 参数
+  $('#sc-script').addEventListener('change', () => loadSchedScript($('#sc-script').value));
+  $('#sc-preset').addEventListener('change', (e) => {
+    const opt = e.target.selectedOptions[0];
+    const args = opt && opt.dataset.args ? jparse(opt.dataset.args, {}) : {};
+    renderSchedFields(args);
+  });
+  $('#sc-enabled').addEventListener('change', (e) => {
+    e.target.nextElementSibling.nextElementSibling.textContent = e.target.checked ? '启用' : '停用';
+  });
+  $$('#modal-body [data-cron]').forEach(b => b.addEventListener('click', () => {
+    $('#sc-cron').value = b.dataset.cron;
+    previewCron();
+    syncBuilderFromCron();
+  }));
+  $('#sc-cron').addEventListener('input', previewCron);
+  $('#sc-freq').addEventListener('change', () => { renderBuilderOpts(); buildCronFromBuilder(); });
+  $('#sc-builder-opts').addEventListener('input', () => buildCronFromBuilder());
+  $('#sc-builder-opts').addEventListener('change', () => buildCronFromBuilder());
+
+  await loadSchedScript(current.scriptId, current.args, current.presetId);
+  renderBuilderOpts();
+  syncBuilderFromCron();
+  previewCron();
+}
+
+async function loadSchedScript(scriptId, presetArgs, presetId) {
+  schedCtx.scriptId = Number(scriptId);
+  schedCtx.schema = []; schedCtx.presets = [];
+  try {
+    const detail = await api(`/api/scripts/${scriptId}`);
+    schedCtx.schema = detail.args_schema || [];
+    schedCtx.presets = detail.presets || [];
+  } catch { /* 保持空 */ }
+  const sel = $('#sc-preset');
+  if (sel) {
+    sel.innerHTML = '<option value="">手动输入参数</option>'
+      + schedCtx.presets.map(p => `<option value="${p.id}" data-args='${escapeHtml(JSON.stringify(p.args || {}))}'>${escapeHtml(p.name)}</option>`).join('');
+    if (presetId && schedCtx.presets.some(p => p.id === presetId)) sel.value = String(presetId);
+  }
+  renderSchedFields(presetArgs || (schedCtx.current && schedCtx.current.args) || {});
+}
+function renderSchedFields(values) {
+  const box = $('#sc-fields');
+  if (!box) return;
+  const schema = schedCtx.schema || [];
+  if (!schema.length) { box.innerHTML = '<div style="font-size:12px;color:var(--ink-4)">该脚本没有可配置参数。</div>'; return; }
+  box.innerHTML = '';
+  for (const a of schema) {
+    const wrap = document.createElement('div');
+    wrap.className = 'field';
+    wrap.dataset.dest = a.dest;
+    const t = typeLabelOf(a);
+    const v = values[a.dest];
+    wrap.innerHTML = `<label><span class="name">${escapeHtml(a.dest)}</span>
+      ${a.required ? '<span class="req">*</span>' : ''}<span class="type ${t}">${t}</span></label>`;
+    if (a.is_flag) {
+      const sw = document.createElement('label');
+      sw.className = 'switch';
+      const on = !!v;
+      sw.innerHTML = `<input type="checkbox" ${on ? 'checked' : ''}><span class="track"></span>`;
+      wrap.appendChild(sw);
+    } else if (a.choices && a.choices.length) {
+      const sel = document.createElement('select');
+      sel.innerHTML = `<option value="">（不传）</option>` + a.choices.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('');
+      sel.value = v == null ? '' : String(v);
+      wrap.appendChild(sel);
+    } else {
+      const inp = document.createElement('input');
+      inp.type = (a.type === 'int' || a.type === 'float') ? 'number' : 'text';
+      inp.value = Array.isArray(v) ? v.join(', ') : (v == null ? '' : String(v));
+      wrap.appendChild(inp);
+    }
+    box.appendChild(wrap);
+  }
+}
+function collectSchedFields() {
+  const schema = schedCtx.schema || [];
+  const values = {};
+  for (const a of schema) {
+    const f = $(`.field[data-dest="${CSS.escape(a.dest)}"]`, $('#sc-fields'));
+    if (!f) continue;
+    if (a.is_flag) { values[a.dest] = !!($('input', f) && $('input', f).checked); continue; }
+    const sel = $('select', f), inp = $('input', f);
+    const raw = ((sel ? sel.value : inp ? inp.value : '')).trim();
+    if (a.nargs || a.action === 'append') { values[a.dest] = raw ? raw.split(/[,，\s]+/).filter(Boolean) : []; continue; }
+    if (a.type === 'int' || a.type === 'float') { values[a.dest] = raw === '' ? '' : Number(raw); continue; }
+    values[a.dest] = raw;
+  }
+  return values;
+}
+
+const previewCron = debounce(async () => {
+  const el = $('#sc-preview');
+  if (!el) return;
+  const cron = ($('#sc-cron').value || '').trim();
+  if (!cron) { el.className = 'hint'; el.textContent = '分 时 日 月 周'; return; }
+  try {
+    const r = await api('/api/schedules/preview', { method: 'POST', body: { cron } });
+    el.className = 'hint ok';
+    el.textContent = `下次执行：${fmtFull(r.next)}（${relTime(r.next)}）`;
+  } catch (e) {
+    el.className = 'hint err';
+    el.textContent = e.message;
+  }
+}, 400);
+
+async function submitSchedule() {
+  const name = $('#sc-name').value.trim();
+  const cron = $('#sc-cron').value.trim();
+  const scriptId = Number($('#sc-script').value);
+  const maxRaw = parseInt($('#sc-max-runs').value, 10);
+  if (!name) { toast('请填写任务名称', 'err'); return; }
+  if (!cron) { toast('请填写 cron 表达式', 'err'); return; }
+  if (isNaN(maxRaw) || maxRaw < -1 || maxRaw === 0) { toast('执行次数上限需为不小于 1 的整数或 -1', 'err'); return; }
+  const presetSel = $('#sc-preset');
+  const presetId = presetSel && presetSel.value ? Number(presetSel.value) : null;
+  const args = collectSchedFields();
+  const enabled = $('#sc-enabled').checked;
+  const max_runs = maxRaw === -1 ? null : maxRaw;
+  const isEdit = schedCtx.editingId != null;
+  try {
+    if (isEdit) {
+      await api(`/api/schedules/${schedCtx.editingId}`, { method: 'PUT', body: { name, cron, enabled, args, max_runs, preset_id: presetId } });
+      toast('已保存');
+    } else {
+      await api('/api/schedules', { method: 'POST', body: { script_id: scriptId, name, cron, enabled, args, max_runs, preset_id: presetId } });
+      toast('定时任务已创建');
+    }
+    closeModal();
+    await renderSchedules();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------- 可视化 cron 构建 ---------- */
+function renderBuilderOpts() {
+  const box = $('#sc-builder-opts');
+  const freq = $('#sc-freq').value;
+  const num = (id, label, val, attrs = '') =>
+    `<label style="font-size:11px;color:var(--ink-3)">${label}</label><input type="number" id="${id}" value="${val}" ${attrs}>`;
+  if (freq === 'minute') {
+    box.innerHTML = num('sc-n', '每', 5, 'min="1" max="59"');
+  } else if (freq === 'hour') {
+    box.innerHTML = num('sc-nh', '每', 2, 'min="1" max="23"') + num('sc-mh', '第', 0, 'min="0" max="59"') + '<label style="font-size:11px;color:var(--ink-3)">小时的第 N 分执行</label>';
+  } else if (freq === 'daily') {
+    box.innerHTML = '<input type="time" id="sc-time" value="09:00">';
+  } else if (freq === 'weekly') {
+    box.innerHTML = '<input type="time" id="sc-time" value="09:00"><div class="wd-group" id="sc-wd">'
+      + WEEK_LABELS.map((w, i) => `<button class="wd ${i === 0 ? 'on' : ''}" data-wd="${i}">周${w}</button>`).join('') + '</div>';
+  } else {
+    box.innerHTML = '<input type="time" id="sc-time" value="09:00">'
+      + num('sc-md', '每月', 1, 'min="1" max="28"') + '<label style="font-size:11px;color:var(--ink-3)">号</label>';
+  }
+  $$('#sc-wd .wd', box).forEach(b => b.addEventListener('click', () => {
+    b.classList.toggle('on');
+    buildCronFromBuilder();
+  }));
+}
+function buildCronFromBuilder() {
+  const freq = $('#sc-freq').value;
+  let cron = '';
+  if (freq === 'minute') cron = `*/${$('#sc-n').value || 5} * * * *`;
+  else if (freq === 'hour') cron = `${$('#sc-mh').value || 0} */${$('#sc-nh').value || 2} * * *`;
+  else {
+    const t = ($('#sc-time').value || '09:00').split(':');
+    const mm = String(t[0] || 0).padStart(2, '0'), hh = String(t[1] || 9).padStart(2, '0');
+    if (freq === 'daily') cron = `${mm} ${hh} * * *`;
+    else if (freq === 'monthly') cron = `${mm} ${hh} ${$('#sc-md').value || 1} * *`;
+    else {
+      const on = $$('#sc-wd .wd.on').map(b => Number(b.dataset.wd));
+      if (!on.length) { toast('请至少选择一个星期', 'warn'); return; }
+      const cronDays = on.map(i => (i === 6 ? 0 : i + 1)).sort().join(',');
+      cron = `${mm} ${hh} * * ${cronDays}`;
+    }
+  }
+  $('#sc-cron').value = cron;
+  previewCron();
+}
+function syncBuilderFromCron() {
+  const cron = ($('#sc-cron').value || '').trim();
+  const parts = cron.split(/\s+/);
+  if (parts.length !== 5) return;
+  const [mm, hh, dom, mon, dow] = parts;
+  const setFreq = (f) => { $('#sc-freq').value = f; renderBuilderOpts(); };
+  if (/^\*\/\d+$/.test(mm)) { setFreq('minute'); $('#sc-n').value = mm.slice(2); return; }
+  if (/^\*\/\d+$/.test(hh)) {
+    setFreq('hour'); $('#sc-mh').value = parseInt(mm, 10) || 0; $('#sc-nh').value = hh.slice(2); return;
+  }
+  const timeVal = `${String(parseInt(hh, 10) || 0).padStart(2, '0')}:${String(parseInt(mm, 10) || 0).padStart(2, '0')}`;
+  if (/^\d+$/.test(dom) && dom !== '1') {
+    setFreq('monthly'); $('#sc-time').value = timeVal; $('#sc-md').value = parseInt(dom, 10); return;
+  }
+  if (dow !== '*') {
+    setFreq('weekly'); $('#sc-time').value = timeVal;
+    $$('#sc-wd .wd').forEach(b => {
+      const cronDay = Number(b.dataset.wd) === 6 ? 0 : Number(b.dataset.wd) + 1;
+      b.classList.toggle('on', dow.split(',').includes(String(cronDay)));
+    });
+    return;
+  }
+  setFreq('daily');
+  $('#sc-time').value = timeVal;
+}
+/* ========================= 6. 弹窗 ========================= */
+
+let modalCleanup = null;
+
+function openModal({ title, body, foot = [], wide = false }) {
+  if (modalCleanup) modalCleanup();
+  $('#modal-title').textContent = title;
+  $('#modal-body').innerHTML = body;
+  const footBox = $('#modal-foot');
+  footBox.innerHTML = '';
+  for (const f of foot) {
+    const b = document.createElement('button');
+    b.className = `btn ${f.primary ? 'btn-solid' : f.danger ? 'btn-danger' : 'btn-ghost'}${f.left ? ' btn-left' : ''}`;
+    b.textContent = f.label;
+    // 没指定动作的按钮一律当作「关闭」，避免出现点了没反应的按钮
+    b.addEventListener('click', () => (f.onClick ? f.onClick(b) : closeModal()));
+    footBox.appendChild(b);
+  }
+  $('#modal').classList.toggle('wide', !!wide);
+  $('#modal-mask').classList.add('show');
+  const onMask = (e) => { if (e.target === $('#modal-mask')) closeModal(); };
+  const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
+  $('#modal-mask').addEventListener('click', onMask);
+  $('#modal-close').addEventListener('click', closeModal);
+  document.addEventListener('keydown', onKey);
+  modalCleanup = () => {
+    $('#modal-mask').removeEventListener('click', onMask);
+    $('#modal-close').removeEventListener('click', closeModal);
+    document.removeEventListener('keydown', onKey);
+  };
+}
+function closeModal() {
+  $('#modal-mask').classList.remove('show');
+  if (modalCleanup) { modalCleanup(); modalCleanup = null; }
+}
+function confirmModal({ title = '确认操作', message, okText = '确定', danger = false }) {
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => { if (done) return; done = true; closeModal(); resolve(v); };
+    openModal({
+      title,
+      body: `<div style="font-size:13px;color:var(--ink-2);line-height:1.7">${escapeHtml(message).replace(/\n/g, '<br>')}</div>`,
+      foot: [
+        { label: '取消', onClick: () => finish(false) },
+        { label: okText, primary: !danger, danger, onClick: () => finish(true) },
+      ],
+    });
+    const mask = $('#modal-mask');
+    const obs = new MutationObserver(() => {
+      if (!mask.classList.contains('show')) { obs.disconnect(); finish(false); }
+    });
+    obs.observe(mask, { attributes: true, attributeFilter: ['class'] });
+  });
+}
+
+/* ---------- 导入脚本 ---------- */
+function openImportModal(mode = 'file') {
+  let cur = mode;
+  const render = () => {
+    const isScan = cur === 'scan';
+    openModal({
+      title: '导入脚本',
+      body: `
+        <div class="mfield">
+          <div class="radio-cards" id="add-mode">
+            <label class="radio-card ${!isScan ? 'on' : ''}"><input type="radio" name="addmode" value="file" ${!isScan ? 'checked' : ''}>单个脚本文件</label>
+            <label class="radio-card ${isScan ? 'on' : ''}"><input type="radio" name="addmode" value="scan" ${isScan ? 'checked' : ''}>扫描目录批量导入</label>
+          </div>
+        </div>
+        <div class="mfield">
+          <label>${isScan ? '目录路径' : '脚本路径'}</label>
+          <div style="display:flex;gap:8px">
+            <input type="text" class="mono" id="add-path" style="flex:1" placeholder="${isScan ? '/Users/you/code' : '/Users/you/code/xxx.py'}" value="${escapeHtml(localStorage.getItem('last_scan_dir') || '')}">
+            ${isScan ? '' : '<button class="btn btn-ghost" id="add-browse" style="flex-shrink:0">选择文件…</button>'}
+          </div>
+          <div class="hint" id="add-hint">${isScan ? '递归扫描目录下的 .py 文件，自动解析含 argparse 的脚本' : '选择文件会把脚本复制到启动器管理目录（imported/）'}</div>
+        </div>
+        ${isScan ? `
+        <div class="mfield">
+          <label class="switch"><input type="checkbox" id="add-recursive" checked><span class="track"></span><span class="sw-val">递归扫描所有子目录</span></label>
+        </div>` : `
+        <div class="mfield"><label>显示名（留空则用文件名）</label>
+          <input type="text" id="add-name" placeholder="如：数据管道"></div>`}
+        <input type="file" id="add-file" accept=".py" hidden>`,
+      foot: [
+        { label: '取消' },
+        { label: isScan ? '开始扫描' : '导入', primary: true, onClick: (b) => doImport(b, isScan) },
+      ],
+    });
+    $$('#add-mode .radio-card').forEach(card => card.addEventListener('click', () => {
+      const v = $('input', card).value;
+      if (v === cur) return;
+      cur = v;
+      render();
+    }));
+    const rec = $('#add-recursive');
+    if (rec) rec.addEventListener('change', () => {
+      $('.sw-val', rec.parentElement).textContent = rec.checked ? '递归扫描所有子目录' : '仅当前目录';
+    });
+    const browse = $('#add-browse');
+    if (browse) browse.addEventListener('click', () => $('#add-file').click());
+    const file = $('#add-file');
+    if (file) file.addEventListener('change', () => { if (file.files[0]) uploadScript(file.files[0]); });
+  };
+  render();
+}
+
+async function doImport(btn, isScan) {
+  const path = $('#add-path').value.trim();
+  if (!path) { toast('请输入路径', 'warn'); return; }
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin"></span>';
+  try {
+    if (isScan) {
+      const r = await api('/api/scripts/scan', { method: 'POST', body: { directory: path, recursive: $('#add-recursive').checked } });
+      localStorage.setItem('last_scan_dir', path);
+      closeModal();
+      await loadScripts();
+      await refreshHistory();
+      showScanResult(r);
+    } else {
+      const body = { path };
+      const name = $('#add-name').value.trim();
+      if (name) body.name = name;
+      const r = await api('/api/scripts/import', { method: 'POST', body });
+      closeModal();
+      toast(`已导入 ${r.script.name}`);
+      await loadScripts();
+      await selectScript(r.script.id);
+    }
+  } catch (e) {
+    toast(e.message, 'err');
+    btn.disabled = false;
+    btn.textContent = old;
+  }
 }
 
 async function uploadScript(file) {
   const fd = new FormData();
-  fd.append("file", file);
-  const name = $("#add-name").value.trim();
-  if (name) fd.append("name", name);
+  fd.append('file', file);
   try {
-    const res = await fetch("/api/scripts/upload", { method: "POST", body: fd });
-    const data = await res.json();
-    if (!res.ok || !data.ok) throw new Error(data.error || "上传失败");
-    toast("已导入 " + data.script.name);
-    await loadScripts();
-    selectScript(data.script.id);
-    return true;
-  } catch (err) {
-    toast("导入失败：" + err.message, true);
-    return false;
-  }
-}
-
-async function doAdd() {
-  const mode = $('input[name="add-mode"]:checked').value;
-  const confirmBtn = $("#add-confirm");
-  confirmBtn.disabled = true;
-  confirmBtn.innerHTML = '<span class="spinner" style="display:inline-block"></span> 处理中…';
-  try {
-    if (mode === "scan") {
-      const path = $("#add-path").value.trim();
-      if (!path) return toast("请输入目录路径", true);
-      const data = await api("/api/scripts/scan", { method: "POST", body: { directory: path, recursive: $("#add-recursive").checked } });
-      localStorage.setItem("last_scan_dir", path);
-      const skipped = data.skipped || [];
-      openModal({
-        title: "扫描完成",
-        bodyHTML: `
-          <div class="result-tip ok">成功导入 ${data.imported.length} 个脚本（共扫描 ${data.total} 个 .py 文件）</div>
-          ${skipped.length ? `<div class="result-tip err">${skipped.length} 个未通过 argparse 约定检查：</div><div class="result-summary">${skipped.map(s => s.path + "\n  └ " + s.error).join("\n")}</div>` : ""}
-        `,
-        footHTML: `<button class="btn primary" id="add-done">完成</button>`,
-        onMount: (mask) => { $("#add-done", mask).addEventListener("click", closeModal); },
-      });
-      await loadScripts();
-    } else {
-      const path = $("#add-path").value.trim();
-      if (!path) return toast("请输入脚本路径", true);
-      const body = { path };
-      const name = $("#add-name").value.trim();
-      const desc = $("#add-desc").value.trim();
-      if (name) body.name = name;
-      if (desc) body.description = desc;
-      const data = await api("/api/scripts/import", { method: "POST", body });
-      closeModal();
-      toast("已导入 " + data.script.name);
-      await loadScripts();
-      selectScript(data.script.id);
-    }
-  } catch (e) {
-    toast("导入失败：" + e.message, true);
-    confirmBtn.disabled = false;
-    confirmBtn.textContent = "确定";
-  }
-}
-
-/* ================= 脚本列表（标签过滤） ================= */
-
-async function loadScripts() {
-  state.scripts = await api("/api/scripts");
-  renderTagFilter();
-  renderScriptList();
-}
-
-/** 汇总所有脚本的标签，渲染侧边栏多选过滤区 */
-function renderTagFilter() {
-  const wrap = $("#tag-filter");
-  const listEl = $("#tag-filter-list");
-  const allTags = [...new Set(state.scripts.flatMap((s) => s.tags || []))].sort((a, b) => a.localeCompare(b, "zh"));
-  wrap.hidden = allTags.length === 0;
-  listEl.innerHTML = "";
-  for (const t of allTags) {
-    const chip = document.createElement("button");
-    chip.className = "tag-chip" + (state.selectedTags.has(t) ? " active" : "");
-    chip.textContent = t;
-    chip.onclick = () => {
-      state.selectedTags.has(t) ? state.selectedTags.delete(t) : state.selectedTags.add(t);
-      renderTagFilter();
-      renderScriptList();
-      savePrefs();
-    };
-    listEl.appendChild(chip);
-  }
-}
-
-function renderScriptList() {
-  const list = $("#script-list");
-  const empty = $("#sidebar-empty");
-  const kw = ($("#script-search").value || "").toLowerCase();
-  const filtered = state.scripts.filter((s) => {
-    if (state.selectedTags.size && !(s.tags || []).some((t) => state.selectedTags.has(t))) return false;
-    if (!kw) return true;
-    return s.name.toLowerCase().includes(kw) || s.path.toLowerCase().includes(kw) || (s.tags || []).some((t) => t.toLowerCase().includes(kw));
-  });
-  list.innerHTML = "";
-  empty.hidden = filtered.length > 0;
-  if (!filtered.length) return;
-  for (const s of filtered) list.appendChild(scriptCard(s));
-}
-
-function scriptCard(s) {
-  const card = document.createElement("div");
-  card.className = "script-card" + (s.id === state.selectedId ? " active" : "");
-  card.dataset.id = s.id;
-  const nargs = (JSON.parse(s.args_schema || "[]")).length;
-  const row1 = document.createElement("div");
-  row1.className = "sc-name";
-  const nm = document.createElement("span");
-  nm.textContent = s.name;
-  const runs = state.runningByScript[s.id] || [];
-  let runBadge = null;
-  if (runs.length) {
-    runBadge = document.createElement("span");
-    runBadge.className = "sc-running";
-    runBadge.textContent = "● " + runs.length;
-    runBadge.title = runs.length + " 个任务正在运行，点击查看";
-    runBadge.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openRunningPopover(runBadge, s.id);
-    });
-  }
-  const badge = document.createElement("span");
-  badge.className = "sc-arg";
-  badge.textContent = nargs + " 参数";
-  row1.append(nm);
-  if (runBadge) row1.appendChild(runBadge);
-  row1.appendChild(badge);
-  const row2 = document.createElement("div");
-  row2.className = "sc-path";
-  row2.textContent = s.path;
-  row2.title = s.path;
-  card.append(row1, row2);
-  if (s.tags && s.tags.length) {
-    const tagsRow = document.createElement("div");
-    tagsRow.className = "sc-tags";
-    for (const t of s.tags.slice(0, 3)) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "#" + t;
-      tagsRow.appendChild(tag);
-    }
-    if (s.tags.length > 3) {
-      const more = document.createElement("span");
-      more.className = "tag more";
-      more.textContent = "+" + (s.tags.length - 3);
-      tagsRow.appendChild(more);
-    }
-    card.appendChild(tagsRow);
-  }
-  card.addEventListener("click", () => selectScript(s.id));
-  return card;
-}
-
-/* ================= 选中脚本 ================= */
-
-async function selectScript(id) {
-  state.selectedId = id;
-  state.activePresetId = null;
-  renderScriptList();
-  try {
-    const rec = await api(`/api/scripts/${id}`);
-    state.script = rec;
-    $("#form-empty").hidden = true;
-    $("#form-content").hidden = false;
-    renderScriptHead(rec);
-    renderEnvBar(rec.env);
-    renderPresets(rec.presets);
-    renderFields(rec.args_schema, rec.auto_saved_args);
-    refreshCmdInput();
-    setRunning(false);
-    // 若历史面板当前可见，切脚本后同步为当前脚本的记录
-    if ($("#history-wrap") && !$("#history-wrap").hidden) refreshHistory();
-  } catch (e) {
-    toast(e.message, true);
-  }
-}
-
-function renderScriptHead(rec) {
-  const nameEl = $("#script-name");
-  nameEl.textContent = rec.name;
-  nameEl.title = "点击重命名";
-  nameEl.onclick = () => inlineRename(rec);
-
-  const descEl = $("#script-desc");
-  descEl.textContent = rec.description || "（无描述，点击添加）";
-  descEl.className = "script-desc" + (rec.description ? "" : " empty");
-  descEl.onclick = () => editScriptMeta(rec);
-
-  renderScriptTags(rec);
-
-  const p = $("#script-path");
-  p.textContent = rec.path;
-  p.title = rec.path;
-  $("#btn-open-dir").onclick = () => openScriptDir(rec.path);
-  $("#btn-copy-path").onclick = async () => {
-    if (await copyText(rec.path)) toast("路径已复制");
-  };
-  $("#btn-reload").onclick = reloadScript;
-  $("#btn-delete-script").onclick = () => confirmModal({
-    title: "删除脚本",
-    message: `确定删除脚本「${rec.name}」吗？该脚本的预设与执行记录会一并删除，脚本文件本身不受影响。`,
-    onConfirm: async () => {
-      await api(`/api/scripts/${rec.id}`, { method: "DELETE" });
-      toast("脚本已删除");
-      state.selectedId = null;
-      localStorage.removeItem("last_script_id");
-      $("#form-empty").hidden = false;
-      $("#form-content").hidden = true;
-      clearConsole();
-      await loadScripts();
-      await refreshHistory();
-    },
-  });
-}
-
-/** 重新加载：脚本文件更新后重新解析参数 */
-async function reloadScript() {
-  if (!state.script) return;
-  const btn = $("#btn-reload");
-  const label = btn.querySelector("span");
-  btn.disabled = true;
-  label.textContent = "解析中…";
-  try {
-    await api(`/api/scripts/${state.script.id}/reload`, { method: "POST" });
-    toast("已重新加载，参数已更新");
-    await loadScripts();
-    await selectScript(state.script.id);
-  } catch (e) {
-    toast("重新加载失败：" + e.message, true);
-  }
-  btn.disabled = false;
-  label.textContent = "重新加载";
-}
-
-/** 原地重命名：点击脚本名称直接变为输入框，Enter/失焦保存，Esc 取消 */
-function inlineRename(rec) {
-  const nameEl = $("#script-name");
-  if (nameEl.dataset.editing === "1") return;
-  const input = document.createElement("input");
-  input.className = "f-input script-name-input";
-  input.value = rec.name;
-  input.dataset.editing = "1";
-  nameEl.replaceWith(input);
-  input.focus();
-  input.select();
-  let done = false;
-  const commit = async (save) => {
-    if (done) return;
-    done = true;
-    const v = input.value.trim();
-    if (save && v && v !== rec.name) {
-      try {
-        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { name: v } });
-        toast("已重命名");
-        await loadScripts();
-        await selectScript(rec.id);
-        return;
-      } catch (e) {
-        toast("重命名失败：" + e.message, true);
-      }
-    }
-    const next = document.createElement("h2");
-    next.id = "script-name";
-    next.title = "点击重命名";
-    next.textContent = rec.name;
-    next.onclick = () => inlineRename(rec);
-    input.replaceWith(next);
-  };
-  input.onkeydown = (e) => {
-    if (e.key === "Enter") { e.preventDefault(); commit(true); }
-    else if (e.key === "Escape") commit(false);
-  };
-  input.onblur = () => commit(true);
-}
-
-/** 脚本详情页标签：chips + 输入框（回车添加、✕ 删除，实时保存） */
-function renderScriptTags(rec) {
-  const row = $("#script-tags");
-  if (!row) return;
-  row.innerHTML = "";
-  const lbl = document.createElement("span");
-  lbl.style.cssText = "font-size:11px;color:var(--muted)";
-  lbl.textContent = "标签:";
-  row.appendChild(lbl);
-  const renderTags = () => {
-    $$(".tag", row).forEach((t) => t.remove());
-    const inp = $("#sc-tag-input", row);
-    for (const t of rec.tags || []) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      const txt = document.createTextNode("#" + t);
-      const x = document.createElement("span");
-      x.className = "x";
-      x.textContent = "✕";
-      x.onclick = async () => {
-        rec.tags = (rec.tags || []).filter((v) => v !== t);
-        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { tags: rec.tags } });
-        renderTags();
-        await loadScripts();
-      };
-      tag.append(txt, x);
-      row.insertBefore(tag, inp);
-    }
-  };
-  const inp = document.createElement("input");
-  inp.id = "sc-tag-input";
-  inp.placeholder = "+ 添加标签，回车确认";
-  inp.onkeydown = async (e) => {
-    if (e.key === "Enter" && inp.value.trim()) {
-      rec.tags = [...new Set([...(rec.tags || []), inp.value.trim()])];
-      inp.value = "";
-      await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { tags: rec.tags } });
-      renderTags();
-      await loadScripts();
-    }
-  };
-  row.appendChild(inp);
-  renderTags();
-}
-
-function editScriptMeta(rec) {
-  openModal({
-    title: "编辑脚本信息",
-    bodyHTML: `
-      <div class="m-field">
-        <div class="m-label">显示名称</div>
-        <input class="f-input" id="meta-name" value="${escapeHtml(rec.name)}" autocomplete="off">
-      </div>
-      <div class="m-field">
-        <div class="m-label">描述</div>
-        <textarea class="f-input" id="meta-desc" placeholder="这个脚本用来做什么…" rows="3">${escapeHtml(rec.description || "")}</textarea>
-      </div>
-      <div class="m-field">
-        <div class="m-label">依赖文件路径（可选，默认自动检测脚本目录的 requirements.txt 或 pyproject.toml）</div>
-        <input class="f-input mono" id="meta-deps" placeholder="如：/path/to/requirements.txt" value="${escapeHtml(rec.deps_path || "")}" autocomplete="off">
-      </div>
-      <div class="m-field">
-        <div class="m-label">标签（多个用逗号分隔，用于侧边栏过滤）</div>
-        <input class="f-input" id="meta-tags" placeholder="如：数据处理, 生产, 测试" value="${escapeHtml((rec.tags || []).join(", "))}" autocomplete="off">
-      </div>`,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="meta-save">保存</button>`,
-    onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      $("#meta-save", mask).addEventListener("click", async () => {
-        const name = $("#meta-name", mask).value.trim();
-        if (!name) return toast("名称不能为空", true);
-        const desc = $("#meta-desc", mask).value.trim();
-        const deps = $("#meta-deps", mask).value.trim();
-        const tags = $("#meta-tags", mask).value.split(/[,，]/).map((t) => t.trim()).filter(Boolean);
-        await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { name, description: desc, deps_path: deps, tags } });
-        closeModal();
-        toast("已保存");
-        await loadScripts();
-        await selectScript(rec.id);
-      });
-      $("#meta-desc", mask).focus();
-    },
-  });
-}
-
-function openScriptDir(path) {
-  api("/api/utils/open-dir", { method: "POST", body: { path } })
-    .then(() => toast("已打开脚本所在目录"))
-    .catch((e) => toast(e.message, true));
-}
-
-/* ================= 环境状态 / uv ================= */
-
-function renderEnvBar(env) {
-  const bar = $("#env-bar");
-  bar.innerHTML = "";
-  if (!env) return;
-
-  const mkDot = (cls) => {
-    const d = document.createElement("span");
-    d.className = "dot" + (cls ? " " + cls : "");
-    return d;
-  };
-  const mkText = (t, cls) => {
-    const s = document.createElement("span");
-    s.className = "env-text" + (cls ? " " + cls : "");
-    s.textContent = t;
-    return s;
-  };
-  const sep = () => {
-    const s = document.createElement("span");
-    s.className = "env-sep";
-    s.textContent = "·";
-    return s;
-  };
-  const group = (...els) => {
-    const g = document.createElement("span");
-    g.className = "env-group";
-    g.append(...els);
-    return g;
-  };
-
-  const groups = [];
-
-  // 1. uv 状态
-  if (!state.uvOk) {
-    if (env.has_venv || env.has_inline_meta) {
-      groups.push(group(mkDot(""), mkText("未装 uv · 用项目环境运行")));
-    } else {
-      groups.push(group(mkDot("err"), mkText("未检测到 uv", "err")));
-    }
-  } else {
-    groups.push(group(mkDot("ok"), mkText("uv " + (env.uv_version || ""), "ok")));
-  }
-
-  // 2. 虚拟环境状态 + 更换/初始化 + 路径
-  const vels = [];
-  if (env.venv_source === "custom") {
-    if (env.venv_broken) {
-      vels.push(mkDot("err"), mkText("指定环境不可用", "err"));
-    } else {
-      vels.push(mkDot("ok"), mkText("使用指定环境", "ok"));
-    }
-  } else if (env.has_inline_meta) {
-    const depsN = (env.inline_deps || []).length;
-    vels.push(mkDot("ok"), mkText("PEP 723 内联脚本" + (depsN ? " · " + depsN + " 个依赖" : ""), "ok"));
-  } else if (env.has_venv) {
-    vels.push(mkDot("ok"), mkText("venv 已就绪", "ok"));
-  } else {
-    vels.push(mkDot("warn"), mkText("未初始化虚拟环境", "warn"));
-  }
-  if (!env.has_inline_meta) {
-    // 更换：纯图标按钮（无胶囊边框）
-    const chg = document.createElement("button");
-    chg.className = "venv-change";
-    chg.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
-    chg.title = "更换虚拟环境";
-    chg.onclick = openVenvSettings;
-    vels.push(chg);
-    if (!env.venv_source && !env.has_venv) {
-      const initBtn = document.createElement("button");
-      initBtn.className = "btn mini primary";
-      initBtn.textContent = env.has_deps ? "初始化环境" : "初始化环境";
-      initBtn.onclick = () => initEnv();
-      vels.push(initBtn);
-    }
-  }
-  groups.push(group(...vels));
-
-  // 3. 依赖状态
-  if (env.has_deps) {
-    const d = mkText(env.deps_name || "依赖文件", "ok");
-    d.title = env.requirements_path || "";
-    groups.push(group(mkDot("ok"), d));
-  } else {
-    groups.push(group(mkDot(""), mkText("无依赖文件")));
-  }
-
-  for (let i = 0; i < groups.length; i++) {
-    if (i > 0) bar.appendChild(sep());
-    bar.appendChild(groups[i]);
-  }
-
-  // 依赖文件行：可自定义依赖文件路径并安装
-  const depRow = document.createElement("div");
-  depRow.className = "env-deps";
-  const depDot = document.createElement("span");
-  depDot.className = "dot" + (env.has_deps ? " ok" : "");
-  const depLbl = document.createElement("span");
-  depLbl.className = "dep-lbl";
-  depLbl.textContent = "依赖文件";
-  depLbl.title = env.has_deps ? ("已检测到 " + env.requirements_path) : "未检测到依赖文件（requirements.txt / pyproject.toml）";
-  const depInput = document.createElement("input");
-  depInput.className = "f-input dep-input";
-  depInput.placeholder = "留空自动检测脚本目录 requirements.txt";
-  depInput.value = (state.script && state.script.deps_path) || "";
-  depInput.title = depLbl.title;
-  const depInstall = document.createElement("button");
-  depInstall.className = "btn mini primary";
-  depInstall.textContent = "安装依赖";
-  depInstall.onclick = () => initEnvDeps(depInput.value.trim());
-  depRow.append(depDot, depLbl, depInput, depInstall);
-  if (env.has_inline_meta) depRow.style.display = "none"; // PEP 723 内联脚本无需依赖文件
-  bar.appendChild(depRow);
-}
-
-/* ================= 虚拟环境设置（更换弹窗） ================= */
-
-let _venvScanned = null; // 扫描缓存：{venvs:[...]}，避免每次打开都重复扫描
-
-/** 弹出「更换虚拟环境」设置窗：选择 / 手动输入 双 Tab，底部常显所选路径 */
-function openVenvSettings() {
-  const rec = state.script;
-  if (!rec) return;
-  const cur = (rec.venv_path || "").trim();
-
-  openModal({
-    title: "",
-    hideTitle: true,
-    bodyHTML: `
-      <div class="venv-top">
-        <div class="venv-tabs">
-          <span class="venv-pill" id="venv-pill"></span>
-          <button class="venv-tab active" data-tab="select">选择环境</button>
-          <button class="venv-tab" data-tab="manual">手动输入</button>
-        </div>
-      </div>
-      <div class="venv-sub">选择脚本运行所用的 Python 虚拟环境</div>
-      <div class="venv-panel" id="venv-panel-select">
-        <select class="f-input venv-sel" id="venv-sel"></select>
-        <button class="btn mini ghost venv-scan" id="venv-scan" title="重新扫描本机已管理的虚拟环境">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>
-        </button>
-      </div>
-      <div class="venv-panel" id="venv-panel-manual" style="display:none">
-        <input class="f-input venv-manual-input" id="venv-manual-input"
-               placeholder="输入虚拟环境路径或 python 可执行文件，例如 /opt/venv 或 /opt/venv/bin/python">
-      </div>
-      <div class="venv-preview" id="venv-preview"></div>
-    `,
-    footHTML: `<button class="btn ghost" id="venv-cancel">取消</button><button class="btn primary" id="venv-save">保存</button>`,
-    onMount: (mask) => {
-      const sel = $("#venv-sel", mask);
-      const input = $("#venv-manual-input", mask);
-      const preview = $("#venv-preview", mask);
-      const scanBtn = $("#venv-scan", mask);
-      const tabSel = $$(".venv-tab", mask);
-      const panelSelect = $("#venv-panel-select", mask);
-      const panelManual = $("#venv-panel-manual", mask);
-
-      function moveVenvPill() {
-        const pill = $("#venv-pill", mask);
-        const active = mask.querySelector(".venv-tab.active");
-        if (!pill || !active) return;
-        pill.style.width = active.offsetWidth + "px";
-        pill.style.transform = "translateX(" + active.offsetLeft + "px)";
-      }
-      function setTab(which) {
-        tabSel.forEach((t) => t.classList.toggle("active", t.dataset.tab === which));
-        panelSelect.style.display = which === "select" ? "flex" : "none";
-        panelManual.style.display = which === "manual" ? "block" : "none";
-        moveVenvPill();
-        updatePreview();
-        if (which === "manual") input.focus();
-      }
-      tabSel.forEach((t) => t.addEventListener("click", () => setTab(t.dataset.tab)));
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      requestAnimationFrame(moveVenvPill);
-
-      function fillOptions(data) {
-        const venvs = (data && data.venvs) || [];
-        sel.innerHTML = "";
-        const d = document.createElement("option");
-        d.value = "";
-        d.textContent = "默认（脚本目录 .venv）";
-        sel.appendChild(d);
-        if (venvs.length) {
-          const g = document.createElement("optgroup");
-          g.label = "已检测到的虚拟环境";
-          for (const v of venvs) {
-            const o = document.createElement("option");
-            o.value = v.path;
-            o.textContent = v.name + "（" + v.type + "）";
-            o.title = v.python;
-            g.appendChild(o);
-          }
-          sel.appendChild(g);
-        }
-        const manual = input.value.trim();
-        const val = manual || cur;
-        if (val) {
-          const exists = [...sel.options].some((o) => o.value === val);
-          if (!exists) {
-            const o = document.createElement("option");
-            o.value = val;
-            o.textContent = "自定义：" + val;
-            o.title = val;
-            sel.appendChild(o);
-          }
-        }
-        sel.value = val;
-      }
-
-      /** 底部预览：始终显示当前选择的虚拟环境路径 */
-      function updatePreview() {
-        const manual = input.value.trim();
-        const chosen = manual || sel.value;
-        if (manual) {
-          preview.textContent = "将使用：" + manual;
-          preview.className = "venv-preview manual";
-          return;
-        }
-        if (!chosen) {
-          preview.textContent = "当前：默认（脚本目录 .venv）" + (rec.env && rec.env.venv_python ? " · " + rec.env.venv_python : "");
-          preview.className = "venv-preview";
-          return;
-        }
-        const opt = [...sel.options].find((o) => o.value === chosen);
-        const py = opt && opt.title ? opt.title : chosen;
-        const isDefault = chosen === "";
-        preview.textContent = "当前：" + (opt ? opt.textContent : chosen) + (py && py !== chosen ? " · " + py : "");
-        preview.className = "venv-preview";
-      }
-
-      // 手动输入联动
-      input.addEventListener("input", updatePreview);
-      sel.addEventListener("change", updatePreview);
-
-      // 初始填充
-      if (_venvScanned) fillOptions(_venvScanned);
-      else {
-        scanBtn.disabled = true;
-        scanBtn.innerHTML = "<span>扫描中…</span>";
-      }
-      updatePreview();
-
-      // 扫描
-      scanBtn.onclick = async () => {
-        scanBtn.disabled = true;
-        scanBtn.innerHTML = "<span>扫描中…</span>";
-        try {
-          const data = await api("/api/env/venvs");
-          _venvScanned = data;
-          fillOptions(data);
-          updatePreview();
-          toast("已扫描到 " + (data.venvs || []).length + " 个虚拟环境");
-        } catch (e) {
-          toast("扫描失败：" + e.message, true);
-        } finally {
-          scanBtn.disabled = false;
-          scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
-        }
-      };
-
-      $("#venv-cancel", mask).addEventListener("click", closeModal);
-
-      $("#venv-save", mask).addEventListener("click", async () => {
-        const manual = input.value.trim();
-        const v = manual || sel.value;
-        try {
-          await api(`/api/scripts/${rec.id}`, { method: "PUT", body: { venv_path: v } });
-          rec.venv_path = v;
-          toast(v ? "已切换虚拟环境" : "已恢复默认环境");
-          closeModal();
-          const env = await api(`/api/scripts/${rec.id}/env`);
-          rec.env = env;
-          renderEnvBar(env);
-        } catch (e) {
-          toast("保存失败：" + e.message, true);
-        }
-      });
-
-      // 后台拉取扫描结果
-      if (!_venvScanned) {
-        api("/api/env/venvs")
-          .then((data) => {
-            _venvScanned = data;
-            fillOptions(data);
-            updatePreview();
-            scanBtn.disabled = false;
-            scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
-          })
-          .catch(() => {
-            scanBtn.disabled = false;
-            scanBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg><span>扫描</span>';
-          });
-      }
-    },
-  });
-}
-
-/* ================= 预设 ================= *//* ================= 预设 ================= *//* ================= 预设 ================= */
-
-/** 预设展示分组：固定项排最前（不限个数），非固定按最近使用补足到 MAX_SHOWN 个，其余折叠 */
-const PRESET_MAX_SHOWN = 6;
-function presetDisplayGroups(all) {
-  // 尊重后端 sort_order 顺序（固定项在前，其余按添加/手动排序），不再自行排序
-  const pinned = all.filter((p) => p.pinned);
-  const unpinned = all.filter((p) => !p.pinned);
-  const shown = unpinned.slice(0, Math.max(0, PRESET_MAX_SHOWN - pinned.length));
-  const rest = unpinned.slice(shown.length);
-  return { pinned, shown, rest };
-}
-
-function renderPresets(presets) {
-  const bar = $("#preset-bar");
-  bar.innerHTML = "";
-  const lbl = document.createElement("span");
-  lbl.className = "lbl";
-  lbl.textContent = "预设";
-  const chips = document.createElement("div");
-  chips.className = "preset-chips";
-  const { pinned, shown, rest } = presetDisplayGroups(presets || []);
-  for (const p of [...pinned, ...shown]) {
-    chips.appendChild(makePresetChip(p));
-  }
-  if (rest.length > 0) {
-    chips.appendChild(makeMoreBubble(rest.length, presets || []));
-  } else {
-    // 气泡常驻：即使没有更多预设也显示管理入口（固定 / 排序 / 编辑）
-    chips.appendChild(makeMoreBubble(0, presets || []));
-  }
-  const saveBtn = document.createElement("button");
-  saveBtn.className = "btn mini ghost";
-  saveBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8M7 3v5h8"/></svg>';
-  saveBtn.appendChild(document.createTextNode(" 保存当前为预设"));
-  saveBtn.onclick = saveAsPreset;
-  bar.append(lbl, chips, saveBtn);
-}
-
-function makePresetChip(p) {
-  const chip = document.createElement("span");
-  chip.className = "preset-chip" + (p.pinned ? " pinned" : "");
-  if (p.pinned) {
-    const pin = document.createElement("span");
-    pin.className = "pin-mark";
-    pin.textContent = "📌";
-    pin.title = "已固定，始终排最前";
-    chip.appendChild(pin);
-  }
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = p.name;
-  name.title = "点击应用此预设";
-  name.onclick = () => applyPreset(p);
-  chip.appendChild(name);
-  const x = document.createElement("span");
-  x.className = "x";
-  x.textContent = "✕";
-  x.title = "删除预设（再次点击确认）";
-  x.onclick = async (e) => {
-    e.stopPropagation();
-    if (chip.classList.contains("confirm-del")) {
-      // 第二次点击：直接删除
-      clearTimeout(chip._delTimer);
-      chip.classList.remove("confirm-del");
-      await api(`/api/presets/${p.id}`, { method: "DELETE" });
-      toast("预设已删除");
-      reloadDetail();
-      return;
-    }
-    chip.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
-    chip._delTimer = setTimeout(() => chip.classList.remove("confirm-del"), 3000);
-  };
-  chip.appendChild(x);
-  return chip;
-}
-
-/** 「还有更多」气泡：三个圆形叠加 + 剩余数量（常驻管理入口） */
-function makeMoreBubble(count, all) {
-  const more = document.createElement("div");
-  more.className = "preset-more";
-  more.title = count > 0 ? `还有 ${count} 个预设 · 点击管理全部` : "管理全部预设（固定 / 排序 / 编辑）";
-  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b1" }));
-  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b2" }));
-  more.appendChild(Object.assign(document.createElement("span"), { className: "pm-b3" }));
-  const cnt = document.createElement("span");
-  cnt.className = "pm-count";
-  cnt.textContent = count > 0 ? "+" + count : "⋯";
-  more.appendChild(cnt);
-  more.onclick = () => openPresetsModal(all);
-  return more;
-}
-
-/** 全部预设管理弹窗：固定 / 排序 / 应用 / 删除 */
-function openPresetsModal(presets) {
-  openModal({
-    title: `全部预设 · ${presets.length} 个`,
-    bodyHTML: `
-      <div class="preset-manage" id="preset-manage"></div>
-      <div class="pm-tip">点击名称应用 · 📌 固定后始终排最前 · ↑↓ 手动排序 · 删除需二次确认</div>`,
-    footHTML: `<button class="btn ghost" data-close>关闭</button>`,
-    onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      renderPresetManager(mask, presets || []);
-    },
-  });
-}
-
-function renderPresetManager(mask, presets) {
-  const wrap = $("#preset-manage", mask);
-  wrap.innerHTML = "";
-  // 直接显示全部（固定在前，其余按当前顺序），不划分分组
-  const { pinned, shown, rest } = presetDisplayGroups(presets || []);
-  for (const p of [...pinned, ...shown, ...rest]) wrap.appendChild(makeManagerRow(mask, p));
-}
-
-function makeManagerRow(mask, p) {
-  const row = document.createElement("div");
-  row.className = "pm-row" + (p.pinned ? " pinned" : "");
-  const name = document.createElement("button");
-  name.className = "pm-name";
-  name.textContent = p.name;
-  name.title = "应用此预设";
-  name.onclick = () => {
-    applyPreset(p);
+    toast('正在上传…');
+    const res = await fetch('/api/scripts/upload', { method: 'POST', body: fd });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) throw new Error(data.error || '上传失败');
     closeModal();
-  };
-  const pin = document.createElement("button");
-  pin.className = "pm-op" + (p.pinned ? " active" : "");
-  pin.textContent = "📌";
-  pin.title = p.pinned ? "取消固定" : "固定（排最前）";
-  pin.onclick = () => patchPresetAndRefresh(mask, p.id, { pinned: !p.pinned });
-  const up = document.createElement("button");
-  up.className = "pm-op";
-  up.textContent = "↑";
-  up.title = "上移";
-  up.onclick = () => patchPresetAndRefresh(mask, p.id, { order: "up" });
-  const down = document.createElement("button");
-  down.className = "pm-op";
-  down.textContent = "↓";
-  down.title = "下移";
-  down.onclick = () => patchPresetAndRefresh(mask, p.id, { order: "down" });
-  const del = document.createElement("button");
-  del.className = "pm-op del";
-  del.textContent = "✕";
-  del.title = "删除预设（再次点击确认）";
-  del.onclick = async () => {
-    if (row.classList.contains("confirm-del")) {
-      // 第二次点击：直接删除
-      clearTimeout(row._delTimer);
-      row.classList.remove("confirm-del");
-      await api(`/api/presets/${p.id}`, { method: "DELETE" });
-      toast("预设已删除");
-      await reloadDetail();
-      renderPresetManager(mask, (state.script && state.script.presets) || []);
-      return;
-    }
-    row.classList.add("confirm-del");
-    toast(`再次点击「✕」即可完成删除预设「${p.name}」`, "warn");
-    row._delTimer = setTimeout(() => row.classList.remove("confirm-del"), 3000);
-  };
-  row.append(name, pin, up, down, del);
-  return row;
-}
-
-async function patchPresetAndRefresh(mask, id, body) {
-  try {
-    await api(`/api/presets/${id}`, { method: "PATCH", body });
-    await reloadDetail();
-    renderPresetManager(mask, (state.script && state.script.presets) || []);
+    toast(`已导入 ${data.script.name}`);
+    await loadScripts();
+    await selectScript(data.script.id);
   } catch (e) {
-    toast("操作失败：" + e.message, true);
+    toast('导入失败：' + e.message, 'err');
   }
 }
 
-async function saveAsPreset() {
-  const values = collectValues();
-  const presets = state.script.presets || [];
+function showScanResult(r) {
+  const skipped = (r.skipped || []).map(s => `<div>· ${escapeHtml(s.path)} — ${escapeHtml(s.error)}</div>`).join('');
   openModal({
-    title: "保存为预设",
-    bodyHTML: `
-      <div class="m-field">
-        <div class="m-label">预设名称（新建）</div>
-        <input class="f-input" id="preset-name" placeholder="输入新名称保存新预设" autocomplete="off">
-      </div>
-      <div class="m-field">
-        <div class="m-label">已有预设 · 点击标签两次覆盖</div>
-        <div class="preset-overwrite-chips" id="preset-overwrite-chips"></div>
+    title: '扫描完成',
+    body: `<div class="result-summary">
+      共发现 ${r.total} 个文件，成功导入 <b>${(r.imported || []).length}</b> 个${(r.skipped || []).length ? `，跳过 ${r.skipped.length} 个` : ''}。
+      ${skipped ? `<div class="skipped">${skipped}</div>` : ''}
       </div>`,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="preset-save">保存为新预设</button>`,
-    onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      const chips = $("#preset-overwrite-chips", mask);
-      let pending = null; // 第一次点击待覆盖的预设名
-      for (const p of presets) {
-        const chip = document.createElement("span");
-        chip.className = "preset-chip";
-        chip.textContent = p.name;
-        chip.title = "第一次点击进入覆盖确认，再次点击同一标签完成覆盖";
-        chip.onclick = () => {
-          if (pending === p.name) {
-            // 第二次点击同一标签：覆盖保存
-            api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name: p.name, args: values } })
-              .then(() => { toast(`已覆盖预设「${p.name}」`); closeModal(); reloadDetail(); })
-              .catch((e) => toast("覆盖失败：" + e.message, true));
-            return;
-          }
-          pending = p.name;
-          $$(".preset-chip", chips).forEach((c) => c.classList.remove("cover-target"));
-          chip.classList.add("cover-target");
-          toast(`再次点击「${p.name}」即可完成覆盖该预设`, "warn");
-        };
-        chips.appendChild(chip);
-      }
-      $("#preset-save", mask).addEventListener("click", async () => {
-        const name = $("#preset-name", mask).value.trim();
-        if (!name) return toast("请输入预设名称", true);
-        if (presets.some((p) => p.name === name)) {
-          return toast("已存在同名预设，请点击下方标签两次覆盖，或换个名称", true);
-        }
-        await api(`/api/scripts/${state.script.id}/presets`, { method: "POST", body: { name, args: values } });
-        closeModal();
-        toast("预设已保存");
-        reloadDetail();
-      });
-      $("#preset-name", mask).focus();
-    },
+    foot: [{ label: '知道了', primary: true, onClick: closeModal }],
   });
 }
 
-function applyPreset(p) {
-  state.activePresetId = p.id;
-  fillValues(p.args || {});
-  saveArgs(p.args || {});
-  toast("已应用预设「" + p.name + "」");
-  // 本地立即更新最近使用顺序，同时持久化
-  p.last_used_at = new Date().toISOString();
-  renderPresets((state.script && state.script.presets) || []);
-  api(`/api/presets/${p.id}`, { method: "PATCH", body: { touch: true } }).catch(() => {});
-}
-
-/* ================= 参数表单 ================= */
-
-/** 参数类型标签（带颜色区分） */
-function typeLabelOf(a) {
-  if (a.is_flag) return { cls: "bool", text: "bool" };
-  if (a.choices && a.choices.length) return { cls: "choices", text: "enum" };
-  const t = a.type || "str";
-  if (a.nargs || a.action === "append") return { cls: "list", text: "list" };
-  if (t === "int") return { cls: "int", text: "int" };
-  if (t === "float") return { cls: "float", text: "float" };
-  return { cls: "str", text: "str" };
-}
-
-function renderFields(schema, saved) {
-  const wrap = $("#fields");
-  wrap.innerHTML = "";
-  if (!schema || schema.length === 0) {
-    const tip = document.createElement("div");
-    tip.className = "form-empty";
-    tip.style.height = "auto";
-    tip.style.padding = "20px";
-    tip.textContent = "该脚本没有定义任何命令行参数";
-    wrap.appendChild(tip);
-    return;
-  }
-  for (const a of schema) {
-    const field = document.createElement("div");
-    field.className = "field" + (a.is_flag ? " field-switch" : "");
-    field.dataset.dest = a.dest;
-
-    const label = document.createElement("div");
-    label.className = "f-label";
-    const nm = document.createElement("span");
-    nm.textContent = a.dest;
-    if (a.required) {
-      const req = document.createElement("span");
-      req.className = "req";
-      req.textContent = "*";
-      req.title = "必选参数";
-      label.appendChild(req);
-    }
-    const kind = document.createElement("span");
-    kind.className = "f-kind" + (a.required ? " req" : "");
-    kind.textContent = a.required ? "必填" : "可选";
-    label.appendChild(nm);
-    label.appendChild(kind);
-    const tl = typeLabelOf(a);
-    if (tl) {
-      const t = document.createElement("span");
-      t.className = "f-type " + tl.cls;
-      t.textContent = tl.text;
-      t.title = "参数类型：" + tl.text;
-      label.appendChild(t);
-    }
-    field.appendChild(label);
-
-    // 帮助/说明：显示在输入框上方、参数名称下方
-    if (a.help || (a.option_strings && a.option_strings.length)) {
-      const help = document.createElement("div");
-      help.className = "f-help";
-      const optStr = a.option_strings ? a.option_strings.join(" / ") : a.name;
-      help.textContent = (a.help ? a.help : "") + (a.help && optStr ? " · " : "") + (optStr ? optStr : "");
-      field.appendChild(help);
-    }
-
-    const defaultVal = a.default;
-    const savedVal = saved ? saved[a.dest] : undefined;
-    let value = savedVal !== undefined && savedVal !== null ? savedVal : defaultVal;
-
-    let input;
-    if (a.is_flag) {
-      // 布尔：开关 + 状态文本，与其他字段排版一致（名称在上、开关在下）
-      const ctrl = document.createElement("div");
-      ctrl.className = "f-control";
-      const sw = document.createElement("label");
-      sw.className = "switch";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !!value;
-      const slider = document.createElement("span");
-      slider.className = "slider";
-      sw.append(cb, slider);
-      const val = document.createElement("span");
-      val.className = "sw-val";
-      val.textContent = cb.checked ? "开启" : "关闭";
-      cb.addEventListener("change", () => {
-        val.textContent = cb.checked ? "开启" : "关闭";
-        autoSave();
-      });
-      ctrl.append(sw, val);
-      field.appendChild(ctrl);
-      input = cb;
-    } else if (a.choices && a.choices.length) {
-      input = document.createElement("select");
-      input.className = "f-input";
-      const emptyOpt = document.createElement("option");
-      emptyOpt.value = "";
-      emptyOpt.textContent = a.required ? "请选择…" : "（不传）";
-      input.appendChild(emptyOpt);
-      for (const c of a.choices) {
-        const opt = document.createElement("option");
-        opt.value = String(c);
-        opt.textContent = String(c);
-        input.appendChild(opt);
-      }
-      input.value = value !== undefined && value !== null ? String(value) : "";
-      input.addEventListener("change", autoSave);
-      field.appendChild(input);
-    } else {
-      input = document.createElement("input");
-      input.className = "f-input mono";
-      const isNum = a.type === "int" || a.type === "float";
-      if (isNum) {
-        input.type = "number";
-        if (a.type === "int") input.step = "1";
-      } else {
-        input.type = "text";
-      }
-      const isMulti = a.nargs || a.action === "append";
-      if (isMulti) input.placeholder = "多个值用英文逗号分隔";
-      if (value !== undefined && value !== null) {
-        input.value = Array.isArray(value) ? value.join(", ") : String(value);
-      }
-      input.addEventListener("input", () => autoSave());
-      field.appendChild(input);
-    }
-    wrap.appendChild(field);
-  }
-  applyEmptyFilter();
-}
-
-/** 开关「仅显示已填参数」：空值参数隐藏，布尔开关始终显示 */
-function applyEmptyFilter() {
-  const box = $("#opt-hide-empty");
-  if (!box) return;
-  const hide = box.checked;
-  for (const field of $$("#fields .field")) {
-    if (!hide || field.classList.contains("field-switch")) {
-      field.style.display = "";
-      continue;
-    }
-    const sel = field.querySelector("select");
-    const inp = field.querySelector("input");
-    const val = sel ? sel.value : (inp ? inp.value : "");
-    field.style.display = val !== "" && val !== null && val !== undefined ? "" : "none";
-  }
-}
-$("#opt-hide-empty").addEventListener("change", () => { applyEmptyFilter(); savePrefs(); });
-
-function collectValues() {
-  const values = {};
-  for (const field of $$("#fields .field")) {
-    const dest = field.dataset.dest;
-    const arg = (state.script.args_schema || []).find((a) => a.dest === dest);
-    if (!arg) continue;
-    if (arg.is_flag) {
-      const cb = field.querySelector("input[type=checkbox]");
-      values[dest] = !!cb.checked;
-    } else if (arg.choices && arg.choices.length) {
-      const sel = field.querySelector("select");
-      values[dest] = sel.value;
-    } else {
-      const inp = field.querySelector("input");
-      const raw = inp.value.trim();
-      const isMulti = arg.nargs || arg.action === "append";
-      if (isMulti) {
-        values[dest] = raw ? raw.split(/[,，\s]+/).filter(Boolean) : [];
-      } else if (arg.type === "int") {
-        values[dest] = raw === "" ? "" : Number(raw);
-      } else if (arg.type === "float") {
-        values[dest] = raw === "" ? "" : Number(raw);
-      } else {
-        values[dest] = raw;
-      }
-    }
-  }
-  return values;
-}
-
-function openCommandImport() {
-  if (!state.script) return toast("请先选择一个脚本", true);
-  const schema = state.script.args_schema || [];
-  if (!schema.length) return toast("该脚本没有可解析的命令行参数", true);
-  const hasPos = schema.some((a) => a.kind === "positional");
-  openModal({
-    title: "命令行导入参数",
-    bodyHTML: `
-      <div class="cmd-import-tip">粘贴完整命令或仅参数片段（支持换行、<code>--key value</code>、<code>--key=value</code>），解析后自动回填表单。${hasPos ? "位置参数按声明顺序解析。" : ""}</div>
-      <textarea class="f-input cmd-import-input" id="cmd-import-input" rows="6" spellcheck="false" autocomplete="off"
-        placeholder="例如：${hasPos ? "input.csv " : ""}--max-workers 3\n--flush-every 5\n或：uv run script.py --max-workers 3"></textarea>
-      <div class="cmd-import-result" id="cmd-import-result"></div>
-    `,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="cmd-import-ok">解析并回填</button>`,
-    onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      $("#cmd-import-ok", mask).addEventListener("click", async () => {
-        const txt = $("#cmd-import-input", mask).value.trim();
-        const box = $("#cmd-import-result", mask);
-        if (!txt) return toast("请输入命令行", true);
-        let res;
-        try {
-          res = await api(`/api/scripts/${state.script.id}/parse-command`, { method: "POST", body: { command: txt } });
-        } catch (e) {
-          box.innerHTML = `<div class="result-tip err">请求失败：${escapeHtml(e.message)}</div>`;
-          return;
-        }
-        if (!res.ok) {
-          box.innerHTML = `<div class="result-tip err">${escapeHtml(res.error || "解析失败")}</div>`;
-          return;
-        }
-        const filled = Object.keys(res.parsed || {}).length;
-        let html = `<div class="result-tip ok">已解析 ${filled} 个参数并回填表单</div>`;
-        if (res.missing && res.missing.length) html += `<div class="result-tip warn">缺失必填：${escapeHtml(res.missing.join("、"))}</div>`;
-        if (res.unknown && res.unknown.length) html += `<div class="result-tip warn">未识别参数：${escapeHtml(res.unknown.join("、"))}</div>`;
-        if (res.extra && res.extra.length) html += `<div class="result-tip warn">多余位置参数：${escapeHtml(res.extra.join("、"))}</div>`;
-        if (res.errors && Object.keys(res.errors).length) {
-          const errs = Object.entries(res.errors)
-            .map(([k, v]) => `${k}：${Array.isArray(v) ? v.join("；") : v}`)
-            .join("<br>");
-          html += `<div class="result-tip err">${errs}</div>`;
-        }
-        box.innerHTML = html;
-        const hasIssue = !!(res.missing && res.missing.length) || !!(res.unknown && res.unknown.length)
-          || !!(res.extra && res.extra.length) || !!(res.errors && Object.keys(res.errors).length);
-        if (filled) {
-          fillValues(res.parsed);
-          saveArgs(collectValues());
-          if (!hasIssue) {
-            toast("已回填 " + filled + " 个参数");
-            closeModal();
-          } else {
-            toast("已回填 " + filled + " 个参数，请查看下方提示");
-          }
-        } else {
-          toast("未解析到可识别的参数", true);
-        }
-      });
-    },
-  });
-}
-
-function fillValues(values) {
-  for (const field of $$("#fields .field")) {
-    const dest = field.dataset.dest;
-    const v = values ? values[dest] : undefined;
-    if (v === undefined) continue;
-    if (field.querySelector("input[type=checkbox]")) {
-      field.querySelector("input[type=checkbox]").checked = !!v;
-    } else if (field.querySelector("select")) {
-      field.querySelector("select").value = String(v);
-    } else {
-      const inp = field.querySelector("input");
-      inp.value = Array.isArray(v) ? v.join(", ") : String(v);
-    }
-  }
-  applyEmptyFilter();
-}
-
-let saveTimer = null;
-function autoSave() {
-  const values = collectValues();
-  if (!state.script) return;
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    saveArgs(values);
-  }, 500);
-}
-
-async function saveArgs(values) {
-  try {
-    await api(`/api/scripts/${state.script.id}/args`, { method: "PUT", body: { args: values } });
-  } catch { /* 忽略保存失败 */ }
-  refreshCmdInput();
-}
-
-async function reloadDetail() {
-  if (state.selectedId) await selectScript(state.selectedId);
-}
-
-/* ================= 执行 ================= */
-
-function applyRunState() {
-  const btn = $("#btn-run");
-  if (!btn) return;
-  const running = !!state.running;
-  btn.disabled = running;
-  btn.classList.toggle("run-active", running);
-  const span = btn.querySelector("span");
-  if (span) span.textContent = running ? "运行中…" : "执行";
-  $("#btn-terminate").hidden = !running;
-}
-
-function setRunning(running) {
-  state.running = running;
-  if (!running) {
-    state.currentExecId = null;
-  }
-  applyRunState();
-}
-
-/* 构建当前表单对应的 uv run 命令（与后端 build_arg_list / _build_command_text 保持一致） */
-function buildArgList(schema, values) {
-  const result = [];
-  const positionals = (schema || []).filter((a) => a.kind === "positional");
-  const optionals = (schema || []).filter((a) => a.kind === "optional");
-  for (const a of positionals) {
-    const v = values[a.dest];
-    if (v === undefined || v === null || v === "") continue;
-    result.push(String(v));
-  }
-  for (const a of optionals) {
-    const flag = a.name;
-    const v = values[a.dest];
-    if (a.is_flag) {
-      const on = v === true || v === "true" || v === 1 || v === "1" || v === "on";
-      if (a.action === "store_true" && on) result.push(flag);
-      else if (a.action === "store_false" && !on) result.push(flag);
-      continue;
-    }
-    if (v === undefined || v === null) continue;
-    if (Array.isArray(v)) {
-      if (!v.length) continue;
-      if (a.action === "append") { for (const it of v) result.push(flag, String(it)); }
-      else { result.push(flag); for (const it of v) result.push(String(it)); }
-      continue;
-    }
-    const s = String(v);
-    if (s === "") { if (a.required) result.push(flag, ""); continue; }
-    result.push(flag, s);
-  }
-  return result;
-}
-
-function shq(s) {
-  s = String(s);
-  if (s && /^[A-Za-z0-9_\-./@:=+%]+$/.test(s)) return s;
-  return "'" + s.replace(/'/g, "'\\''") + "'";
-}
-
-async function buildCommandText() {
+/* ---------- 编辑脚本信息 ---------- */
+function openMetaModal() {
   const s = state.script;
-  if (!s || !s.path) return "";
-  try {
-    const r = await api("/api/scripts/command", { method: "POST", body: { script_id: s.id, args: collectValues() } });
-    if (r.error) return { error: r.error };
-    return { command: r.command };
-  } catch (e) {
-    return { error: e.message };
-  }
-}
-
-let cmdInputTimer = null;
-function userCmdKey() { return "launcher_usercmd_" + (state.script ? state.script.id : 0); }
-async function refreshCmdInput() {
-  const inp = $("#cmd-edit-input");
-  if (!inp || !state.script) return;
-  const res = await buildCommandText();
-  if (!res || res.error) { inp.value = ""; return; }
-  const defaultCmd = res.command;
-  const saved = (localStorage.getItem(userCmdKey()) || "").trim();
-  if (saved) {
-    let merged = "";
-    try {
-      const mr = await api(`/api/scripts/${state.script.id}/merge-command`, { method: "POST", body: { args: collectValues(), command: saved } });
-      merged = (mr.ok && mr.merged) || "";
-    } catch (e) {}
-    inp.value = merged || saved; // 无法合并时保持整条用户命令
-  } else {
-    inp.value = defaultCmd;
-  }
-  inp.style.height = "auto";
-  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
-  // 收起条：命令摘要 + 自定义蓝点
-  const preview = $("#cmd-edit-preview");
-  const dot = $("#cmd-edit-dot");
-  if (preview) preview.textContent = inp.value || "（空）";
-  if (dot) dot.hidden = !saved;
-}
-function onCmdInput() {
-  const inp = $("#cmd-edit-input");
-  // 自动增高：内容 1~3 行内自适应，超出滚动
-  inp.style.height = "auto";
-  inp.style.height = Math.min(inp.scrollHeight, 3 * 20 + 8) + "px";
-  clearTimeout(cmdInputTimer);
-  cmdInputTimer = setTimeout(() => {
-    const v = inp.value.trim();
-    if (v) localStorage.setItem(userCmdKey(), v);
-    else localStorage.removeItem(userCmdKey());
-  }, 600);
-}
-
-async function run() {
-  if (!state.script || state.running) return;
-  const values = collectValues();
-  const schema = state.script.args_schema || [];
-  const missing = schema.filter((a) => a.required && (
-    values[a.dest] === undefined || values[a.dest] === null || values[a.dest] === "" ||
-    (Array.isArray(values[a.dest]) && values[a.dest].length === 0)
-  ));
-  if (missing.length) {
-    return toast("缺少必选参数：" + missing.map((a) => a.dest).join(", "), true);
-  }
-  // 立即保存当前值
-  saveArgs(values);
-  switchTab("console");
-  clearConsole(); // 每次执行都是干净的控制台
-  setRunning(true);
-  $("#run-state").textContent = "启动中…";
-  $("#run-state").className = "run-state run";
-  try {
-    const cmdInput = $("#cmd-edit-input");
-    const customCmd = cmdInput ? cmdInput.value.trim() : "";
-    const body = { script_id: state.script.id, args: values, preset_id: state.activePresetId };
-    if (customCmd) body.command = customCmd;
-    const res = await api("/api/execute", { method: "POST", body });
-    state.currentExecId = res.execution_id;
-    connectWs(`/ws/run/${res.execution_id}`, {});
-  } catch (e) {
-    setRunning(false);
-    toast("执行失败：" + e.message, true);
-  }
-}
-
-/* ================= 控制台（流式终端模拟） =================
-   pty 模式下后端推送原始字节块（含 \r \r\n ANSI 转义），这里做终端语义还原：
-   - \r 覆盖当前行（进度条单行刷新）
-   - \n / \r\n 换行（提交一行）
-   - ANSI SGR 颜色码渲染为彩色文本
-   渲染器可实例化：主控制台与执行记录详情页各持一个，互不干扰 */
-
-function createConsoleRenderer(consoleEl, wrapEl, placeholderEl) {
-  const st = { buf: "", cur: null, crPending: false, streamCls: "", lineCount: 0, ts: "", userScrolled: false };
-  const autoscroll = () => {
-    if (!wrapEl || st.userScrolled) return;
-    if ($("#opt-autoscroll").checked) wrapEl.scrollTop = wrapEl.scrollHeight;
-  };
-  // 用户手动滚动时暂停自动跟随（方便回看历史），滚回底部后自动恢复
-  if (wrapEl) {
-    wrapEl.addEventListener("scroll", () => {
-      const atBottom = wrapEl.scrollHeight - wrapEl.scrollTop - wrapEl.clientHeight < 24;
-      st.userScrolled = !atBottom && wrapEl.scrollTop > 0;
-    }, { passive: true });
-  }
-  function ensure() {
-    if (st.cur) return;
-    const lineNo = st.lineCount + 1;
-    const line = document.createElement("div");
-    line.className = "console-line" + (st.streamCls ? " " + st.streamCls : "");
-    const no = document.createElement("div");
-    no.className = "line-no";
-    const tsEl = document.createElement("span");
-    tsEl.className = "line-ts";
-    tsEl.textContent = st.ts;
-    const btn = document.createElement("button");
-    btn.className = "copy-btn";
-    btn.textContent = "复制";
-    btn.onclick = async (e) => {
-      e.stopPropagation();
-      const txt = line.querySelector(".line-text").textContent || "";
-      if (await copyText(stripAnsi(txt))) toast("已复制该行");
-    };
-    no.append(tsEl, btn);
-    const txt = document.createElement("div");
-    txt.className = "line-text";
-    line.append(no, txt);
-    consoleEl.appendChild(line);
-    st.lineCount++;
-    st.cur = line;
-    // 控制控制台体量：最多保留 1000 行（与执行记录口径一致），异常长输出不拖卡页面
-    while (consoleEl.children.length > 1000) consoleEl.removeChild(consoleEl.firstChild);
-  }
-  function update() {
-    if (!st.buf && !st.cur) return;
-    ensure();
-    st.cur.querySelector(".line-text").innerHTML = ansiToHtml(st.buf);
-    autoscroll();
-  }
-  function flush() {
-    ensure();
-    st.cur.querySelector(".line-text").innerHTML = ansiToHtml(st.buf);
-    st.cur = null;
-    st.buf = "";
-    autoscroll();
-  }
-  return {
-    st,
-    clear() {
-      consoleEl.innerHTML = "";
-      st.buf = ""; st.cur = null; st.crPending = false; st.streamCls = ""; st.lineCount = 0; st.ts = ""; st.userScrolled = false;
-      if (placeholderEl) placeholderEl.style.display = "flex";
-    },
-    append(stream, chunk, ts) {
-      if (placeholderEl) placeholderEl.style.display = "none";
-      st.streamCls = stream === "info" ? "info" : stream === "stderr" ? "stderr" : "";
-      st.ts = ts || st.ts || "";
-      let i = 0;
-      const len = chunk.length;
-      while (i < len) {
-        const ch = chunk[i];
-        // 上一个块以 \r 结尾：先结算（下个字符决定是覆盖还是换行）
-        if (st.crPending) {
-          st.crPending = false;
-          if (ch === "\n") { flush(); i++; continue; }
-          st.buf = ""; // \r 覆盖当前行
-        }
-        if (ch === "\r") {
-          if (i + 1 < len) {
-            if (chunk[i + 1] === "\n") { flush(); i += 2; continue; }
-            st.buf = ""; // 单行进度条刷新
-            i++;
-            continue;
-          }
-          st.crPending = true;
-          i++;
-          continue;
-        }
-        if (ch === "\n") { flush(); i++; continue; }
-        st.buf += ch;
-        i++;
-      }
-      // 块尾统一刷新当前行（进度条实时可见；\r 结尾时留待下块决定）
-      if (st.buf && !st.crPending) update();
-    },
-  };
-}
-
-const mainConsole = createConsoleRenderer($("#console"), $("#console-wrap"), $("#console-placeholder"));
-function clearConsole() { mainConsole.clear(); }
-function appendStream(stream, chunk, ts) { mainConsole.append(stream, chunk, ts || ""); }
-
-// ANSI SGR 颜色映射（适配浅色控制台）
-const ANSI_FG = { 30: "#1a1a1a", 31: "#c62828", 32: "#2e7d32", 33: "#9e7d00", 34: "#1565c0", 35: "#8e24aa", 36: "#00796b", 37: "#424242" };
-const ANSI_FG_BRIGHT = { 90: "#757575", 91: "#e53935", 92: "#43a047", 93: "#c0a000", 94: "#1e88e5", 95: "#d81b60", 96: "#00acc1", 97: "#212121" };
-const ANSI_BG = { 40: "#1a1a1a", 41: "#c62828", 42: "#2e7d32", 43: "#9e7d00", 44: "#1565c0", 45: "#8e24aa", 46: "#00796b", 47: "#dddddd" };
-
-function stripAnsi(s) {
-  return String(s).replace(/\x1b\[[0-9;]*[a-zA-Z]/g, "");
-}
-
-function ansiToHtml(text) {
-  const re = /\x1b\[([0-9;]*)m/g;
-  let html = "";
-  let last = 0;
-  let fg = "", bg = "", bold = false;
-  const push = (t) => {
-    if (!t) return;
-    const st = [];
-    if (fg) st.push("color:" + fg);
-    if (bg) st.push("background:" + bg);
-    if (bold) st.push("font-weight:700");
-    html += st.length ? `<span style="${st.join(";")}">${t}</span>` : t;
-  };
-  let m;
-  while ((m = re.exec(text)) !== null) {
-    push(escapeHtml(text.slice(last, m.index)));
-    const codes = m[1] ? m[1].split(";") : [];
-    for (const c of codes) {
-      const n = parseInt(c, 10);
-      if (Number.isNaN(n)) continue;
-      if (n === 0) { fg = ""; bg = ""; bold = false; }
-      else if (n === 1) bold = true;
-      else if (n === 22) bold = false;
-      else if (n >= 30 && n <= 37) fg = ANSI_FG[n];
-      else if (n >= 90 && n <= 97) fg = ANSI_FG_BRIGHT[n];
-      else if (n >= 40 && n <= 47) bg = ANSI_BG[n];
-    }
-    last = m.index + m[0].length;
-  }
-  push(escapeHtml(text.slice(last)));
-  return html;
-}
-
-async function connectWs(path, { envInit = false, scriptId = null } = {}) {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  // 新运行开始：关闭上一个连接，避免多脚本同时运行时输出“打架”，
-  // 控制台只保留最新一次运行的实时输出；旧任务的输出进入执行记录详情。
-  if (state.ws) { try { state.ws.close(); } catch {} state.ws = null; }
-  const ws = new WebSocket(`${proto}://${location.host}${path}`);
-  state.ws = ws;
-  ws.onmessage = async (e) => {
-    if (state.ws !== ws) return; // 已被更新的连接取代，丢弃旧消息
-    const m = JSON.parse(e.data);
-    if (m.type === "line") {
-      appendStream(m.stream, m.line, m.ts || "");
-    } else if (m.type === "done") {
-      const r = m.result || {};
-      if (envInit) {
-        if (r.ok) {
-          toast("环境初始化完成");
-          const env = await api(`/api/scripts/${scriptId}/env`);
-          if (state.script && state.script.id === scriptId) renderEnvBar(env);
-        } else {
-          toast("环境初始化失败：" + (r.message || ""), true);
-        }
-        const btn = $("#env-bar .btn.primary");
-        if (btn) { btn.disabled = false; btn.textContent = "初始化环境"; }
-      } else {
-        const statusText = { success: "执行成功", failed: "执行失败", terminated: "已终止" }[r.status] || "执行结束";
-        $("#run-state").textContent = `${statusText} · 退出码 ${r.exit_code ?? "-"}`;
-        $("#run-state").className = "run-state " + (r.status === "success" ? "ok" : r.status === "failed" ? "err" : "warn");
-        setRunning(false);
-        refreshHistory(); // 后台刷新历史数据，但不自动跳转
-      }
-    }
-  };
-  ws.onerror = () => { toast("实时连接断开", true); };
-  ws.onclose = () => { state.ws = null; };
-}
-
-/* ================= 终止 ================= */
-
-$("#btn-terminate").addEventListener("click", async () => {
-  if (!state.currentExecId) return;
-  try {
-    await api(`/api/executions/${state.currentExecId}/terminate`, { method: "POST" });
-    toast("已发送终止信号");
-  } catch (e) {
-    toast(e.message, true);
-  }
-});
-
-/* ================= 控制台工具 ================= */
-
-$("#btn-parse-cmd").addEventListener("click", openCommandImport);
-function openCmdPop() {
-  const pop = $("#cmd-edit-pop");
-  pop.hidden = false;
-  const inp = $("#cmd-edit-input");
-  inp.focus();
-  inp.setSelectionRange(inp.value.length, inp.value.length);
-}
-function closeCmdPop() {
-  $("#cmd-edit-pop").hidden = true;
-  refreshCmdInput(); // 还原为已保存/默认状态
-}
-$("#cmd-edit-toggle").addEventListener("click", openCmdPop);
-$("#cmd-edit-save").addEventListener("click", () => {
-  const v = $("#cmd-edit-input").value.trim();
-  if (v) localStorage.setItem(userCmdKey(), v);
-  else localStorage.removeItem(userCmdKey());
-  $("#cmd-edit-pop").hidden = true;
-  refreshCmdInput();
-  toast(v ? "命令已保存" : "已恢复默认命令");
-});
-$("#cmd-edit-cancel").addEventListener("click", closeCmdPop);
-$("#cmd-edit-input").addEventListener("input", onCmdInput);
-$("#cmd-edit-reset").addEventListener("click", () => {
-  localStorage.removeItem(userCmdKey());
-  $("#cmd-edit-pop").hidden = true;
-  refreshCmdInput();
-  toast("已恢复默认命令");
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !$("#cmd-edit-pop").hidden) closeCmdPop();
-});
-$("#btn-copy-command").addEventListener("click", async () => {
-  if (!state.script) return toast("请先选择一个脚本", true);
-  const res = await buildCommandText();
-  if (!res) return toast("当前无脚本可复制", true);
-  if (res.error) return toast(res.error, true);
-  if (await copyText(res.command)) toast("已复制执行命令");
-});
-$("#opt-mono").addEventListener("change", (e) => {
-  $("#console").classList.toggle("mono", e.target.checked);
-  savePrefs();
-});
-$("#opt-autoscroll").addEventListener("change", savePrefs);
-
-/* 多选复制：拖选跨行后弹出复制按钮 */
-function updateMultiCopy() {
-  const floatEl = $("#copy-float");
-  const sel = window.getSelection();
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) { floatEl.hidden = true; return; }
-  const range = sel.getRangeAt(0);
-  const consoleEl = $("#console");
-  if (!consoleEl.contains(range.commonAncestorContainer)) { floatEl.hidden = true; return; }
-  const lines = $$(".console-line", consoleEl);
-  let count = 0;
-  for (const ln of lines) {
-    if (range.intersectsNode(ln)) count++;
-  }
-  if (count === 0) { floatEl.hidden = true; return; }
-  floatEl.hidden = false;
-  const btn = document.createElement("button");
-  btn.className = "btn";
-  btn.textContent = "复制选中 " + count + " 行";
-  btn.onclick = async () => {
-    if (await copyText(sel.toString())) toast("已复制 " + count + " 行");
-    floatEl.hidden = true;
-  };
-  floatEl.innerHTML = "";
-  floatEl.appendChild(btn);
-}
-document.addEventListener("mouseup", updateMultiCopy);
-document.addEventListener("keyup", updateMultiCopy);
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { $("#copy-float").hidden = true; $$(".move-menu").forEach((m) => m.remove()); }
-});
-/* ================= 运行任务轮询 / 脚本卡片徽章 / 任务 popover ================= */
-
-async function refreshRunningExecs() {
-  try {
-    const { running } = await api("/api/executions/running");
-    window._offlineStreak = 0;
-    hideOfflineBanner();
-    const map = {};
-    for (const r of running) (map[r.script_id] = map[r.script_id] || []).push(r);
-    state.runningByScript = map;
-    updateRunBadges();   // 局部更新徽章，避免整表重建导致 popover/弹窗频闪
-    updateRunningPopover();
-    if (state.detailExec && state.detailExec.status === "running") refreshDetailStatus();
-  } catch {
-    // 连续多次失败才判定离线，避免瞬时抖动误报
-    window._offlineStreak = (window._offlineStreak || 0) + 1;
-    if (window._offlineStreak >= 2) showOfflineBanner();
-  }
-}
-
-function showOfflineBanner() {
-  const b = $("#offline-banner");
-  if (b) b.hidden = false;
-}
-function hideOfflineBanner() {
-  const b = $("#offline-banner");
-  if (b && !b.hidden) b.hidden = true;
-}
-
-/** 局部更新脚本卡片上的运行徽章（增/删/数字变化），不重建整个列表。 */
-function updateRunBadges() {
-  const map = state.runningByScript;
-  for (const card of $$("#script-list .script-card")) {
-    const id = Number(card.dataset.id);
-    const runs = map[id] || [];
-    const nameRow = card.querySelector(".sc-name");
-    const argBadge = card.querySelector(".sc-arg");
-    let badge = card.querySelector(".sc-running");
-    if (!runs.length) {
-      if (badge) badge.remove();
-      continue;
-    }
-    const label = "● " + runs.length;
-    if (badge) {
-      if (badge.textContent !== label) {
-        badge.textContent = label;
-        badge.title = runs.length + " 个任务正在运行，点击查看";
-      }
-      continue;
-    }
-    badge = document.createElement("span");
-    badge.className = "sc-running";
-    badge.textContent = label;
-    badge.title = runs.length + " 个任务正在运行，点击查看";
-    badge.addEventListener("click", (e) => {
-      e.stopPropagation();
-      openRunningPopover(badge, id);
-    });
-    // 插在"参数"徽章之前，与 scriptCard 中的顺序保持一致
-    argBadge.insertAdjacentElement("beforebegin", badge);
-    nameRow.appendChild ? null : null;
-  }
-}
-
-function fmtRunStart(iso) {
-  try {
-    const d = new Date(iso);
-    const pad = (n) => String(n).padStart(2, "0");
-    return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-  } catch { return ""; }
-}
-
-function fmtRunDuration(startIso, now = Date.now()) {
-  try {
-    const s = Math.max(0, Math.floor((now - new Date(startIso).getTime()) / 1000));
-    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
-    return h > 0 ? `${h}h${String(m).padStart(2, "0")}m${String(sec).padStart(2, "0")}s`
-      : m > 0 ? `${m}m${String(sec).padStart(2, "0")}s` : `${sec}s`;
-  } catch { return "-"; }
-}
-
-function openRunningPopover(anchor, scriptId) {
-  state.popoverScriptId = scriptId;
-  const pop = $("#running-popover");
-  pop.hidden = false;
-  const r = anchor.getBoundingClientRect();
-  pop.style.position = "fixed";
-  pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 330)) + "px";
-  pop.style.top = (r.bottom + 6) + "px";
-  renderRunningPopover();
-  if (!window._popoverTimer) window._popoverTimer = setInterval(updateRunningPopover, 1000);
-}
-
-function closeRunningPopover() {
-  state.popoverScriptId = null;
-  $("#running-popover").hidden = true;
-  if (window._popoverTimer) { clearInterval(window._popoverTimer); window._popoverTimer = null; }
-}
-
-function updateRunningPopover() {
-  const pop = $("#running-popover");
-  if (pop.hidden || !state.popoverScriptId) return;
-  // 每秒只刷新运行时长，避免整表重建闪烁
-  $$(".rp-time", pop).forEach((el) => {
-    if (el.dataset.start) el.textContent = fmtRunStart(el.dataset.start) + " · 已运行 " + fmtRunDuration(el.dataset.start);
-  });
-}
-
-function renderRunningPopover() {
-  const pop = $("#running-popover");
-  if (pop.hidden || !state.popoverScriptId) return;
-  const runs = state.runningByScript[state.popoverScriptId] || [];
-  pop.innerHTML = "";
-  const head = document.createElement("div");
-  head.className = "rp-head";
-  if (runs.length) {
-    const dot = document.createElement("span");
-    dot.className = "rp-dot";
-    head.append(dot, document.createTextNode(` ${runs.length} 个任务运行中`));
-  } else {
-    head.textContent = "暂无运行任务";
-  }
-  pop.appendChild(head);
-  if (!runs.length) {
-    const empty = document.createElement("div");
-    empty.className = "rp-empty";
-    empty.textContent = "该脚本当前没有正在运行的任务";
-    pop.appendChild(empty);
-    return;
-  }
-  for (const r of runs) {
-    const row = document.createElement("div");
-    row.className = "rp-item";
-    row.title = "点击查看该任务的执行记录";
-    const args = summarizeArgs(JSON.stringify(r.args || {}));
-    const a1 = document.createElement("div");
-    a1.className = "rp-args";
-    a1.textContent = args;
-    a1.title = args;
-    const a2 = document.createElement("div");
-    a2.className = "rp-meta";
-    const t = document.createElement("span");
-    t.className = "rp-time";
-    t.textContent = fmtRunStart(r.started_at) + " · 已运行 " + fmtRunDuration(r.started_at);
-    t.dataset.start = r.started_at;
-    const arrow = document.createElement("span");
-    arrow.className = "rp-arrow";
-    arrow.textContent = "→";
-    a2.append(t, arrow);
-    row.append(a1, a2);
-    row.addEventListener("click", () => jumpToExecution(r.id));
-    pop.appendChild(row);
-  }
-}
-
-async function jumpToExecution(id) {
-  closeRunningPopover();
-  switchTab("history");
-  await refreshHistory();
-  const item = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(id));
-  await showHistoryDetail(id, item || null);
-}
-
-/* ================= 历史记录 ================= */
-
-let historyScope = "all"; // "all"=全部脚本（默认，确保能看到所有记录）| "script"=仅当前脚本
-
-async function updatePageBadge() {
-  const el = $("#page-badge");
-  if (!el) return;
-  try {
-    const [s, h] = await Promise.all([api("/api/scripts"), api("/api/executions?limit=200")]);
-    el.textContent = `脚本 ${s.length} · 记录 ${Array.isArray(h) ? h.length : 0}`;
-    el.classList.add("ok");
-  } catch (e) {
-    el.textContent = "连接异常";
-    el.classList.add("bad");
-  }
-}
-
-async function refreshHistory() {
-  let list = [];
-  try {
-    list = await api("/api/executions?limit=200");
-  } catch (e) {
-    renderHistoryError(e.message);
-    return;
-  }
-  renderHistory(list);
-  updatePageBadge();
-}
-
-function renderHistoryError(msg) {
-  const wrap = $("#history-list");
-  wrap.innerHTML = `<div class="sidebar-empty" style="padding:20px">无法加载执行记录：${escapeHtml(msg)}</div>`;
-}
-
-function renderHistory(list) {
-  const wrap = $("#history-list");
-  wrap.innerHTML = "";
-  const kw = ($("#history-search").value || "").toLowerCase();
-  const filtered = list.filter((h) => {
-    if (historyScope === "script" && state.selectedId && h.script_id !== state.selectedId) return false;
-    if (!kw) return true;
-    const tags = JSON.parse(h.tags || "[]").join(" ");
-    const statusCN = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[h.status] || h.status;
-    return (h.script_name || "").toLowerCase().includes(kw) ||
-      h.status.includes(kw) ||
-      statusCN.toLowerCase().includes(kw) ||
-      tags.toLowerCase().includes(kw);
-  });
-  if (filtered.length === 0) {
-    const hint = historyScope === "script" && state.selectedId
-      ? `当前选中的「${state.script ? state.script.name : ""}」暂无执行记录，可点上方「全部」查看所有脚本的记录`
-      : "暂无执行记录：运行脚本后，每次执行都会自动记录到这里";
-    wrap.innerHTML = `<div class="sidebar-empty" style="padding:20px">${escapeHtml(hint)}</div>`;
-    updateHistoryMultiBar();
-    return;
-  }
-  for (const h of filtered) {
-    const item = document.createElement("div");
-    item.className = "hist-item";
-    if (historyMulti && selectedHistory.has(h.id)) item.classList.add("selected");
-    const top = document.createElement("div");
-    top.className = "hi-top";
-    // 多选模式复选框
-    if (historyMulti) {
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.className = "hi-cb";
-      cb.checked = selectedHistory.has(h.id);
-      cb.addEventListener("click", (e) => e.stopPropagation());
-      cb.addEventListener("change", () => toggleHistorySelect(h.id));
-      top.appendChild(cb);
-    }
-    const nm = document.createElement("span");
-    nm.className = "hi-name";
-    nm.textContent = h.script_name || "（脚本已删除）";
-    nm.title = h.script_name || "";
-    const st = document.createElement("span");
-    st.className = "status-pill " + h.status;
-    st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[h.status] || h.status;
-    const tm = document.createElement("span");
-    tm.className = "hi-time";
-    tm.textContent = h.finished_at
-      ? `${formatTime(h.started_at)} → ${formatTime(h.finished_at)}`
-      : `${formatTime(h.started_at)} → 进行中`;
-    tm.title = `开始：${h.started_at}\n结束：${h.finished_at || "进行中"}`;
-    top.append(nm, st);
-    // 单条快速删除：双态确认（点击一次卡片变红提示，再点一次删除，无弹窗）
-    const del = document.createElement("button");
-    del.className = "hi-del";
-    del.title = "删除这条记录（再次点击确认）";
-    del.textContent = "✕";
-    let armed = false, armTimer = null;
-    const disarm = () => {
-      armed = false;
-      clearTimeout(armTimer);
-      item.classList.remove("confirm-del");
-      del.classList.remove("armed");
-      del.textContent = "✕";
-      del.title = "删除这条记录（再次点击确认）";
-    };
-    del.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (!armed) {
-        armed = true;
-        item.classList.add("confirm-del");
-        del.classList.add("armed");
-        del.textContent = "再次点击删除";
-        del.title = "再次点击确认删除";
-        armTimer = setTimeout(disarm, 3000);
-        return;
-      }
-      clearTimeout(armTimer);
-      api(`/api/executions/${h.id}`, { method: "DELETE" })
-        .then(() => {
-          toast("已删除该执行记录");
-          refreshHistory();
-          if (selectedHistory.has(h.id)) selectedHistory.delete(h.id);
-          if (state.detailExec && state.detailExec.id === h.id) closeHistoryDetail(true);
-        })
-        .catch((err) => {
-          toast("删除失败：" + err.message, true);
-          disarm();
-        });
-    });
-    top.appendChild(del);
-
-    const tagsRow = document.createElement("div");
-    tagsRow.className = "hi-tags";
-    const tags = JSON.parse(h.tags || "[]");
-    for (const t of tags) {
-      const tag = document.createElement("span");
-      tag.className = "tag";
-      tag.textContent = "#" + t;
-      tagsRow.appendChild(tag);
-    }
-
-    item.append(top, tm, tagsRow);
-    item.dataset.id = h.id;
-    item.onclick = () => {
-      if (item.classList.contains("confirm-del")) { disarm(); return; } // 警告态点击卡片任意处 → 取消确认
-      if (historyMulti) toggleHistorySelect(h.id);
-      else showHistoryDetail(h.id, item);
-    };
-    wrap.appendChild(item);
-  }
-  // 列表渲染完成后刷新操作条（全选/取消全选文字依赖已渲染的条目数）
-  updateHistoryMultiBar();
-}
-
-/* ================= 执行记录多选删除 ================= */
-
-let historyMulti = false;          // 多选模式开关
-let selectedHistory = new Set();   // 已选记录 id 集合
-
-function enterHistoryMulti() {
-  historyMulti = true;
-  $("#btn-history-multi").textContent = "取消多选";
-  $("#btn-history-multi").classList.add("active");
-  refreshHistory();
-}
-
-function exitHistoryMulti() {
-  historyMulti = false;
-  selectedHistory.clear();
-  const btn = $("#btn-history-multi");
-  if (btn) { btn.textContent = "多选"; btn.classList.remove("active"); }
-  refreshHistory();
-}
-
-function toggleHistorySelect(id) {
-  if (selectedHistory.has(id)) selectedHistory.delete(id);
-  else selectedHistory.add(id);
-  const item = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(id));
-  if (item) {
-    item.classList.toggle("selected", selectedHistory.has(id));
-    // 卡片行点击时同步多选框勾选状态
-    const cb = item.querySelector(".hi-cb");
-    if (cb) cb.checked = selectedHistory.has(id);
-  }
-  updateHistoryMultiBar();
-}
-
-function updateHistoryMultiBar() {
-  const bar = $("#history-multi-bar");
-  if (!bar) return;
-  if (!historyMulti) { bar.hidden = true; return; }
-  bar.hidden = false;
-  const count = $("#hm-count");
-  if (count) count.textContent = `已选 ${selectedHistory.size} 条`;
-  const all = $("#hm-select-all");
-  if (all) {
-    const items = $$("#history-list .hist-item");
-    all.textContent = items.length && selectedHistory.size === items.length ? "取消全选" : "全选";
-  }
-}
-
-function toggleSelectAll() {
-  const items = $$("#history-list .hist-item");
-  const allSelected = items.length > 0 && items.every((el) => selectedHistory.has(Number(el.dataset.id)));
-  if (allSelected) {
-    items.forEach((el) => selectedHistory.delete(Number(el.dataset.id)));
-  } else {
-    items.forEach((el) => selectedHistory.add(Number(el.dataset.id)));
-  }
-  refreshHistory();
-  updateHistoryMultiBar(); // 立即刷新「全选/取消全选」文字，不等网络
-}
-
-async function deleteSelectedHistory() {
-  if (!selectedHistory.size) return toast("请先勾选要删除的记录", true);
-  const ids = [...selectedHistory];
-  confirmModal({
-    title: "批量删除执行记录",
-    message: `确定删除选中的 ${ids.length} 条执行记录吗？运行中的记录会自动跳过。`,
-    confirmText: "删除",
-    onConfirm: async () => {
-      const r = await api("/api/executions/delete", { method: "POST", body: { ids } });
-      selectedHistory.clear();
-      if (r.skipped_running && r.skipped_running.length) {
-        toast(`已删除 ${r.deleted} 条，跳过 ${r.skipped_running.length} 条运行中记录`);
-      } else {
-        toast(`已删除 ${r.deleted} 条记录`);
-      }
-      const d = $("#history-detail");
-      if (d) closeHistoryDetail(true);
-      refreshHistory();
-    },
-  });
-}
-
-function summarizeArgs(argsStr) {
-  try {
-    const a = JSON.parse(argsStr || "{}");
-    const kv = Object.entries(a).filter(([, v]) => v !== "" && v !== null && v !== undefined);
-    if (kv.length === 0) return "（无参数）";
-    return kv.map(([k, v]) => `${k}=${Array.isArray(v) ? v.join(",") : v}`).join("  ");
-  } catch { return ""; }
-}
-
-/** 参数胶囊渲染：每个参数一个 chip（键粗体灰、值等宽黑），多参数自动换行 */
-function renderArgChips(container, args) {
-  container.innerHTML = "";
-  const kv = Object.entries(args || {}).filter(([, v]) => v !== "" && v !== null && v !== undefined);
-  if (kv.length === 0) {
-    const empty = document.createElement("span");
-    empty.className = "no-args";
-    empty.textContent = "（无参数）";
-    container.appendChild(empty);
-    return;
-  }
-  for (const [k, v] of kv) {
-    const chip = document.createElement("span");
-    chip.className = "arg-chip";
-    const kEl = document.createElement("span");
-    kEl.className = "ak";
-    kEl.textContent = k;
-    const eEl = document.createElement("span");
-    eEl.className = "ae";
-    eEl.textContent = "=";
-    const vEl = document.createElement("span");
-    vEl.className = "av";
-    const raw = Array.isArray(v) ? v.join(", ") : String(v);
-    vEl.textContent = raw || "（空）";
-    if (!raw) vEl.classList.add("no-val");
-    chip.append(kEl, eEl, vEl);
-    container.appendChild(chip);
-  }
-}
-
-function formatTime(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getMonth() + 1}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-/* 详情页滑入/滑出（右滑进入、左滑返回） */
-function openHistoryDetail() {
-  const detail = $("#history-detail");
-  if (!detail) return;
-  detail.hidden = false;
-  detail.classList.remove("open");
-  // 双 rAF：先让浏览器渲染 translateX(100%) 初始帧，再加 open 触发右滑 transition
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => detail.classList.add("open"));
-  });
-}
-function closeHistoryDetail(instant) {
-  const detail = $("#history-detail");
-  if (!detail) return;
-  const done = () => { detail.hidden = true; };
-  detail.classList.remove("open");
-  if (instant) { done(); return; }
-  // 等左滑动画结束后隐藏
-  detail._closeTimer && clearTimeout(detail._closeTimer);
-  detail._closeTimer = setTimeout(done, 320);
-}
-
-async function showHistoryDetail(id, itemEl) {
-  $$(".hist-item").forEach((el) => el.classList.remove("active"));
-  if (itemEl) itemEl.classList.add("active");
-  const rec = await api(`/api/executions/${id}`);
-  state.detailExec = rec;
-  // 关闭上一次详情页的实时 WS（与主控制台连接相互独立）
-  if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
-
-  const detail = $("#history-detail");
-  detail.hidden = false;
-  detail.innerHTML = "";
-  openHistoryDetail(); // 详情从右侧滑入
-  // 静态输出行复制按钮（事件委托）
-  detail.onclick = (e) => {
-    const btn = e.target.closest(".copy-btn");
-    if (!btn) return;
-    const lineEl = btn.closest(".console-line");
-    const txt = lineEl ? lineEl.querySelector(".line-text").textContent : "";
-    copyText(stripAnsi(txt)).then((ok) => { if (ok) toast("已复制第 " + (btn.dataset.line || "") + " 行"); });
-  };
-
-  // ===== 头部：返回 + 名称 + 状态 + 时间 + 退出码；右侧操作按钮 =====
-  const head = document.createElement("div");
-  head.className = "hd-head";
-  const backBtn = document.createElement("button");
-  backBtn.className = "hd-back";
-  backBtn.innerHTML = "‹ 返回";
-  backBtn.title = "返回执行记录列表";
-  backBtn.onclick = () => closeHistoryDetail();
-  const titleBox = document.createElement("div");
-  titleBox.className = "hd-title";
-  const nameRow = document.createElement("div");
-  nameRow.className = "hd-name-row";
-  const nm = document.createElement("span");
-  nm.className = "hd-name";
-  nm.textContent = rec.script_name || "（脚本已删除）";
-  const st = document.createElement("span");
-  st.className = "status-pill " + rec.status;
-  st.textContent = { success: "成功", failed: "失败", running: "运行中", terminated: "已终止" }[rec.status] || rec.status;
-  const meta = document.createElement("div");
-  meta.className = "hd-meta";
-  const durText = rec.status === "running"
-    ? `开始 ${formatTime(rec.started_at)} · 进行中`
-    : `开始 ${formatTime(rec.started_at)} · 结束 ${rec.finished_at ? formatTime(rec.finished_at) : "-"}`;
-  meta.textContent = `${durText} · 退出码 ${rec.exit_code ?? "-"}`;
-  nameRow.append(nm, st);
-  titleBox.append(nameRow, meta);
-  head.append(backBtn, titleBox);
-
-  const actions = document.createElement("div");
-  actions.className = "hd-actions";
-  if (rec.status === "running") {
-    const term = document.createElement("button");
-    term.className = "btn mini danger";
-    term.textContent = "终止";
-    term.title = "终止该任务（仅影响这一条运行，不影响其他任务）";
-    term.onclick = async () => {
-      try {
-        await api(`/api/executions/${rec.id}/terminate`, { method: "POST" });
-        toast("已发送终止信号");
-        term.disabled = true;
-        term.textContent = "终止中…";
-      } catch (e) { toast(e.message, true); }
-    };
-    actions.appendChild(term);
-  }
-  const copy = document.createElement("button");
-  copy.className = "btn mini ghost";
-  copy.textContent = "复制命令";
-  copy.title = "复制该次执行对应的 uv run 命令";
-  copy.onclick = async () => {
-    if (!rec.command) return toast("无法生成命令", true);
-    if (await copyText(rec.command)) toast("已复制执行命令");
-  };
-  const rerun = document.createElement("button");
-  rerun.className = "btn mini primary";
-  rerun.textContent = "↻ 用此参数重跑";
-  rerun.onclick = () => rerunExecution(rec);
-  const del = document.createElement("button");
-  del.className = "btn mini danger";
-  del.textContent = "删除";
-  del.onclick = async () => {
-    confirmModal({
-      title: "删除执行记录",
-      message: `确定删除这条执行记录（${rec.script_name || "脚本"} · ${formatTime(rec.started_at)}）吗？`,
-      onConfirm: async () => {
-        if (state.detailWs) { try { state.detailWs.close(); } catch {} state.detailWs = null; }
-        await api(`/api/executions/${rec.id}`, { method: "DELETE" });
-        closeHistoryDetail(true); // 详情已删除，直接回到列表
-        refreshHistory();
-      },
-    });
-  };
-  actions.append(copy, rerun, del);
-  head.append(titleBox, actions);
-
-  // ===== 参数 =====
-  const argsBlock = document.createElement("div");
-  argsBlock.className = "hd-args";
-  const argsLbl = document.createElement("span");
-  argsLbl.className = "hd-lbl";
-  argsLbl.textContent = "参数";
-  const argsTxt = document.createElement("div");
-  argsTxt.className = "hd-args-txt";
-  renderArgChips(argsTxt, rec.args || {});
-  argsBlock.append(argsLbl, argsTxt);
-
-  // ===== 标签 =====
-  const tagsRow = document.createElement("div");
-  tagsRow.className = "hd-tags";
-  const tagsLbl = document.createElement("span");
-  tagsLbl.style.cssText = "font-size:11px;color:var(--muted)";
-  tagsLbl.textContent = "标签:";
-  tagsRow.appendChild(tagsLbl);
-  const renderTags = () => {
-    $$(".hd-tag", tagsRow).forEach((t) => t.remove());
-    const inp = $("#hd-tag-input", tagsRow);
-    for (const t of rec.tags) {
-      const tag = document.createElement("span");
-      tag.className = "tag hd-tag";
-      const txt = document.createTextNode("#" + t);
-      const x = document.createElement("span");
-      x.className = "x";
-      x.textContent = "✕";
-      x.onclick = async () => {
-        rec.tags = rec.tags.filter((v) => v !== t);
-        await api(`/api/executions/${rec.id}/tags`, { method: "PUT", body: { tags: rec.tags } });
-        renderTags(); refreshHistory();
-      };
-      tag.append(txt, x);
-      tagsRow.insertBefore(tag, inp);
-    }
-  };
-  const inp = document.createElement("input");
-  inp.id = "hd-tag-input";
-  inp.placeholder = "+ 添加标签，回车确认";
-  inp.onkeydown = async (e) => {
-    if (e.key === "Enter" && inp.value.trim()) {
-      rec.tags = [...new Set([...rec.tags, inp.value.trim()])];
-      inp.value = "";
-      await api(`/api/executions/${rec.id}/tags`, { method: "PUT", body: { tags: rec.tags } });
-      renderTags(); refreshHistory();
-    }
-  };
-  tagsRow.appendChild(inp);
-  renderTags();
-
-  // ===== 输出区：运行中实时流，结束后静态快照 =====
-  if (rec.status === "running") {
-    const live = document.createElement("div");
-    live.className = "hd-live";
-    const ph = document.createElement("div");
-    ph.className = "console-placeholder";
-    ph.style.display = "flex";
-    ph.textContent = "任务运行中，标准输出将实时显示在这里";
-    const cons = document.createElement("div");
-    cons.className = "console mono hd-live-console";
-    live.append(ph, cons);
-    const tip = document.createElement("div");
-    tip.className = "hd-truncated";
-    tip.textContent = "· 实时输出 · 结束后仅保留最后 1000 行";
-    detail.append(head, argsBlock, tagsRow, live, tip);
-    // 滚动容器传 cons（hd-live-console），"自动滚动"开关对所有控制台生效
-    const renderer = createConsoleRenderer(cons, cons, ph);
-    state.detailWs = connectDetailWs(rec.id, renderer, id, itemEl);
-  } else {
-    const out = document.createElement("div");
-    out.className = "hd-output";
-    const outputHtml = renderStaticOutput(rec.output, rec.output_ts);
-    out.innerHTML = outputHtml || "（无输出）";
-    const truncated = document.createElement("div");
-    truncated.className = "hd-truncated";
-    truncated.textContent = "· 仅保留程序结束后最后 1000 行输出";
-    detail.append(head, argsBlock, tagsRow, out, truncated);
-    // 打开详情即滚动到最底部，无需手动翻到底
-    requestAnimationFrame(() => { out.scrollTop = out.scrollHeight; });
-  }
-}
-
-/* 静态输出渲染为带行号 + 时间戳 + 复制按钮的行列表（与实时控制台风格一致） */
-function renderStaticOutput(text, tsText) {
-  if (!text) return "";
-  const lines = String(text).split("\n");
-  const tss = tsText ? String(tsText).split("\n") : [];
-  // 去掉末尾多余空行（最后一个 \n 产生的空串）
-  while (lines.length && lines[lines.length - 1] === "") lines.pop();
-  return lines.map((ln, i) => {
-    const no = i + 1;
-    const ts = tss[i] || "";
-    return `<div class="console-line"><div class="line-no">${ts ? `<span class="line-ts">${escapeHtml(ts)}</span>` : ""}<button class="copy-btn" data-line="${no}">复制</button></div><div class="line-text">${ansiToHtml(ln) || "&nbsp;"}</div></div>`;
-  }).join("");
-}
-
-function connectDetailWs(execId, renderer, detailId, itemEl) {
-  const proto = location.protocol === "https:" ? "wss" : "ws";
-  const ws = new WebSocket(`${proto}://${location.host}/ws/run/${execId}`);
-  ws.onmessage = async (e) => {
-    const m = JSON.parse(e.data);
-    if (m.type === "line") {
-      renderer.append(m.stream, m.line, m.ts || "");
-    } else if (m.type === "done") {
-      try { ws.close(); } catch {}
-      if (state.detailWs === ws) state.detailWs = null;
-      refreshRunningExecs();
-      refreshHistory();
-      // 任务已结束，详情页切换为静态快照
-      const it = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(detailId));
-      await showHistoryDetail(detailId, it || itemEl);
-    }
-  };
-  ws.onerror = () => {
-    try { ws.close(); } catch {}
-    if (state.detailWs === ws) state.detailWs = null;
-  };
-  return ws;
-}
-
-function refreshDetailStatus() {
-  // 轮询发现详情记录已结束但 WS 已断开时，把详情页切回静态快照
-  if (!state.detailExec || state.detailWs) return;
-  const runs = state.runningByScript[state.detailExec.script_id] || [];
-  if (!runs.some((r) => r.id === state.detailExec.id)) {
-    const it = [...$$("#history-list .hist-item")].find((el) => String(el.dataset.id) === String(state.detailExec.id));
-    showHistoryDetail(state.detailExec.id, it || null);
-  }
-}
-
-async function rerunExecution(rec) {
-  if (!rec.script_id) return toast("原脚本已删除，无法重跑", true);
-  if (state.selectedId !== rec.script_id) {
-    await selectScript(rec.script_id);
-  }
-  const args = typeof rec.args === "string" ? JSON.parse(rec.args || "{}") : (rec.args || {});
-  fillValues(args); // 填充该次执行的参数
-  saveArgs(args); // 立即保存为当前值
-  state.activePresetId = rec.preset_id;
-  toast("已载入该次执行参数，确认后点击「执行」即可重跑");
-}
-
-/* ================= 定时任务 ================= */
-
-async function renderSchedules(silent) {
-  const wrap = $("#schedule-list");
-  if (!wrap) return;
-  // 静默轮询时，若正在编辑定时任务输入框（cron/次数），跳过本次重建，避免打断输入
-  if (silent) {
-    const ae = document.activeElement;
-    if (ae && wrap.contains(ae) && /^(INPUT|SELECT|TEXTAREA)$/.test(ae.tagName)) {
-      return;
-    }
-  }
-  let list;
-  try {
-    list = await api("/api/schedules");
-  } catch (e) {
-    if (!silent) wrap.innerHTML = `<div class="schedule-empty">加载定时任务失败：${escapeHtml(e.message)}</div>`;
-    return;
-  }
-  // 应用本地补丁（乐观 running 等），让执行状态即时可见
-  if (window._schedPatch) {
-    for (const s of list) {
-      const p = window._schedPatch[s.id];
-      if (p) Object.assign(s, p);
-    }
-  }
-  if (!list.length) {
-    wrap.innerHTML = `<div class="schedule-empty">还没有定时任务，点击右上角「新建定时任务」添加</div>`;
-    return;
-  }
-  wrap.innerHTML = "";
-  for (const s of list) {
-    const row = document.createElement("div");
-    row.className = "schedule-item";
-
-    // 头部：名称 + 状态徽章 + 启用开关
-    const head = document.createElement("div");
-    head.className = "si-head";
-    const name = document.createElement("span");
-    name.className = "si-name";
-    name.textContent = s.name;
-    const headRight = document.createElement("div");
-    headRight.className = "si-head-right";
-    const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
-    const status = document.createElement("span");
-    status.className = "si-status " + (autoDone ? "done" : (s.enabled ? "on" : "off"));
-    status.textContent = autoDone ? `已完成 ${s.run_count}/${s.max_runs} 次` : (s.enabled ? "已启用" : "已停用");
-    status.title = autoDone ? "已达执行上限自动停用，重新启用后从 0 重新计数" : "";
-    const sw = document.createElement("label");
-    sw.className = "switch";
-    sw.title = "启用 / 停用";
-    const cb = document.createElement("input");
-    cb.type = "checkbox";
-    cb.checked = !!s.enabled;
-    const slider = document.createElement("span");
-    slider.className = "slider";
-    cb.addEventListener("change", async () => {
-      try {
-        await api(`/api/schedules/${s.id}`, { method: "PUT", body: { enabled: cb.checked } });
-        toast(cb.checked ? "已启用" : "已停用");
-        renderSchedules();
-      } catch (e) { cb.checked = !cb.checked; toast(e.message, true); }
-    });
-    sw.append(cb, slider);
-    headRight.append(status, sw);
-    head.append(name, headRight);
-
-    // cron 表达式 + 执行次数 + 下次执行
-    const cronRow = document.createElement("div");
-    cronRow.className = "si-cron-row";
-    const cron = document.createElement("input");
-    cron.className = "f-input mono si-cron-in";
-    cron.value = s.cron;
-    cron.title = "编辑 cron 表达式：失焦或回车保存，Esc 取消";
-    cron.spellcheck = false;
-    bindCronInline(cron, s);
-    // 执行次数：已执行/上限（可编辑上限，加粗，与 cron 并列）
-    const runsBlock = document.createElement("span");
-    runsBlock.className = "si-runs-block";
-    const runsLabel = document.createElement("span");
-    runsLabel.textContent = "次数";
-    const runsCur = document.createElement("span");
-    runsCur.className = "si-runs-cur";
-    runsCur.textContent = String(s.run_count || 0);
-    runsCur.title = "已执行次数";
-    const runsSep = document.createElement("span");
-    runsSep.className = "si-runs-sep";
-    runsSep.textContent = "/";
-    const cnt = document.createElement("input");
-    cnt.type = "number";
-    cnt.className = "si-runs-in";
-    cnt.min = -1;
-    cnt.value = s.max_runs ? s.max_runs : -1;
-    cnt.title = "执行次数上限，-1 表示不限；失焦或回车保存，Esc 取消";
-    if (s.max_runs) cnt.style.color = "#2e7d32";
-    bindRunsInline(cnt, s);
-    runsBlock.append(runsLabel, runsCur, runsSep, cnt);
-    const next = document.createElement("div");
-    next.className = "si-next";
-    const nextLabel = document.createElement("span");
-    nextLabel.className = "si-next-label";
-    nextLabel.textContent = "下次执行";
-    const nextTime = document.createElement("span");
-    nextTime.className = "si-next-time";
-    if (s.enabled && s.next_run) {
-      nextTime.textContent = fmtTime(s.next_run);
-      const rel = document.createElement("span");
-      rel.className = "si-next-rel";
-      rel.textContent = relTime(s.next_run);
-      next.append(nextLabel, nextTime, rel);
-    } else {
-      nextTime.textContent = s.enabled ? "待计算" : "已停用，无计划";
-      next.append(nextLabel, nextTime);
-    }
-    cronRow.append(cron, runsBlock, next);
-
-    // 元信息：脚本 + 参数来源 + 上次执行
-    const meta = document.createElement("div");
-    meta.className = "si-meta";
-    const scriptNm = document.createElement("span");
-    scriptNm.textContent = "脚本：" + (s.script_name || "（已删除）");
-    const argsSrc = document.createElement("span");
-    argsSrc.className = "si-args-src" + (s.preset_name ? " preset" : "");
-    argsSrc.textContent = s.preset_name ? "预设：「" + s.preset_name + "」" : "参数：手动输入";
-    argsSrc.title = "点击卡片查看完整参数";
-    const last = document.createElement("span");
-    last.textContent = "上次：" + (s.last_run ? fmtTime(s.last_run) : "尚未执行");
-    if (s.last_status) {
-      const st = document.createElement("span");
-      const ls = s.last_status.toLowerCase();
-      let cls = "info";
-      if (ls.includes("running")) cls = "run";
-      else if (ls.includes("success") || ls.includes("完成")) cls = "succ";
-      else if (ls.includes("fail") || ls.includes("error") || ls.includes("terminated") || ls.includes("无效") || ls.includes("不存在")) cls = "fail";
-      st.className = "si-last-status " + cls;
-      st.textContent = " · " + s.last_status;
-      last.appendChild(st);
-    }
-    meta.append(scriptNm, argsSrc, last);
-
-    // 操作按钮
-    const ops = document.createElement("div");
-    ops.className = "si-ops";
-    const runBtn = document.createElement("button");
-    runBtn.className = "btn mini primary";
-    runBtn.textContent = "立即运行";
-    runBtn.onclick = async () => {
-      // 乐观更新：立即显示 running 状态，避免毫秒级脚本 running 一闪而过
-      window._schedPatch = window._schedPatch || {};
-      window._schedPatch[s.id] = Object.assign(window._schedPatch[s.id] || {}, { last_status: "running" });
-      renderSchedules();
-      try {
-        await api(`/api/schedules/${s.id}/run`, { method: "POST" });
-        toast("已触发「" + s.name + "」");
-      } catch (e) { toast(e.message, true); }
-      // 3 秒后清除补丁，让真实状态（轮询）接管
-      setTimeout(() => {
-        if (window._schedPatch) delete window._schedPatch[s.id];
-        renderSchedules(true);
-      }, 3000);
-    };
-    const editBtn = document.createElement("button");
-    editBtn.className = "btn mini ghost";
-    editBtn.textContent = "编辑";
-    editBtn.onclick = () => scheduleModal(s);
-    const delBtn = document.createElement("button");
-    delBtn.className = "btn mini danger";
-    delBtn.textContent = "删除";
-    delBtn.onclick = () => confirmModal({
-      title: "删除定时任务",
-      message: `确定删除定时任务「${s.name}」吗？`,
-      confirmText: "删除",
-      onConfirm: async () => {
-        await api(`/api/schedules/${s.id}`, { method: "DELETE" });
-        toast("已删除");
-        renderSchedules();
-      },
-    });
-    ops.append(runBtn, editBtn, delBtn);
-    row.append(head, cronRow, meta, ops);
-    row.addEventListener("click", (e) => {
-      if (e.target.closest("button, input, label, .switch")) return;
-      showScheduleDetail(s);
-    });
-    wrap.appendChild(row);
-  }
-}
-
-/* ================= 定时任务详情：点击卡片右侧滑入（只读） ================= */
-function openScheduleDetail() {
-  const detail = $("#schedule-detail");
-  if (!detail) return;
-  detail.hidden = false;
-  detail.classList.remove("open");
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => detail.classList.add("open"));
-  });
-}
-function closeScheduleDetail(instant) {
-  const detail = $("#schedule-detail");
-  if (!detail) return;
-  const done = () => { detail.hidden = true; };
-  detail.classList.remove("open");
-  if (instant) { done(); return; }
-  detail._closeTimer && clearTimeout(detail._closeTimer);
-  detail._closeTimer = setTimeout(done, 320);
-}
-async function showScheduleDetail(s) {
-  const detail = $("#schedule-detail");
-  if (!detail) return;
-  detail.innerHTML = "";
-  openScheduleDetail();
-
-  // 头部：返回 + 名称 + 状态
-  const head = document.createElement("div");
-  head.className = "hd-head";
-  const backBtn = document.createElement("button");
-  backBtn.className = "hd-back";
-  backBtn.innerHTML = "‹ 返回";
-  backBtn.title = "返回定时任务列表";
-  backBtn.onclick = () => closeScheduleDetail();
-  const titleBox = document.createElement("div");
-  titleBox.className = "hd-title";
-  const nameRow = document.createElement("div");
-  nameRow.className = "hd-name-row";
-  const nm = document.createElement("span");
-  nm.className = "hd-name";
-  nm.textContent = s.name || "（未命名）";
-  const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
-  const st = document.createElement("span");
-  st.className = "si-status " + (autoDone ? "done" : (s.enabled ? "on" : "off"));
-  st.textContent = autoDone ? `已完成 ${s.run_count}/${s.max_runs} 次` : (s.enabled ? "已启用" : "已停用");
-  nameRow.append(nm, st);
-  titleBox.append(nameRow);
-  head.append(backBtn, titleBox);
-
-  const info = document.createElement("div");
-  info.className = "sd-info";
-
-  const addRow = (label, valueEl) => {
-    const row = document.createElement("div");
-    row.className = "sd-row";
-    const lb = document.createElement("span");
-    lb.className = "sd-label";
-    lb.textContent = label;
-    row.append(lb, valueEl);
-    info.appendChild(row);
-  };
-
-  // 执行时间（cron）
-  const cronCode = document.createElement("code");
-  cronCode.className = "sd-cron";
-  cronCode.textContent = s.cron;
-  addRow("执行时间", cronCode);
-
-  // 执行次数
-  const runsVal = document.createElement("span");
-  runsVal.textContent = `${s.run_count || 0} / ${s.max_runs || "不限"}`;
-  addRow("执行次数", runsVal);
-
-  // 脚本
-  const scriptVal = document.createElement("span");
-  scriptVal.textContent = s.script_name || "（已删除）";
-  addRow("脚本", scriptVal);
-
-  // 参数来源
-  const srcVal = document.createElement("span");
-  srcVal.textContent = s.preset_name ? "预设：「" + s.preset_name + "」" : "手动输入";
-  addRow("参数来源", srcVal);
-
-  // 参数详情
-  const argsBlock = document.createElement("div");
-  argsBlock.className = "sd-block";
-  const argsTitle = document.createElement("div");
-  argsTitle.className = "sd-block-title";
-  argsTitle.textContent = "参数";
-  const argsChips = document.createElement("div");
-  argsChips.className = "sd-chips";
-  let argsObj = {};
-  try { argsObj = typeof s.args === "string" ? JSON.parse(s.args || "{}") : (s.args || {}); } catch { argsObj = {}; }
-  const keys = Object.keys(argsObj);
-  if (!keys.length) {
-    argsChips.textContent = "无参数";
-    argsChips.classList.add("muted");
-  } else {
-    renderArgChips(argsChips, argsObj);
-  }
-  argsBlock.append(argsTitle, argsChips);
-  info.appendChild(argsBlock);
-
-  // 上次执行
-  const lastVal = document.createElement("span");
-  lastVal.textContent = s.last_run ? fmtTime(s.last_run) : "尚未执行";
-  if (s.last_status) {
-    const ls = document.createElement("span");
-    const stt = s.last_status.toLowerCase();
-    let cls = "info";
-    if (stt.includes("running")) cls = "run";
-    else if (stt.includes("success") || stt.includes("完成")) cls = "succ";
-    else if (stt.includes("fail") || stt.includes("error") || stt.includes("terminated") || stt.includes("无效") || stt.includes("不存在")) cls = "fail";
-    ls.className = "si-last-status " + cls;
-    ls.textContent = " · " + s.last_status;
-    lastVal.appendChild(ls);
-  }
-  addRow("上次执行", lastVal);
-
-  // 下次执行
-  const nextVal = document.createElement("span");
-  if (s.enabled && s.next_run) {
-    nextVal.textContent = `${fmtTime(s.next_run)}（${relTime(s.next_run)}）`;
-  } else {
-    nextVal.textContent = s.enabled ? "待计算" : "已停用，无计划";
-  }
-  addRow("下次执行", nextVal);
-
-  // 创建时间
-  if (s.created_at) {
-    const crVal = document.createElement("span");
-    crVal.textContent = fmtTime(s.created_at);
-    addRow("创建时间", crVal);
-  }
-
-  detail.append(head, info);
-}
-
-// 下次执行的相对倒计时（精确到分/秒）
-function relTime(iso) {
-  const diff = new Date(iso).getTime() - Date.now();
-  if (diff <= 0) return "即将执行";
-  const sec = Math.floor(diff / 1000);
-  if (sec < 60) return `${sec} 秒后`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min} 分 ${sec % 60} 秒后`;
-  const h = Math.floor(min / 60);
-  if (h < 24) return `${h} 小时 ${min % 60} 分后`;
-  const d = Math.floor(h / 24);
-  return `${d} 天 ${h % 24} 小时后`;
-}
-
-// 卡片常驻输入：cron 表达式（失焦/回车保存，Esc 取消）
-function bindCronInline(input, s) {
-  let saving = false;
-  input.addEventListener("blur", async () => {
-    if (saving) return;
-    const cron = input.value.trim();
-    if (cron === s.cron) return;
-    if (!cron) { input.value = s.cron; return toast("cron 不能为空", true); }
-    saving = true;
-    try {
-      await api(`/api/schedules/${s.id}`, { method: "PUT", body: { cron } });
-      toast("执行时间已更新");
-      renderSchedules();
-    } catch (e) {
-      input.value = s.cron;
-      toast(e.message, true);
-      saving = false;
-    }
-  });
-  input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") input.blur();
-    else if (ev.key === "Escape") { input.value = s.cron; input.blur(); }
-  });
-}
-
-// 卡片常驻输入：执行次数上限（-1 表示不限；失焦/回车保存，Esc 取消）
-function bindRunsInline(input, s) {
-  let saving = false;
-  input.addEventListener("blur", async () => {
-    if (saving) return;
-    const shown = s.max_runs ? s.max_runs : -1;
-    const raw = input.value.trim();
-    let maxRuns = null;
-    if (raw && raw !== "-1") {
-      maxRuns = parseInt(raw, 10);
-      if (isNaN(maxRuns) || maxRuns < 1) { input.value = shown; return toast("执行次数需为不小于 1 的整数或 -1（不限）", true); }
-    }
-    const next = maxRuns === null ? -1 : maxRuns;
-    if (next === shown) return;
-    saving = true;
-    try {
-      await api(`/api/schedules/${s.id}`, { method: "PUT", body: { max_runs: maxRuns } });
-      if (!s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs) {
-        toast("该任务已达上限停用，重新启用后将从 0 重新计数", true);
-      }
-      renderSchedules();
-    } catch (e) { toast(e.message, true); saving = false; }
-  });
-  input.addEventListener("keydown", (ev) => {
-    if (ev.key === "Enter") input.blur();
-    else if (ev.key === "Escape") { input.value = s.max_runs ? s.max_runs : -1; input.blur(); }
-  });
-}
-
-function fmtTime(iso) {
-  try {
-    const d = new Date(iso);
-    const p = (n) => String(n).padStart(2, "0");
-    return `${d.getMonth() + 1}-${d.getDate()} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
-  } catch { return iso; }
-}
-
-function renderSchedFields(container, schema, saved) {
-  container.innerHTML = "";
-  if (!schema || !schema.length) {
-    container.innerHTML = `<div class="form-empty" style="height:auto;padding:12px">该脚本没有定义命令行参数</div>`;
-    return;
-  }
-  for (const a of schema) {
-    const field = document.createElement("div");
-    field.className = "field" + (a.is_flag ? " field-switch" : "");
-    field.dataset.dest = a.dest;
-    const label = document.createElement("div");
-    label.className = "f-label";
-    const nm = document.createElement("span");
-    nm.textContent = a.dest;
-    const kind = document.createElement("span");
-    kind.className = "f-kind" + (a.required ? " req" : "");
-    kind.textContent = a.required ? "必填" : "可选";
-    const tl = typeLabelOf(a);
-    label.append(nm, kind);
-    if (tl) {
-      const t = document.createElement("span");
-      t.className = "f-type " + tl.cls;
-      t.textContent = tl.text;
-      label.appendChild(t);
-    }
-    field.appendChild(label);
-    const savedVal = saved ? saved[a.dest] : undefined;
-    const defVal = a.default;
-    const value = savedVal !== undefined && savedVal !== null ? savedVal : defVal;
-    let input;
-    if (a.is_flag) {
-      const ctrl = document.createElement("div");
-      ctrl.className = "f-control";
-      const sw = document.createElement("label");
-      sw.className = "switch";
-      const cb = document.createElement("input");
-      cb.type = "checkbox";
-      cb.checked = !!value;
-      const slider = document.createElement("span");
-      slider.className = "slider";
-      sw.append(cb, slider);
-      const val = document.createElement("span");
-      val.className = "sw-val";
-      val.textContent = cb.checked ? "开启" : "关闭";
-      cb.addEventListener("change", () => { val.textContent = cb.checked ? "开启" : "关闭"; });
-      ctrl.append(sw, val);
-      field.appendChild(ctrl);
-      input = cb;
-    } else if (a.choices && a.choices.length) {
-      input = document.createElement("select");
-      input.className = "f-input";
-      const empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = a.required ? "请选择…" : "（不传）";
-      input.appendChild(empty);
-      for (const c of a.choices) {
-        const opt = document.createElement("option");
-        opt.value = String(c);
-        opt.textContent = String(c);
-        input.appendChild(opt);
-      }
-      input.value = value !== undefined && value !== null ? String(value) : "";
-      field.appendChild(input);
-    } else {
-      input = document.createElement("input");
-      input.className = "f-input mono";
-      if (a.type === "int" || a.type === "float") {
-        input.type = "number";
-        if (a.type === "int") input.step = "1";
-      } else {
-        input.type = "text";
-      }
-      if (a.nargs || a.action === "append") input.placeholder = "多个值用英文逗号分隔";
-      if (value !== undefined && value !== null) input.value = Array.isArray(value) ? value.join(",") : String(value);
-      field.appendChild(input);
-    }
-    container.appendChild(field);
-  }
-}
-
-function collectSchedFields(container, schema) {
-  const values = {};
-  for (const a of (schema || [])) {
-    const field = container.querySelector(`[data-dest="${CSS.escape(a.dest)}"]`);
-    if (!field) continue;
-    const el = field.querySelector("input,select");
-    if (!el) continue;
-    if (a.is_flag) {
-      values[a.dest] = el.checked;
-      continue;
-    }
-    let raw = el.value;
-    if (raw === "" && !a.required) continue; // 空值且非必填不传
-    if (a.nargs || a.action === "append") {
-      const items = raw.split(",").map((s) => s.trim()).filter(Boolean);
-      if (!items.length && a.required) { values[a.dest] = []; continue; }
-      if (items.length) values[a.dest] = a.type === "int" ? items.map(Number) : a.type === "float" ? items.map(Number) : items;
-      continue;
-    }
-    if (a.type === "int") values[a.dest] = raw === "" ? null : parseInt(raw, 10);
-    else if (a.type === "float") values[a.dest] = raw === "" ? null : parseFloat(raw);
-    else values[a.dest] = raw;
-  }
-  return values;
-}
-
-async function scheduleModal(sched) {
-  const scripts = await api("/api/scripts").catch(() => []);
-  const editing = !!sched;
-  const selId = sched ? sched.script_id : (state.script ? state.script.id : (scripts[0] && scripts[0].id));
-  let schema = [];
-  let presets = [];
-  let savedPresetId = sched && sched.preset_id ? sched.preset_id : null;
-  let savedArgs = sched ? (typeof sched.args === "string" ? JSON.parse(sched.args || "{}") : (sched.args || {})) : {};
-  if (selId) {
-    const rec = await api(`/api/scripts/${selId}`).catch(() => null);
-    if (rec) { schema = rec.args_schema || []; presets = rec.presets || []; }
-  }
+  if (!s) return;
   openModal({
-    title: editing ? "编辑定时任务" : "新建定时任务",
-    bodyHTML: `
-      <div class="m-field">
-        <div class="m-label">任务名称</div>
-        <input class="f-input" id="sc-name" placeholder="例如：每日备份 / 每 10 分钟巡检" value="${escapeHtml(sched ? sched.name : "")}" autocomplete="off">
-      </div>
-      <div class="m-field">
-        <div class="m-label">执行脚本</div>
-        <select class="f-input" id="sc-script">
-          ${scripts.map((s) => `<option value="${s.id}" ${s.id === selId ? "selected" : ""}>${escapeHtml(s.name)}</option>`).join("")}
-        </select>
-      </div>
-      <div class="m-field">
-        <div class="m-label">cron 表达式</div>
-        <input class="f-input mono" id="sc-cron" placeholder="分 时 日 月 周，如 */10 * * * *" value="${escapeHtml(sched ? sched.cron : "")}" autocomplete="off">
-        <div class="sc-preview" id="sc-preview">输入 cron 后自动显示下次执行时间</div>
-      </div>
-      <div class="m-field">
-        <div class="m-label">执行次数上限（留空表示不限）</div>
-        <input type="number" class="f-input" id="sc-max-runs" min="1" placeholder="例如 3：执行满 3 次后自动停用，重新启用时重置" value="${sched && sched.max_runs ? sched.max_runs : ""}" autocomplete="off">
-      </div>
-      <div class="m-field">
-        <div class="m-label">快速选择（无需懂 cron）</div>
-        <div class="sc-quick" id="sc-quick">
-          <button class="btn mini ghost" data-cron="* * * * *">每分钟</button>
-          <button class="btn mini ghost" data-cron="*/5 * * * *">每5分钟</button>
-          <button class="btn mini ghost" data-cron="*/10 * * * *">每10分钟</button>
-          <button class="btn mini ghost" data-cron="0 * * * *">每小时</button>
-          <button class="btn mini ghost" data-cron="0 */2 * * *">每2小时</button>
-          <button class="btn mini ghost" data-cron="0 9 * * *">每天9点</button>
-          <button class="btn mini ghost" data-cron="0 9 * * 1-5">工作日9点</button>
-          <button class="btn mini ghost" data-cron="0 9 * * 0">每周日9点</button>
-          <button class="btn mini ghost" data-cron="0 9 1 * *">每月1号9点</button>
-        </div>
-      </div>
-      <div class="m-field">
-        <div class="m-label">可视化构建（修改后自动写入 cron）</div>
-        <div class="sc-builder">
-          <select class="f-input" id="sc-freq">
-            <option value="minute">每 N 分钟</option>
-            <option value="hour">每 N 小时</option>
-            <option value="daily">每天固定时间</option>
-            <option value="weekly">每周固定时间</option>
-            <option value="monthly">每月固定日期</option>
-          </select>
-          <div class="sc-builder-opts" id="sc-builder-opts"></div>
-        </div>
-      </div>
-      <div class="m-field">
-        <div class="m-label">参数来源</div>
-        <select class="f-input" id="sc-preset">
-          <option value="">手动填写</option>
-          ${presets.map((p) => `<option value="${p.id}" ${savedPresetId === p.id ? "selected" : ""} data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("")}
-        </select>
-      </div>
-      <div class="m-field">
-        <div class="m-label">参数</div>
-        <div class="sc-fields" id="sc-fields"></div>
-      </div>
-      <div class="m-field">
-        <label class="chk"><input type="checkbox" id="sc-enabled" ${!sched || sched.enabled ? "checked" : ""}> 启用该定时任务</label>
-      </div>`,
-    footHTML: `<button class="btn ghost" data-close>取消</button><button class="btn primary" id="sc-save">${editing ? "保存修改" : "创建"}</button>`,
-    onMount: (mask) => {
-      $$("[data-close]", mask).forEach((b) => b.addEventListener("click", closeModal));
-      const fieldsBox = $("#sc-fields", mask);
-      renderSchedFields(fieldsBox, schema, savedArgs);
-      const cronInp = $("#sc-cron", mask);
-      const preview = $("#sc-preview", mask);
-      let previewTimer = null;
-      const updatePreview = async () => {
-        const cron = cronInp.value.trim();
-        if (!cron) { preview.textContent = "输入 cron 后自动显示下次执行时间"; preview.className = "sc-preview"; return; }
+    title: '编辑脚本信息',
+    body: `
+      <div class="mfield"><label>名称 <span class="req">*</span></label>
+        <input type="text" id="meta-name" value="${escapeHtml(s.name)}"></div>
+      <div class="mfield"><label>描述</label>
+        <textarea id="meta-desc" placeholder="这个脚本做什么、怎么用">${escapeHtml(s.description || '')}</textarea></div>
+      <div class="mfield"><label>标签（逗号分隔）</label>
+        <input type="text" id="meta-tags" value="${escapeHtml((s.tags || []).join(', '))}" placeholder="data, etl, daily"></div>
+      <div class="mfield"><label>依赖文件路径</label>
+        <input type="text" class="mono" id="meta-deps" value="${escapeHtml(s.deps_path || '')}" placeholder="留空自动检测脚本目录 requirements.txt">
+        <div class="hint">指定后「安装依赖」会优先使用该文件</div></div>`,
+    foot: [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: async () => {
+        const name = $('#meta-name').value.trim();
+        if (!name) { toast('名称不能为空', 'err'); return; }
+        const tags = $('#meta-tags').value.split(/[,，]/).map(t => t.trim()).filter(Boolean);
         try {
-          const r = await api("/api/schedules/preview", { method: "POST", body: { cron } });
-          preview.textContent = "下次执行：" + fmtTime(r.next);
-          preview.className = "sc-preview ok";
-        } catch (e) {
-          preview.textContent = e.message;
-          preview.className = "sc-preview err";
+          await api(`/api/scripts/${s.id}`, {
+            method: 'PUT',
+            body: { name, description: $('#meta-desc').value.trim(), deps_path: $('#meta-deps').value.trim(), tags },
+          });
+          closeModal();
+          toast('已保存');
+          await loadScripts();
+          await selectScript(s.id);
+        } catch (e) { toast(e.message, 'err'); }
+      } },
+    ],
+  });
+  setTimeout(() => { const d = $('#meta-desc'); if (d) d.focus(); }, 60);
+}
+
+/* ---------- 更换虚拟环境 ---------- */
+async function openVenvSettings() {
+  const s = state.script;
+  if (!s) return;
+  let managers = [];
+  try { managers = (await api('/api/env/managers')).managers || []; } catch { /* 忽略 */ }
+
+  const bodyFor = (tab) => `
+    <div class="seg" id="venv-tabs" style="margin-bottom:14px">
+      <button class="${tab === 'select' ? 'on' : ''}" data-vt="select">选择已有环境</button>
+      <button class="${tab === 'manual' ? 'on' : ''}" data-vt="manual">手动输入路径</button>
+    </div>
+    <div id="venv-pane"></div>
+    <div class="mfield" style="margin-top:16px;margin-bottom:0">
+      <label>本机环境管理器</label>
+      <div class="env-managers">${managers.length
+        ? managers.map(m => `<span class="env-manager">${escapeHtml(m.name)}<span class="ver">${escapeHtml(m.version || '')}</span></span>`).join('')
+        : '<span style="font-size:12px;color:var(--ink-4)">未检测到 uv / conda</span>'}</div>
+    </div>`;
+
+  openModal({ title: '更换虚拟环境', body: bodyFor('select'), foot: [
+    { label: '取消' },
+    { label: '保存', primary: true, onClick: saveVenv },
+  ] });
+
+  const renderPane = (tab) => {
+    const pane = $('#venv-pane');
+    if (tab === 'select') {
+      pane.innerHTML = `
+        <div class="mfield"><label>虚拟环境</label>
+          <div style="display:flex;gap:8px">
+            <select id="venv-sel" style="flex:1"><option value="">加载中…</option></select>
+            <button class="btn btn-ghost" id="venv-scan" style="flex-shrink:0">重新扫描</button>
+          </div>
+          <div class="hint" id="venv-preview"></div></div>`;
+      $('#venv-scan').addEventListener('click', () => scanVenvs(false));
+      $('#venv-sel').addEventListener('change', updatePreview);
+      scanVenvs(true);
+    } else {
+      pane.innerHTML = `
+        <div class="mfield"><label>虚拟环境路径</label>
+          <input type="text" class="mono" id="venv-manual" value="${escapeHtml(s.venv_path || '')}" placeholder="/Users/you/.venvs/myenv">
+          <div class="hint">可填虚拟环境根目录，或直接填 python 可执行文件路径</div></div>`;
+      $('#venv-manual').addEventListener('input', updatePreview);
+      updatePreview();
+    }
+  };
+  const activate = (tab) => {
+    $$('#venv-tabs button').forEach(b => b.classList.toggle('on', b.dataset.vt === tab));
+    renderPane(tab);
+  };
+  $$('#venv-tabs button').forEach(b => b.addEventListener('click', () => activate(b.dataset.vt)));
+  activate('select');
+
+  async function scanVenvs(useCache) {
+    const btn = $('#venv-scan');
+    if (!btn) return;
+    const sel = $('#venv-sel');
+    if (useCache && state.venvScanned) { fillVenvOptions(state.venvScanned); return; }
+    btn.disabled = true;
+    btn.textContent = '扫描中…';
+    try {
+      const data = (await api('/api/env/venvs')).venvs || [];
+      state.venvScanned = data;
+      fillVenvOptions(data);
+      toast(`已扫描到 ${data.length} 个虚拟环境`);
+    } catch (e) { toast(e.message, 'err'); }
+    finally { btn.disabled = false; btn.textContent = '重新扫描'; }
+  }
+  function fillVenvOptions(venvs) {
+    const sel = $('#venv-sel');
+    if (!sel) return;
+    const cur = s.venv_path || '';
+    sel.innerHTML = '<option value="">默认（脚本目录 .venv）</option>'
+      + (venvs.length ? `<optgroup label="已检测到的虚拟环境">${venvs.map(v =>
+        `<option value="${escapeHtml(v.path)}" title="${escapeHtml(v.python || '')}">${escapeHtml(v.name)}（${escapeHtml(v.type)}）</option>`).join('')}</optgroup>` : '')
+      + (cur && !venvs.some(v => v.path === cur) ? `<option value="${escapeHtml(cur)}" selected>自定义：${escapeHtml(cur)}</option>` : '');
+    sel.value = cur;
+    updatePreview();
+  }
+  function currentVenvValue() {
+    const manual = $('#venv-manual');
+    return manual ? manual.value.trim() : ($('#venv-sel') ? $('#venv-sel').value : '');
+  }
+  function updatePreview() {
+    const el = $('#venv-preview');
+    if (!el) return;
+    const v = currentVenvValue();
+    const env = s.env || {};
+    if (v) { el.className = 'hint ok'; el.textContent = `将使用：${v}`; }
+    else { el.className = 'hint'; el.textContent = `当前：默认（脚本目录 .venv）${env.venv_python ? ' · ' + env.venv_python : ''}`; }
+  }
+  async function saveVenv() {
+    const v = currentVenvValue();
+    try {
+      await api(`/api/scripts/${s.id}`, { method: 'PUT', body: { venv_path: v } });
+      s.venv_path = v;
+      closeModal();
+      toast(v ? '已切换虚拟环境' : '已恢复默认环境');
+      await reloadEnv();
+      refreshCmd();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+}
+
+/* ---------- 预设管理 ---------- */
+function openPresetManager(all) {
+  const render = () => {
+    const list = all.slice();
+    const rows = list.map(p => `
+      <div class="list-row" data-id="${p.id}">
+        <span class="nm clickable" data-act="apply" title="点击应用">${p.pinned ? '📌 ' : ''}${escapeHtml(p.name)}</span>
+        <button class="icon-mini ${p.pinned ? 'on' : ''}" data-act="pin" title="固定 / 取消固定">📌</button>
+        <button class="icon-mini" data-act="up" title="上移">↑</button>
+        <button class="icon-mini" data-act="down" title="下移">↓</button>
+        <button class="icon-mini danger" data-act="del" title="删除">✕</button>
+      </div>`).join('');
+    openModal({
+      title: `全部预设 · ${all.length} 个`,
+      body: list.length ? `<div class="list-box">${rows}</div>
+        <div class="hint" style="margin-top:8px;color:var(--ink-4);font-size:11px">
+        顺序：固定项在前，组内按手动排序，再按创建时间倒序。</div>` : '<div class="empty" style="padding:30px">还没有预设</div>',
+      foot: [{ label: '关闭', onClick: closeModal }, { label: '新建预设', primary: true, onClick: () => openSavePreset() }],
+    });
+    const box = $('.list-box', $('#modal-body'));
+    if (box) {
+      box.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-act]');
+        if (!btn) return;
+        const id = Number(btn.closest('.list-row').dataset.id);
+        const p = all.find(x => x.id === id);
+        const act = btn.dataset.act;
+        if (act === 'apply') { closeModal(); applyPreset(p); return; }
+        if (act === 'del') { askDeletePreset(btn, p, () => renderPresets()); all.splice(all.indexOf(p), 1); render(); return; }
+        try {
+          if (act === 'pin') {
+            const r = await api(`/api/presets/${id}`, { method: 'PATCH', body: { pinned: !p.pinned } });
+            p.pinned = r.preset ? !!r.preset.pinned : !p.pinned;
+          } else {
+            await api(`/api/presets/${id}`, { method: 'PATCH', body: { order: act } });
+            const i = all.indexOf(p);
+            const j = act === 'up' ? i - 1 : i + 1;
+            if (j >= 0 && j < all.length) { all.splice(i, 1); all.splice(j, 0, p); }
+          }
+          render();
+          await reloadPresets();
+          renderPresets();
+        } catch (err) { toast('操作失败：' + err.message, 'err'); }
+      });
+    }
+  };
+  render();
+}
+async function reloadPresets() {
+  try {
+    const detail = await api(`/api/scripts/${state.selectedId}`);
+    state.script.presets = detail.presets || [];
+    renderPresets();
+  } catch { /* 忽略 */ }
+}
+
+function openSavePreset() {
+  const existing = state.script.presets || [];
+  let pending = null;
+  const body = `
+    <div class="mfield"><label>预设名称 <span class="req">*</span></label>
+      <input type="text" id="preset-name" placeholder="如：生产环境"></div>
+    ${existing.length ? `<div class="mfield"><label>或点击已有预设覆盖它</label>
+      <div class="preset-chips" id="preset-overwrite">${existing.map(p =>
+        `<button class="preset-chip" data-name="${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>`).join('')}</div></div>` : ''}`;
+  openModal({
+    title: '保存为预设',
+    body,
+    foot: [
+      { label: '取消' },
+      { label: '保存', primary: true, onClick: async () => {
+        const name = ($('#preset-name').value || '').trim();
+        if (!name) { toast('请填写预设名称', 'err'); return; }
+        const dup = existing.find(p => p.name === name);
+        if (dup && pending !== name) {
+          pending = name;
+          $('#preset-name').value = '';
+          toast(`「${name}」已存在，再点一次「保存」覆盖它`, 'warn');
+          return;
         }
-      };
-      cronInp.addEventListener("input", () => {
-        clearTimeout(previewTimer);
-        previewTimer = setTimeout(updatePreview, 400);
-      });
-
-      // 快速预设：点击直接填充 cron
-      $$("[data-cron]", $("#sc-quick", mask)).forEach((b) => {
-        b.addEventListener("click", () => { cronInp.value = b.dataset.cron; updatePreview(); });
-      });
-
-      // 可视化构建器：打开时按现有 cron 回填；控件变化实时写入 cron 输入框
-      const freqSel = $("#sc-freq", mask);
-      renderBuilderOpts(freqSel.value, mask);
-      parseCronToBuilder(cronInp.value.trim(), mask);
-      const syncBuilder = () => {
-        const c = buildCronFromBuilder(freqSel.value, mask);
-        if (c) { cronInp.value = c; updatePreview(); }
-        else { toast("请至少选择一个星期", true); }
-      };
-      freqSel.addEventListener("change", () => {
-        renderBuilderOpts(freqSel.value, mask);
-        syncBuilder();
-      });
-      const builderOpts = $("#sc-builder-opts", mask);
-      builderOpts.addEventListener("input", syncBuilder);
-      builderOpts.addEventListener("change", syncBuilder);
-
-      // 参数来源：选预设后填充参数表单
-      const presetSel = $("#sc-preset", mask);
-      presetSel.addEventListener("change", () => {
-        const opt = presetSel.selectedOptions[0];
-        const args = opt && opt.dataset.args ? JSON.parse(opt.dataset.args) : {};
-        renderSchedFields(fieldsBox, schema, args);
-      });
-
-      const scriptSel = $("#sc-script", mask);
-      const reloadScript = async () => {
-        const sid = parseInt(scriptSel.value, 10);
-        const rec = await api(`/api/scripts/${sid}`).catch(() => null);
-        schema = rec ? (rec.args_schema || []) : [];
-        presets = rec ? (rec.presets || []) : [];
-        presetSel.innerHTML = `<option value="">手动填写</option>` +
-          presets.map((p) => `<option value="${p.id}" data-args="${escapeHtml(JSON.stringify(p.args || {}))}">预设：${escapeHtml(p.name)}</option>`).join("");
-        renderSchedFields(fieldsBox, schema, {});
-      };
-      scriptSel.addEventListener("change", reloadScript);
-
-      if (cronInp.value.trim()) updatePreview();
-      $("#sc-save", mask).addEventListener("click", async () => {
-        const name = $("#sc-name", mask).value.trim();
-        const cron = cronInp.value.trim();
-        const enabled = $("#sc-enabled", mask).checked;
-        if (!name) return toast("请输入任务名称", true);
-        if (!cron) return toast("请输入 cron 表达式", true);
-        const maxRunsRaw = $("#sc-max-runs", mask).value.trim();
-        let maxRuns = null;
-        if (maxRunsRaw) {
-          maxRuns = parseInt(maxRunsRaw, 10);
-          if (isNaN(maxRuns) || maxRuns < 1) return toast("执行次数需为不小于 1 的整数", true);
-        }
-        const args = collectSchedFields(fieldsBox, schema);
-        const presetId = $("#sc-preset", mask).value ? parseInt($("#sc-preset", mask).value, 10) : null;
-        const body = { name, cron, enabled, args, max_runs: maxRuns, preset_id: presetId };
-        if (editing) {
-          await api(`/api/schedules/${sched.id}`, { method: "PUT", body: { name, cron, enabled, args, max_runs: maxRuns, preset_id: presetId } });
-          toast("已保存修改");
-        } else {
-          await api("/api/schedules", { method: "POST", body: { ...body, script_id: parseInt(scriptSel.value, 10) } });
-          toast("定时任务已创建");
-        }
-        closeModal();
-        renderSchedules();
-      });
-    },
+        const values = collectValues();
+        try {
+          const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
+          closeModal();
+          toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
+          await reloadPresets();
+        } catch (e) { toast(e.message, 'err'); }
+      } },
+    ],
+  });
+  const ow = $('#preset-overwrite');
+  if (ow) ow.addEventListener('click', async (e) => {
+    const chip = e.target.closest('.preset-chip');
+    if (!chip) return;
+    const name = chip.dataset.name;
+    const values = collectValues();
+    try {
+      const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
+      closeModal();
+      toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
+      await reloadPresets();
+    } catch (err) { toast(err.message, 'err'); }
   });
 }
 
-// 可视化 cron 构建器：渲染频率对应的控件
-function renderBuilderOpts(freq, mask) {
-  const el = $("#sc-builder-opts", mask);
-  const week = ["一", "二", "三", "四", "五", "六", "日"]; // 值 1..6,0
-  const timeInp = `<input type="time" class="f-input sc-time" id="sc-time" value="09:00">`;
-  if (freq === "minute") {
-    el.innerHTML = `每 <input type="number" class="f-input sc-num" id="sc-n" min="1" max="59" value="5"> 分钟执行一次`;
-  } else if (freq === "hour") {
-    el.innerHTML = `每 <input type="number" class="f-input sc-num" id="sc-nh" min="1" max="23" value="1"> 小时，在第 <input type="number" class="f-input sc-num" id="sc-mh" min="0" max="59" value="0"> 分执行`;
-  } else if (freq === "daily") {
-    el.innerHTML = `每天 <input type="time" class="f-input sc-time" id="sc-time" value="09:00"> 执行`;
-  } else if (freq === "weekly") {
-    el.innerHTML = `每周 ${timeInp} 执行，选择星期：` +
-      week.map((d, i) => `<label class="chk sc-wd"><input type="checkbox" id="sc-wd${i}" value="${i === 6 ? 0 : i + 1}">${d}</label>`).join("") +
-      `<div class="sc-hint">周一至周六选中的天执行；周日对应 cron 的 0</div>`;
-  } else if (freq === "monthly") {
-    el.innerHTML = `每月第 <input type="number" class="f-input sc-num" id="sc-md" min="1" max="31" value="1"> 号，${timeInp} 执行`;
+/* ---------- 命令行导入 ---------- */
+function openCmdImport() {
+  if (!state.script) { toast('请先选择一个脚本', 'warn'); return; }
+  if (!(state.script.args_schema || []).length) { toast('该脚本没有可解析的命令行参数', 'warn'); return; }
+  const hasPos = state.script.args_schema.some(a => a.kind === 'positional');
+  openModal({
+    title: '命令行导入参数',
+    body: `
+      <div class="mfield"><label>粘贴一条完整命令或参数片段</label>
+        <textarea class="mono" id="cmd-import" placeholder="${hasPos ? 'python xxx.py --date 2026-10-09 --batch 100' : 'python xxx.py --key value'}"></textarea>
+        <div class="hint">支持完整命令（自动剥离 uv run / python 前缀）与纯参数片段；引号包裹的值会正确解析</div></div>
+      <div id="cmd-import-result"></div>`,
+    foot: [
+      { label: '取消' },
+      { label: '解析并回填', primary: true, onClick: doParseCommand },
+    ],
+  });
+  setTimeout(() => { const t = $('#cmd-import'); if (t) t.focus(); }, 60);
+}
+async function doParseCommand() {
+  const command = $('#cmd-import').value.trim();
+  const box = $('#cmd-import-result');
+  if (!command) { toast('请先粘贴命令', 'warn'); return; }
+  try {
+    const res = await api(`/api/scripts/${state.selectedId}/parse-command`, { method: 'POST', body: { command } });
+    const filled = Object.keys(res.parsed || {}).length;
+    const issues = [];
+    if ((res.missing || []).length) issues.push(`<div class="hint err">缺少必填：${res.missing.map(escapeHtml).join('、')}</div>`);
+    if ((res.unknown || []).length) issues.push(`<div class="hint err">未识别的参数：${res.unknown.map(escapeHtml).join('、')}</div>`);
+    if ((res.extra || []).length) issues.push(`<div class="hint err">多余的位置参数：${res.extra.map(escapeHtml).join('、')}</div>`);
+    const errs = Object.entries(res.errors || {});
+    if (errs.length) issues.push('<div class="hint err">' + errs.map(([k, v]) =>
+      `${escapeHtml(k)}：${Array.isArray(v) ? v.map(escapeHtml).join('；') : escapeHtml(v)}`).join('<br>') + '</div>');
+    box.innerHTML = `<div class="hint ${issues.length ? 'err' : 'ok'}">已解析 ${filled} 个参数${issues.length ? '' : '，已回填表单'}</div>${issues.join('')}`;
+    fillValues(res.parsed || {});
+    await saveArgs(collectValues());
+    refreshCmd();
+    if (!filled) { toast('未解析到可识别的参数', 'err'); return; }
+    if (issues.length) { toast('已回填，请查看下方提示', 'warn'); return; }
+    closeModal();
+    toast(`已解析 ${filled} 个参数并回填`);
+  } catch (e) {
+    box.innerHTML = `<div class="hint err">${escapeHtml(e.message)}</div>`;
   }
 }
 
-// 根据可视化选择生成 cron 表达式
-function buildCronFromBuilder(freq, mask) {
-  const get = (id) => $("#" + id, mask).value;
-  const num = (id, d) => parseInt(get(id), 10) || d;
-  if (freq === "minute") {
-    return `*/${Math.min(59, Math.max(1, num("sc-n", 5)))} * * * *`;
-  }
-  if (freq === "hour") {
-    const h = Math.min(23, Math.max(1, num("sc-nh", 1)));
-    const m = Math.min(59, Math.max(0, num("sc-mh", 0)));
-    return `${m} */${h} * * *`;
-  }
-  if (freq === "daily") {
-    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
-    return `${m} ${h} * * *`;
-  }
-  if (freq === "weekly") {
-    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
-    const dow = [];
-    for (let i = 0; i < 7; i++) if ($("#sc-wd" + i, mask).checked) dow.push(i === 6 ? 0 : i + 1);
-    if (!dow.length) return null;
-    return `${m} ${h} * * ${dow.join(",")}`;
-  }
-  if (freq === "monthly") {
-    const [h, m] = (get("sc-time") || "09:00").split(":").map(Number);
-    const d = Math.min(31, Math.max(1, num("sc-md", 1)));
-    return `${m} ${h} ${d} * *`;
-  }
-  return null;
+function showUvInstall(hint) {
+  if (!hint) return;
+  openModal({
+    title: '未检测到 uv',
+    body: `<div style="font-size:13px;color:var(--ink-2);line-height:1.8">
+      uv 负责自动创建虚拟环境并安装依赖，缺少它时只能使用脚本自带的 .venv。<br>当前平台：<b>${escapeHtml(hint.platform || '')}</b>
+      <div class="result-summary mono" style="margin-top:10px">${escapeHtml(hint[hint.platform] || hint.mac || '')}</div></div>`,
+    foot: [{ label: '知道了', primary: true, onClick: closeModal }],
+  });
 }
 
-// 把已有 cron 表达式解析回填到可视化构建器（编辑时让修改立即可见）
-function parseCronToBuilder(cron, mask) {
-  if (!cron) return;
-  const parts = cron.trim().split(/\s+/);
-  if (parts.length !== 5) return;
-  const [mi, ho, dom, mon, dow] = parts;
-  const pad = (n) => String(n).padStart(2, "0");
-  const time = `${pad(ho)}:${pad(mi)}`;
-  const freq = $("#sc-freq", mask);
-  const render = (f) => { freq.value = f; renderBuilderOpts(f, mask); };
-  if (mi.startsWith("*/") && ho === "*" && dom === "*" && mon === "*" && dow === "*") {
-    render("minute"); $("#sc-n", mask).value = mi.slice(2);
-  } else if (ho.startsWith("*/") && dom === "*" && mon === "*" && dow === "*") {
-    render("hour"); $("#sc-nh", mask).value = ho.slice(2); $("#sc-mh", mask).value = mi;
-  } else if (dom === "*" && mon === "*" && dow === "*") {
-    render("daily"); $("#sc-time", mask).value = time;
-  } else if (dom === "*" && mon === "*") {
-    render("weekly"); $("#sc-time", mask).value = time;
-    const days = dow.split(",").map((x) => x.trim());
-    for (let i = 0; i < 7; i++) {
-      const v = i === 6 ? 0 : i + 1;
-      $("#sc-wd" + i, mask).checked = days.includes(String(v));
+/* ========================= 7. 顶栏与初始化 ========================= */
+
+function switchView(name) {
+  state.view = name;
+  $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
+  $$('.hdr-nav .nav-btn').forEach(b => b.classList.toggle('on', b.dataset.view === name));
+  $('#search').style.visibility = name === 'scripts' ? '' : 'hidden';
+  // 抽屉遮罩会挡住整页，切到别的页面时自动收起
+  if (name !== 'scripts') closeDrawer();
+  if (name === 'history') { refreshHistory(); }
+  if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
+  closeRunPopover();
+}
+
+function initTopbar() {
+  $$('.hdr-nav .nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
+  $('#brand').addEventListener('click', () => switchView('scripts'));
+
+  $('#search').addEventListener('input', debounce((e) => {
+    state.kw = e.target.value;
+    renderGrid();
+  }, 140));
+
+  $('#seg-filter').addEventListener('click', (e) => {
+    const b = e.target.closest('button[data-f]');
+    if (!b) return;
+    state.filter = b.dataset.f;
+    $$('#seg-filter button').forEach(x => x.classList.toggle('on', x === b));
+    renderGrid();
+  });
+
+  $('#btn-add').addEventListener('click', () => openImportModal('file'));
+  $('#btn-new-sched').addEventListener('click', () => openScheduleModal(null));
+  $('#btn-scan-dir').addEventListener('click', () => openImportModal('scan'));
+  $('#btn-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
+  $('#btn-export').addEventListener('click', exportData);
+  $('#btn-import').addEventListener('click', importConfig);
+  $('#lan-toggle').addEventListener('click', toggleLan);
+
+  $('#drawer-close').addEventListener('click', closeDrawer);
+  $('#drawer-mask').addEventListener('click', closeDrawer);
+  $('#btn-run').addEventListener('click', runScript);
+  $('#btn-save-preset').addEventListener('click', openSavePreset);
+  $('#btn-parse-cmd').addEventListener('click', openCmdImport);
+  $('#btn-copy-cmd').addEventListener('click', async () => {
+    if (!state.script) { toast('请先选择一个脚本', 'warn'); return; }
+    const { command, error } = await buildCommandText();
+    if (error) { toast(error, 'err'); return; }
+    if (!command) { toast('命令为空', 'warn'); return; }
+    await copyText(command);
+    toast('命令已复制');
+  });
+  $('#opt-hide-empty').addEventListener('change', () => { applyEmptyFilter(); savePrefs(); });
+  $('#q-open-dir').addEventListener('click', async () => {
+    if (!state.script) return;
+    try { await api('/api/utils/open-dir', { method: 'POST', body: { path: state.script.path } }); toast('已打开所在目录'); }
+    catch (e) { toast(e.message, 'err'); }
+  });
+  $('#q-copy-path').addEventListener('click', async () => {
+    if (!state.script) return;
+    await copyText(state.script.path);
+    toast('路径已复制');
+  });
+  $('#q-meta').addEventListener('click', openMetaModal);
+  $('#q-reload').addEventListener('click', reloadCurrentScript);
+  $('#q-delete').addEventListener('click', deleteCurrentScript);
+  $('#q-run-status').addEventListener('click', runScript);
+
+  document.addEventListener('click', (e) => {
+    if (!e.target.closest('#run-popover') && !e.target.closest('.run-badge')) closeRunPopover();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeRunPopover();
+      $('#copy-float').hidden = true;
+      if ($('#cmd-strip').classList.contains('open')) {
+        $('#cmd-strip').classList.remove('open', 'pop');
+        refreshCmd();
+      }
     }
-  } else if (mon === "*" && dow === "*") {
-    render("monthly"); $("#sc-md", mask).value = dom; $("#sc-time", mask).value = time;
-  }
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); runScript(); }
+  });
 }
 
-$("#btn-new-schedule").addEventListener("click", () => scheduleModal(null));
-
-/* ================= Tab ================= */
-
-function moveTabPill() {
-  const pill = $("#tab-pill");
-  const active = document.querySelector(".tab.active");
-  if (!pill || !active) return;
-  pill.style.width = active.offsetWidth + "px";
-  pill.style.transform = "translateX(" + active.offsetLeft + "px)";
+async function reloadCurrentScript() {
+  if (!state.selectedId) return;
+  toast('正在重新解析脚本…');
+  try {
+    await api(`/api/scripts/${state.selectedId}/reload`, { method: 'POST' });
+    toast('已重新解析，参数定义已刷新');
+    await loadScripts();
+    await selectScript(state.selectedId, { keepDrawer: true });
+  } catch (e) { toast(e.message, 'err'); }
 }
-function switchTab(name) {
-  $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
-  moveTabPill();
-  $("#console-wrap").style.display = name === "console" ? "" : "none";
-  $("#history-wrap").style.display = name === "history" ? "" : "none";
-  $("#schedule-wrap").style.display = name === "schedules" ? "" : "none";
-  if (name === "schedules") {
-    renderSchedules();
-    // 定时任务页自动刷新：执行中状态(running/success)与下次执行时间实时更新
-    if (!window._schedRefreshTimer) {
-      window._schedRefreshTimer = setInterval(() => renderSchedules(true), 3000);
-    }
-  } else if (window._schedRefreshTimer) {
-    clearInterval(window._schedRefreshTimer);
-    window._schedRefreshTimer = null;
-  }
-  applyRunState(); // 切 tab 后按 state 恢复运行按钮状态（呼吸灯/禁用）
+async function deleteCurrentScript() {
+  if (!state.script) return;
+  const ok = await confirmModal({
+    title: '移除脚本',
+    message: `确定从启动器移除「${state.script.name}」？\n该脚本的预设与执行记录会一并删除，脚本文件本身不受影响。`,
+    okText: '移除', danger: true,
+  });
+  if (!ok) return;
+  try {
+    await api(`/api/scripts/${state.script.id}`, { method: 'DELETE' });
+    toast('已移除');
+    state.script = null; state.selectedId = null; state.activePresetId = null;
+    try { localStorage.removeItem('last_script_id'); } catch { /* ignore */ }
+    closeDrawer();
+    await loadScripts();
+    await refreshHistory();
+  } catch (e) { toast(e.message, 'err'); }
 }
-document.addEventListener("click", (e) => {
-  // 点击 popover 外部区域时关闭
-  if (state.popoverScriptId && !e.target.closest("#running-popover") && !e.target.closest(".sc-running")) {
-    closeRunningPopover();
-  }
-  const t = e.target.closest(".tab");
-  if (!t) return;
-  switchTab(t.dataset.tab);
-  if (t.dataset.tab === "history") refreshHistory();
-});
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && state.popoverScriptId) closeRunningPopover();
-});
 
-/* ================= 导出 / 导入（版本迁移） ================= */
-
+/* ---------- 导出 / 导入 ---------- */
 async function exportData() {
   try {
-    const data = await api("/api/export");
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const data = await api('/api/export');
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = document.createElement('a');
+    const d = new Date();
+    const p = (n) => String(n).padStart(2, '0');
     a.href = url;
-    a.download = `tool-launcher-export-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `tool-launcher-export-${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
-    toast("已导出 " + data.scripts.length + " 个脚本配置");
-  } catch (e) {
-    toast("导出失败：" + e.message, true);
-  }
+    toast(`已导出 ${data.scripts.length} 个脚本配置`);
+  } catch (e) { toast(e.message, 'err'); }
 }
-
-async function importConfig(file) {
-  try {
-    const text = await file.text();
-    const data = JSON.parse(text);
-    if (!data || !Array.isArray(data.scripts)) throw new Error("不是有效的启动器导出文件");
-    const r = await api("/api/import", { method: "POST", body: { data } });
-    toast(`导入完成：新增 ${r.imported}、更新 ${r.updated}${r.skipped.length ? `、跳过 ${r.skipped.length}` : ""}`);
-    await loadScripts();
-    return true;
-  } catch (e) {
-    toast("导入失败：" + e.message, true);
-    return false;
-  }
-}
-
-/* ================= 事件绑定 ================= */
-
-$("#btn-add").addEventListener("click", openAddModal);
-$("#btn-tag-clear").addEventListener("click", () => {
-  state.selectedTags.clear();
-  renderTagFilter();
-  renderScriptList();
-});
-$("#script-search").addEventListener("input", renderScriptList);
-$("#history-search").addEventListener("input", refreshHistory);
-$("#btn-run").addEventListener("click", run);
-$("#btn-history-scope").addEventListener("click", () => {
-  historyScope = historyScope === "script" ? "all" : "script";
-  $("#btn-history-scope").textContent = historyScope === "script" ? "当前脚本" : "全部";
-  $("#btn-history-scope").classList.toggle("active", historyScope === "all");
-  refreshHistory();
-  savePrefs();
-});
-$("#btn-history-multi").addEventListener("click", () => {
-  if (historyMulti) exitHistoryMulti();
-  else enterHistoryMulti();
-});
-$("#hm-select-all").addEventListener("click", toggleSelectAll);
-$("#hm-delete").addEventListener("click", deleteSelectedHistory);
-$("#btn-clear-history").addEventListener("click", () => {
-  confirmModal({
-    title: "清空全部执行记录",
-    message: "确定清空全部执行记录吗？此操作不可恢复。",
-    confirmText: "清空",
-    onConfirm: async () => {
-      const r = await api("/api/executions/clear", { method: "POST", body: {} });
-      toast("已清空 " + r.deleted + " 条记录");
-      refreshHistory();
-    },
+function importConfig() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', async () => {
+    const file = input.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!data || !Array.isArray(data.scripts)) throw new Error('不是有效的启动器导出文件');
+      const r = await api('/api/import', { method: 'POST', body: { data } });
+      const skip = (r.skipped || []).length;
+      toast(`导入完成：新增 ${r.imported}、更新 ${r.updated}${skip ? `、跳过 ${skip}` : ''}`);
+      await loadScripts();
+    } catch (e) { toast('导入失败：' + e.message, 'err'); }
   });
-});
-$("#btn-usage").addEventListener("click", () => {
-  window.open("/static/usage.html?v=1", "_blank", "noopener");
-});
-// ---------- 局域网访问开关 ----------
-const lanSwitch = $("#btn-lan");
-function applyLanState(lan) {
-  lanSwitch.setAttribute("aria-checked", lan ? "true" : "false");
-  lanSwitch.title = lan ? "已开启：允许局域网访问，点击关闭" : "已关闭：仅本机访问，点击开启";
-}
-async function loadLanState() {
-  try {
-    const r = await fetch("/api/host");
-    const d = await r.json();
-    applyLanState(!!d.lan);
-  } catch (e) { /* 服务未就绪时保持默认 */ }
-}
-lanSwitch.addEventListener("click", async () => {
-  const next = lanSwitch.getAttribute("aria-checked") !== "true";
-  lanSwitch.disabled = true;
-  try {
-    const r = await fetch("/api/host", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lan: next }),
-    });
-    const d = await r.json();
-    toast(next ? "已开启局域网访问，正在重启服务…" : "已关闭局域网访问（仅本机），正在重启服务…");
-    // 轮询等待服务重启完成后整页刷新
-    const t0 = Date.now();
-    (function poll() {
-      fetch("/api/health", { cache: "no-store" })
-        .then((x) => (x.ok ? location.replace(location.pathname + "?t=" + Date.now()) : retry()))
-        .catch(retry);
-      function retry() {
-        if (Date.now() - t0 > 15000) { lanSwitch.disabled = false; toast("服务重启超时，请手动刷新", true); return; }
-        setTimeout(poll, 800);
-      }
-    })();
-  } catch (e) {
-    lanSwitch.disabled = false;
-    toast("切换失败：请检查服务状态", true);
-  }
-});
-loadLanState();
-$("#btn-export").addEventListener("click", exportData);
-$("#btn-import-config").addEventListener("click", () => {
-  const input = document.createElement("input");
-  input.type = "file";
-  input.accept = ".json,application/json";
-  input.onchange = async (e) => {
-    const f = e.target.files[0];
-    if (f) await importConfig(f);
-    input.remove();
-  };
   input.click();
-});
+}
 
-/* ================= uv 检测 ================= */
-
-async function checkUv() {
+/* ---------- 局域网开关 ---------- */
+async function toggleLan() {
+  const el = $('#lan-toggle');
+  if (el.classList.contains('disabled')) return;
+  const next = !el.classList.contains('on');
+  el.classList.add('disabled');
   try {
-    const r = await api("/api/system/uv");
-    state.uvOk = r.ok;
-    if (!r.ok) {
-      state.uvHint = r.install_hint || {};
-      setTimeout(() => {
-        const seen = sessionStorage.getItem("uv_notice");
-        if (!seen) {
-          showUvInstall();
-          sessionStorage.setItem("uv_notice", "1");
-        }
-      }, 600);
-    } else {
-      state.uvHint = null;
-    }
-  } catch {
-    state.uvOk = null;
-  }
-}
-
-/* ================= 三栏拖拽调宽（可伸缩布局） ================= */
-
-const COLS_KEY = "launcher_cols";
-let colWidths = { sidebar: 264, panel: null }; // panel: null = 百分比模式
-
-function loadColWidths() {
-  try {
-    const c = JSON.parse(localStorage.getItem(COLS_KEY) || "{}");
-    if (typeof c.sidebar === "number" && c.sidebar >= 200 && c.sidebar <= 380) colWidths.sidebar = c.sidebar;
-    if (typeof c.panel === "number" && c.panel >= 400 && c.panel <= 700) colWidths.panel = c.panel;
-  } catch {}
-}
-function saveColWidths() {
-  try { localStorage.setItem(COLS_KEY, JSON.stringify(colWidths)); } catch {}
-}
-function applyColWidths() {
-  const sb = $(".sidebar");
-  const pn = $(".panel");
-  if (sb) sb.style.width = colWidths.sidebar + "px";
-  if (pn && colWidths.panel) {
-    pn.style.width = colWidths.panel + "px";
-    pn.style.flex = "0 0 auto";
-  } else if (pn) {
-    pn.style.width = "42%";
-    pn.style.flex = "";
-  }
-}
-
-function setupResize() {
-  loadColWidths();
-  applyColWidths();
-  $$(".resize-handle").forEach((handle) => {
-    handle.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      const target = handle.dataset.target;
-      handle.classList.add("dragging");
-      const startX = e.clientX;
-      const sb = $(".sidebar");
-      const pn = $(".panel");
-      const startSb = sb.getBoundingClientRect().width;
-      const startPn = pn.getBoundingClientRect().width;
-      const move = (ev) => {
-        const dx = ev.clientX - startX;
-        if (target === "sidebar") {
-          const w = Math.min(380, Math.max(200, startSb + dx));
-          sb.style.width = w + "px";
-          colWidths.sidebar = w;
-        } else {
-          const w = Math.min(700, Math.max(400, startPn - dx));
-          pn.style.width = w + "px";
-          pn.style.flex = "0 0 auto";
-          colWidths.panel = w;
-        }
-      };
-      const up = () => {
-        handle.classList.remove("dragging");
-        window.removeEventListener("mousemove", move);
-        window.removeEventListener("mouseup", up);
-        saveColWidths();
-      };
-      window.addEventListener("mousemove", move);
-      window.addEventListener("mouseup", up);
-    });
-  });
-}
-
-/* ================= 初始化 ================= */
-
-async function init() {
-  applyPrefs(); // 恢复上次的 UI 偏好（标签过滤 / 开关等）
-  setupResize(); // 三栏可拖拽调宽
-  moveTabPill(); // 初始化 tab 胶囊位置
-  window.addEventListener("resize", () => moveTabPill());
-  await checkUv();
-  try {
-    await loadScripts();
+    await api('/api/host', { method: 'POST', body: { lan: next } });
+    toast(next ? '已开启局域网访问，服务正在重启…' : '已关闭局域网访问，服务正在重启…', 'warn', 3200);
   } catch (e) {
-    // 服务器可能刚重启（旧页面请求失败）：自动刷新一次，最多 2 次避免死循环
-    const reloadKey = "launcher_auto_reload";
-    const n = Number(sessionStorage.getItem(reloadKey) || 0);
-    if (n < 2) {
-      sessionStorage.setItem(reloadKey, String(n + 1));
-      toast("连接服务失败，正在自动刷新…", true);
-      setTimeout(() => location.reload(), 1000);
+    el.classList.remove('disabled');
+    toast(e.message, 'err');
+    return;
+  }
+  const deadline = Date.now() + 15000;
+  const wait = async () => {
+    if (Date.now() > deadline) {
+      el.classList.remove('disabled');
+      toast('服务重启超时，请手动刷新页面', 'err', 4000);
       return;
     }
-    sessionStorage.removeItem(reloadKey);
-    toast("无法连接服务，请确认已双击 start.command 启动程序", true);
-  }
-  updatePageBadge();
-  refreshHistory(); // 默认展示执行记录（不依赖点击）
-  refreshRunningExecs();
-  // 运行任务数 / 徽章 / popover 实时轮询（独立于定时任务页轮询，常驻）
-  if (!window._runningTimer) window._runningTimer = setInterval(refreshRunningExecs, 3000);
-  const last = localStorage.getItem("last_script_id");
-  if (last && state.scripts.some((s) => String(s.id) === last)) {
-    selectScript(Number(last));
-  }
+    try {
+      const r = await fetch('/api/health', { cache: 'no-store' });
+      if (r.ok) { location.replace(location.pathname + '?t=' + Date.now()); return; }
+    } catch { /* 继续等 */ }
+    setTimeout(wait, 800);
+  };
+  setTimeout(wait, 800);
+}
+async function loadLan() {
+  try {
+    const r = await api('/api/host');
+    $('#lan-toggle').classList.toggle('on', !!r.lan);
+    if (r.current_host === '0.0.0.0') $('#lan-toggle').title = `已监听所有网卡，局域网可用 http://<本机IP>:${r.port}`;
+  } catch { /* 忽略 */ }
 }
 
-// 记住最后选中的脚本
-const origSelect = selectScript;
-selectScript = async function (id) {
-  localStorage.setItem("last_script_id", String(id));
-  return origSelect(id);
-};
+/* ========================= 启动 ========================= */
+
+async function init() {
+  applyPrefs();
+  initDock();
+  initEditables();
+  initCmdStrip();
+  initHistoryView();
+  initHistoryRowEvents();
+  initGridEvents();
+  initTopbar();
+  updateHistoryScopeBtn();
+  await loadLan();
+  checkUv();
+  try {
+    await loadScripts();
+  } catch (e) {
+    toast('加载脚本列表失败：' + e.message, 'err');
+  }
+  refreshHistory();
+  refreshRunning();
+  setInterval(refreshRunning, 3000);
+  setInterval(() => { if (state.view === 'history') refreshHistory(); else updateRunBadges(); }, 6000);
+
+  const last = Number(localStorage.getItem('last_script_id') || 0);
+  // 恢复上次选中的脚本，但不自动弹出抽屉（否则遮罩会挡住整页）
+  if (last && state.scripts.some(s => s.id === last)) await selectScript(last, { keepDrawer: true });
+}
 
 init();

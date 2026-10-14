@@ -2,232 +2,269 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Python 脚本启动器</title>
-<link rel="stylesheet" href="/static/style.css?v=5">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ToolLauncher · 本地脚本启动器</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&family=DM+Sans:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css?v=6">
 </head>
 <body>
+<div class="hero-glow"></div><div class="hero-glow-2"></div>
 
-<div class="offline-banner" id="offline-banner" hidden>
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
+<!-- 断线提示 -->
+<div class="offline" id="offline">
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v5"/><path d="M12 16.5h.01"/></svg>
   <span>与本地服务的连接已断开，页面数据可能已过期。服务恢复后将自动重连。</span>
 </div>
-<header class="topbar">
-  <div class="brand">
-    <a class="brand-logo" href="https://github.com/jibuzixin/py-script-launcher" target="_blank" rel="noopener" title="查看 GitHub 源码仓库">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/><path d="M14 4h6v6"/><path d="M20 4 11 13"/></svg>
-    </a>
-    <span class="brand-name">Python 脚本启动器</span>
-    <span class="badge">v0.0.61</span>
-    <span class="badge page-badge" id="page-badge" title="页面自检：实时统计脚本与执行记录">加载中…</span>
+
+<!-- 顶栏 -->
+<header class="hdr">
+  <div class="brand" id="brand"><span class="logo">Py</span><span class="brand-name">ToolLauncher</span><span class="ver">v2.0</span></div>
+
+  <div class="hdr-search">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+    <input id="search" type="text" placeholder="搜索脚本…" autocomplete="off">
   </div>
-  <div class="topbar-actions">
-    <div class="lan-toggle" title="允许局域网内其他设备访问本工具">
-      <span class="lan-label">局域网</span>
-      <button class="switch" id="btn-lan" role="switch" aria-checked="false" title="允许局域网访问">
-        <span class="knob"></span>
-      </button>
-    </div>
-    <button class="btn ghost doc-glass" id="btn-usage" title="查看使用说明（新标签页打开）">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
-      <span>文档</span>
-    </button>
-    <button class="btn ghost" id="btn-export" title="导出全部脚本信息备份（JSON）">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-      <span>导出备份</span>
-    </button>
-    <button class="btn ghost" id="btn-import-config" title="从 JSON 备份导入脚本信息">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
-      <span>导入备份</span>
-    </button>
-    <button class="btn ghost" id="btn-clear-history" title="清空全部执行记录">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
-      <span>清空历史</span>
-    </button>
-    <button class="btn primary" id="btn-add">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
-      <span>脚本导入</span>
-    </button>
+
+  <div class="spacer"></div>
+
+  <div class="count-badge mono" id="page-badge">—</div>
+
+  <span class="lan-toggle" id="lan-toggle" title="开启后局域网内其他设备也可访问（会重启服务）">
+    <span>局域网</span><span class="track"></span>
+  </span>
+
+  <button class="icon-btn hide-md" id="btn-usage" title="使用文档">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+  </button>
+  <button class="icon-btn hide-md" id="btn-export" title="导出配置备份">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+  </button>
+  <button class="icon-btn hide-md" id="btn-import" title="导入配置备份">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
+  </button>
+
+  <div class="hdr-nav">
+    <button class="nav-btn on" data-view="scripts">脚本</button>
+    <button class="nav-btn" data-view="history">执行记录</button>
+    <button class="nav-btn" data-view="schedules">定时任务 <span class="badge" id="sched-badge" hidden>0</span></button>
   </div>
 </header>
 
-<div class="layout">
+<div class="app">
+  <div class="views">
 
-  <aside class="sidebar">
-    <div class="search-wrap">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-      <input id="script-search" placeholder="搜索脚本…" autocomplete="off">
-    </div>
-    <div class="tag-filter" id="tag-filter" hidden>
-      <div class="tag-filter-head"><span>标签过滤</span><button id="btn-tag-clear" class="tag-clear">清除</button></div>
-      <div class="tag-filter-list" id="tag-filter-list"></div>
-    </div>
-    <div class="scan-info" id="scan-info"></div>
-    <div class="script-list" id="script-list"></div>
-    <div class="sidebar-empty" id="sidebar-empty" hidden>暂无脚本<br>点击右上角「脚本导入」开始</div>
-  </aside>
-
-  <div class="resize-handle" id="resize-sidebar" data-target="sidebar"></div>
-
-  <main class="form-pane" id="form-pane">
-    <div class="form-empty" id="form-empty">从左侧选择一个脚本，或导入新脚本开始</div>
-    <div class="form-content" id="form-content" hidden>
-      <div class="script-head">
-        <div class="script-title">
-          <h2 id="script-name"></h2>
-          <div class="script-desc" id="script-desc" title="点击编辑描述"></div>
-          <div class="script-path" id="script-path" title=""></div>
-          <div class="hd-tags script-tags" id="script-tags"></div>
+    <!-- ============ 脚本 ============ -->
+    <section class="view active view-main" id="view-scripts">
+      <div class="page-head">
+        <div>
+          <div class="kicker">LOCAL · SCRIPT LAUNCHER</div>
+          <h1>脚本启动器</h1>
+          <div class="sub">点击脚本卡片填写参数并运行，输出在底部终端栏查看。</div>
         </div>
-        <div class="script-actions">
-          <button class="btn ghost" id="btn-reload" title="脚本文件更新后重新解析参数">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
-            <span>重新加载</span>
+        <div class="head-ops">
+          <button class="btn btn-ghost" id="btn-scan-dir">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            扫描目录
           </button>
-          <button class="btn ghost" id="btn-delete-script" title="删除该脚本">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
-            <span>删除</span>
-          </button>
-          <button class="btn ghost" id="btn-open-dir">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
-            <span>打开目录</span>
-          </button>
-          <button class="btn ghost" id="btn-copy-path">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            <span>复制路径</span>
+          <button class="btn btn-solid" id="btn-add">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+            导入脚本
           </button>
         </div>
       </div>
 
-      <div class="env-bar" id="env-bar"></div>
-      <div class="preset-bar" id="preset-bar"></div>
-
-      <div class="fields-toolbar">
-        <span class="lbl">参数</span>
-        <label class="sw-row" title="只显示已填写的参数，空值参数隐藏">
-          <span>仅显示已填参数</span>
-          <span class="switch">
-            <input type="checkbox" id="opt-hide-empty">
-            <span class="slider"></span>
-          </span>
-        </label>
+      <div class="toolbar">
+        <div class="seg" id="seg-filter">
+          <button class="on" data-f="all">全部 <span class="cnt" id="c-all">0</span></button>
+          <button data-f="fav">收藏 <span class="cnt" id="c-fav">0</span></button>
+          <button data-f="running">运行中 <span class="cnt" id="c-run">0</span></button>
+          <button data-f="failed">失败 <span class="cnt" id="c-fail">0</span></button>
+        </div>
+        <div class="spacer"></div>
+        <div class="toolbar-note mono" id="uv-note"></div>
       </div>
-      <div class="fields" id="fields"></div>
-    </div>
 
-    <div class="cmd-edit" id="cmd-edit">
-      <button class="cmd-edit-strip" id="cmd-edit-toggle" title="点击编辑运行命令">
-        <svg class="strip-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        <span class="strip-label">运行命令</span>
-        <span class="cmd-edit-preview" id="cmd-edit-preview"></span>
-        <span class="strip-dot" id="cmd-edit-dot" hidden></span>
-        <svg class="strip-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <div class="cmd-edit-pop" id="cmd-edit-pop" hidden>
-        <div class="cmd-edit-pop-head">
-          <span class="cmd-edit-pop-title">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-            编辑运行命令
-          </span>
-          <button class="btn mini ghost" id="cmd-edit-reset" title="恢复自动生成的默认命令">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
-            <span>重置</span>
-          </button>
+      <div class="tag-filter-bar" id="tag-bar"></div>
+      <div class="grid" id="grid"></div>
+    </section>
+
+    <!-- ============ 执行记录 ============ -->
+    <section class="view view-page" id="view-history">
+      <div class="page-head-row">
+        <div>
+          <div class="kicker">HISTORY</div><h1>执行记录</h1>
+          <div class="sub">每次执行自动留存输出，最多保留最后 1000 行。</div>
         </div>
-        <div class="cmd-edit-box">
-          <span class="cmd-edit-prompt">$</span>
-          <textarea class="cmd-edit-input" id="cmd-edit-input" rows="2" spellcheck="false" autocomplete="off"
-            placeholder="自动生成，可手动修改（如加 -m、改路径、PYTHONPATH=…）"></textarea>
-        </div>
-        <div class="cmd-edit-pop-foot">
-          <span class="cmd-edit-tip">改参数仅刷新参数段 · 清空即恢复默认</span>
-          <button class="btn ghost" id="cmd-edit-cancel">取消</button>
-          <button class="btn primary" id="cmd-edit-save">保存</button>
+        <div class="head-ops">
+          <button class="btn btn-ghost" id="btn-history-multi">多选</button>
+          <button class="btn btn-ghost" id="btn-clear-history">清空记录</button>
         </div>
       </div>
-    </div>
 
-    <div class="run-bar">
-      <button class="btn primary big" id="btn-run">
-        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4.5v15l13-7.5z"/></svg>
-        <span>执行</span>
-      </button>
-      <span class="run-state" id="run-state"></span>
-      <button class="btn ghost big" id="btn-parse-cmd" title="粘贴命令行，自动解析参数并回填表单">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        <span>命令行导入</span>
-      </button>
-      <button class="btn ghost big" id="btn-copy-command" title="复制当前参数对应的 uv run 命令">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-        <span>复制命令</span>
-      </button>
-    </div>
-  </main>
-
-  <div class="resize-handle" id="resize-panel" data-target="panel"></div>
-
-  <section class="panel">
-    <div class="panel-tabs">
-      <span class="tab-pill" id="tab-pill"></span>
-      <button class="tab" data-tab="console">控制台</button>
-      <button class="tab active" data-tab="history">执行记录</button>
-      <button class="tab" data-tab="schedules">定时任务</button>
-    </div>
-    <div class="panel-toolbar">
-      <div class="console-opts">
-        <label class="chk"><input type="checkbox" id="opt-autoscroll" checked> 自动滚动</label>
-        <label class="chk"><input type="checkbox" id="opt-mono" checked> 等宽字体</label>
-      </div>
-      <div class="console-actions">
-        <button id="btn-terminate" class="btn mini danger" hidden>终止</button>
-      </div>
-    </div>
-    <div class="panel-body">
-      <div class="console-wrap" id="console-wrap" style="display:none">
-        <div class="console-placeholder" id="console-placeholder">运行脚本后，标准输出将实时显示在这里</div>
-        <div class="console mono" id="console"></div>
-      </div>
-      <div class="history-wrap" id="history-wrap">
-        <div class="history-col">
-          <div class="history-filter">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+      <div class="hist-layout" id="hist-layout">
+        <div class="hd-mask" id="hd-mask" title="点击关闭详情"></div>
+        <div class="hist-list-box" id="hist-list-box">
+          <div class="hist-toolbar">
+            <button class="quick-btn hd-back" id="hist-back" hidden title="返回列表">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              返回
+            </button>
             <input id="history-search" placeholder="筛选：标签 / 脚本名 / 状态…" autocomplete="off">
-            <button class="btn mini ghost" id="btn-history-multi" title="勾选多条记录批量删除">多选</button>
-            <button class="btn mini ghost" id="btn-history-scope" title="切换显示当前脚本 / 全部脚本">全部</button>
+            <button class="quick-btn" id="btn-history-scope">全部</button>
           </div>
-          <div class="history-multi-bar" id="history-multi-bar" hidden>
+          <div class="hist-multi-bar" id="hist-multi-bar">
             <span id="hm-count">已选 0 条</span>
-            <button class="btn mini ghost" id="hm-select-all">全选</button>
-            <button class="btn mini danger" id="hm-delete">删除选中</button>
+            <button class="quick-btn" id="hm-select-all">全选</button>
+            <button class="quick-btn danger" id="hm-delete">删除选中</button>
           </div>
-          <div class="history-list" id="history-list"></div>
+          <div class="hist-rows" id="hist-rows"></div>
         </div>
-        <div class="history-detail" id="history-detail" hidden></div>
+
+        <div class="hist-detail-box" id="hist-detail-box">
+          <div class="hist-detail-head">
+            <button class="quick-btn hd-back" id="detail-back" hidden title="返回列表">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+              返回
+            </button>
+            <span class="script mono" id="hd-script">选择左侧记录查看详情</span>
+            <div class="hd-ops" id="hd-ops"></div>
+          </div>
+          <div class="hd-sub" id="hd-sub"></div>
+          <div class="hd-tags-bar" id="hd-tags-bar"></div>
+          <div class="hist-detail-out" id="hd-out">—</div>
+        </div>
       </div>
-      <div class="schedule-wrap" id="schedule-wrap" style="display:none">
-        <div class="schedule-toolbar">
-          <button class="btn mini primary" id="btn-new-schedule">+ 新建定时任务</button>
-          <span class="schedule-hint">cron 表达式：分 时 日 月 周（如 <code>*/10 * * * *</code> 每 10 分钟）</span>
+    </section>
+
+    <!-- ============ 定时任务 ============ -->
+    <section class="view view-page" id="view-schedules">
+      <div class="page-head-row">
+        <div>
+          <div class="kicker">SCHEDULES</div><h1>定时任务</h1>
+          <div class="sub">cron 表达式：分 时 日 月 周（如 <span class="mono">0 6 * * *</span> 每天 06:00）</div>
         </div>
-        <div class="schedule-list" id="schedule-list"></div>
-        <div class="schedule-detail" id="schedule-detail" hidden></div>
+        <button class="btn btn-solid" id="btn-new-sched">+ 新建定时任务</button>
+      </div>
+      <div class="sched-grid" id="sched-grid"></div>
+    </section>
+  </div>
+
+  <!-- ============ 底部终端 ============ -->
+  <div class="term-dock" id="dock">
+    <div class="dock-resize" id="dock-resize"></div>
+    <div class="term-tabs" id="dock-tabs" title="双击展开 / 收起控制台">
+      <button class="term-tab active" data-tab="welcome"><span class="dot"></span>welcome</button>
+      <div class="term-dock-actions">
+        <label class="dock-check" title="新输出自动滚动到底部"><input type="checkbox" id="opt-autoscroll" checked><span>自动滚动</span></label>
+        <button class="dock-btn" id="dock-terminate" title="终止当前运行" hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+          终止
+        </button>
+        <button class="dock-btn" id="dock-clear" title="清空当前输出">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
+        </button>
+        <button class="dock-btn" id="dock-collapse" title="折叠 / 展开（也可双击标题条）">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M5 12h14"/></svg>
+        </button>
       </div>
     </div>
-    <div class="copy-float" id="copy-float" hidden></div>
-  </section>
-
+    <div class="term-out mono" id="term-out"></div>
+  </div>
 </div>
 
-<!-- 运行任务 popover（轻量浮层，无遮罩） -->
-<div class="running-popover" id="running-popover" hidden></div>
+<!-- ============ 脚本抽屉 ============ -->
+<div class="drawer-mask" id="drawer-mask"></div>
+<aside class="drawer" id="drawer">
+  <div class="drawer-head">
+    <div class="drawer-head-top">
+      <div class="drawer-id">
+        <div class="fname" id="d-name" contenteditable="true" spellcheck="false" title="点击重命名"></div>
+        <div class="drawer-desc" id="d-desc" contenteditable="true" spellcheck="false" title="点击编辑描述"></div>
+        <div class="drawer-path mono" id="d-path"></div>
+        <div class="drawer-tags" id="d-tags"></div>
+      </div>
+      <button class="drawer-close" id="drawer-close" title="关闭">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      </button>
+    </div>
+    <div class="drawer-quick">
+      <button class="quick-btn" id="q-run-status"><span class="st idle"><i></i>就绪</span></button>
+      <button class="quick-btn" id="q-open-dir" title="在文件管理器中打开所在目录">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>目录
+      </button>
+      <button class="quick-btn" id="q-copy-path" title="复制脚本绝对路径">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>路径
+      </button>
+      <button class="quick-btn" id="q-meta" title="编辑名称 / 描述 / 标签 / 依赖">信息</button>
+      <button class="quick-btn" id="q-reload" title="重新解析脚本，刷新参数定义">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>重载
+      </button>
+      <button class="quick-btn danger" id="q-delete" title="从启动器移除（不删除文件）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>移除
+      </button>
+    </div>
+  </div>
 
-<!-- 通用弹窗 -->
-<div class="modal-mask" id="modal" hidden>
-  <div class="modal">
-    <div class="modal-head">
-      <span class="modal-title" id="modal-title"></span>
+  <div class="drawer-body">
+    <div class="env-bar" id="d-env-bar"></div>
+    <div class="deps-row" id="d-deps-row"></div>
+
+    <div class="preset-bar" id="d-preset-bar">
+      <span class="preset-lbl">预设</span>
+      <div class="preset-chips" id="preset-chips"></div>
+      <button class="quick-btn" id="btn-save-preset" title="把当前参数保存为预设">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>保存
+      </button>
+    </div>
+
+    <div class="fields-toolbar">
+      <span class="lbl">参数</span>
+      <label class="mini-toggle" title="只显示已经填了值的参数">
+        <span>仅显示已填</span>
+        <input type="checkbox" id="opt-hide-empty"><span class="track"></span>
+      </label>
+    </div>
+    <div id="d-fields"></div>
+  </div>
+
+  <div class="cmd-strip" id="cmd-strip">
+    <div class="cmd-strip-head" id="cmd-strip-toggle">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      <span class="lbl">运行命令</span>
+      <span class="cmd-dot" id="cmd-dot" hidden title="已手动修改命令"></span>
+      <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+    </div>
+    <div class="cmd-preview mono" id="cmd-preview"></div>
+    <div class="cmd-edit-pop" id="cmd-edit-pop">
+      <textarea id="cmd-input" spellcheck="false" class="mono"></textarea>
+      <div class="cmd-edit-foot">
+        <button class="btn btn-ghost" id="cmd-reset">恢复默认</button>
+        <button class="btn btn-ghost" id="cmd-cancel">取消</button>
+        <button class="btn btn-solid" id="cmd-save">保存命令</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="drawer-foot">
+    <button class="btn btn-ghost icon-only" id="btn-copy-cmd" title="复制运行命令">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2v1"/></svg>
+    </button>
+    <button class="btn btn-ghost" id="btn-parse-cmd" title="粘贴命令行，自动解析并回填参数">命令行导入</button>
+    <button class="btn btn-solid btn-run" id="btn-run">
+      <span id="run-label">▶ 运行</span>
+    </button>
+  </div>
+</aside>
+
+<!-- 通用弹窗（内容由 JS 注入） -->
+<div class="modal-mask" id="modal-mask">
+  <div class="modal" id="modal">
+    <div class="modal-head" id="modal-head">
+      <h3 id="modal-title">标题</h3>
       <button class="modal-close" id="modal-close">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
       </button>
     </div>
     <div class="modal-body" id="modal-body"></div>
@@ -235,6 +272,15 @@
   </div>
 </div>
 
-<script src="/static/app.js?v=5"></script>
+<!-- 运行中任务浮层 -->
+<div class="run-popover" id="run-popover"></div>
+
+<!-- 复制浮标 -->
+<button class="copy-float" id="copy-float" hidden>复制选中 <b id="copy-count">0</b> 行</button>
+
+<!-- toast -->
+<div class="toast-box" id="toast-box"></div>
+
+<script src="/static/app.js?v=6"></script>
 </body>
 </html>
