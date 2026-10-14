@@ -457,6 +457,8 @@ function initDock() {
   const ICON_EXPAND = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>';
   const setDockCollapsed = (collapsed) => {
     dock.classList.toggle('collapsed', !!collapsed);
+    // 抽屉本身通到屏幕底部，只有底部的操作条需要避开控制台；收起时不必留白。
+    document.body.classList.toggle('dock-collapsed', !!collapsed);
     $('#dock-collapse').innerHTML = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
     state.dockCollapsed = !!collapsed;
     syncDockEff();
