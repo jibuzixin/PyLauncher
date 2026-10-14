@@ -228,6 +228,8 @@ const state = {
   uvOk: null,
   venvScanned: null,
   schedPatch: {},
+  autoConsole: true,
+  dockCollapsed: false,
   historyMulti: false,
   selectedHistory: new Set(),
   historyScope: 'all',
@@ -239,6 +241,53 @@ const state = {
   activeTab: 'welcome',
   offlineStreak: 0,
 };
+
+/* ---------- 设置页 ---------- */
+function initSettingsView() {
+  // 运行后自动收起详情 + 展开控制台
+  $('#set-auto-console').addEventListener('change', (e) => {
+    state.autoConsole = e.target.checked;
+    savePrefs();
+    toast(e.target.checked ? '运行后会自动收起详情并展开控制台' : '运行后保持当前界面不变');
+  });
+  // 与控件栏（dock / 抽屉）里的同名开关双向同步
+  $('#set-autoscroll').addEventListener('change', (e) => {
+    $('#opt-autoscroll').checked = e.target.checked;
+    savePrefs();
+  });
+  $('#set-hide-empty').addEventListener('change', (e) => {
+    $('#opt-hide-empty').checked = e.target.checked;
+    applyEmptyFilter();
+    savePrefs();
+  });
+  $('#opt-autoscroll').addEventListener('change', syncSettingsView);
+  $('#opt-hide-empty').addEventListener('change', syncSettingsView);
+  $('#set-export').addEventListener('click', exportData);
+  $('#set-import').addEventListener('click', importConfig);
+  $('#set-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
+  $('#btn-reset-prefs').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: '恢复默认偏好', message: '将重置本机保存的界面偏好（不影响脚本、预设与执行记录）。', okText: '恢复默认' });
+    if (!ok) return;
+    localStorage.removeItem(PREF_KEY);
+    applyPrefs();
+    applyEmptyFilter();
+    syncSettingsView();
+    toast('已恢复默认偏好');
+  });
+  syncSettingsView();
+}
+async function fillSettingsAbout() {
+  const el = $('#settings-about');
+  if (!el) return;
+  try {
+    const [h, uv] = await Promise.all([
+      api('/api/health'),
+      api('/api/system/uv').catch(() => null),
+    ]);
+    if (!h || !h.ok) throw new Error('health');
+    el.textContent = `本地服务运行中（${h.name}） · uv ${uv && uv.ok ? uv.version : '未安装'}`;
+  } catch { el.textContent = '无法读取本地服务信息'; }
+}
 
 /* ---------- 偏好持久化 ---------- */
 const PREF_KEY = 'launcher_prefs';
@@ -252,6 +301,7 @@ function savePrefs() {
       hideEmpty: $('#opt-hide-empty').checked,
       historyScope: state.historyScope,
       autoscroll: $('#opt-autoscroll').checked,
+      autoConsole: state.autoConsole,
     }));
   } catch { /* 隐私模式下忽略 */ }
 }
@@ -259,8 +309,21 @@ function applyPrefs() {
   const p = loadPrefs();
   state.favs = new Set((Array.isArray(p.favs) ? p.favs : []).map(Number));
   state.historyScope = p.historyScope === 'script' ? 'script' : 'all';
+  state.autoConsole = p.autoConsole !== false;
   $('#opt-hide-empty').checked = !!p.hideEmpty;
   $('#opt-autoscroll').checked = p.autoscroll !== false;
+  syncSettingsView();
+}
+
+/** 设置页里的开关与控件栏里的开关是同一份偏好的两个入口，改一个要同步另一个 */
+function syncSettingsView() {
+  const map = [['#set-autoscroll', '#opt-autoscroll'], ['#set-hide-empty', '#opt-hide-empty']];
+  for (const [setEl, srcEl] of map) {
+    const a = $(setEl), b = $(srcEl);
+    if (a && b) a.checked = b.checked;
+  }
+  const ac = $('#set-auto-console');
+  if (ac) ac.checked = state.autoConsole !== false;
 }
 const userCmdKey = (id) => `launcher_usercmd_${id}`;
 
@@ -395,9 +458,16 @@ function initDock() {
   const setDockCollapsed = (collapsed) => {
     dock.classList.toggle('collapsed', !!collapsed);
     $('#dock-collapse').innerHTML = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
+    state.dockCollapsed = !!collapsed;
     syncDockEff();
+    // 高度带 .25s 过渡，此刻读到的仍是过渡起始值；过渡结束后必须再同步一次，
+    // 否则展开/收起后 --dock-eff 会卡在旧高度，抽屉与窄屏详情跟着错位。
+    setTimeout(syncDockEff, 300);
+    if (DEBUG) debugReport('dock:' + (collapsed ? 'collapsed' : 'open'));
   };
   const toggleDock = () => setDockCollapsed(!dock.classList.contains('collapsed'));
+  // 暴露给运行流程用：跑完自动展开控制台
+  state.toggleDock = toggleDock;
   $('#dock-collapse').addEventListener('click', toggleDock);
   // 双击标题条 / 折叠条即可展开或收起，不必去够右边那个小按钮
   dock.addEventListener('dblclick', (e) => {
@@ -520,6 +590,11 @@ function syncDockEff() {
   if (!d) return;
   document.documentElement.style.setProperty('--dock-eff', `${Math.round(d.getBoundingClientRect().height)}px`);
 }
+// 兜底：拖拽与展开/收起的过渡结束时再校准一次实际占位高度
+const dockEl = () => $('#dock');
+if (dockEl()) dockEl().addEventListener('transitionend', (e) => {
+  if (e.propertyName === 'height') syncDockEff();
+});
 
 function setupDockResize() {
   const handle = $('#dock-resize');
@@ -803,6 +878,7 @@ async function selectScript(id, { keepDrawer = false } = {}) {
 function openDrawer() {
   $('#drawer').classList.add('show');
   $('#drawer-mask').classList.add('show');
+  if (DEBUG) setTimeout(() => debugReport('drawer'), 450);
 }
 function closeDrawer() {
   $('#drawer').classList.remove('show');
@@ -1191,6 +1267,21 @@ async function buildCommandText(values) {
     return { command: r.command || '' };
   } catch (e) { return { command: '', error: e.message }; }
 }
+/**
+ * 把「当前表单值」合并进用户手改过的命令里。
+ * 没有手改命令时返回空串（后端会自动生成）；有则返回合并后的整条命令，
+ * 保证用户改过命令后，再改参数运行，命令里的参数段也会跟着更新。
+ */
+async function resolveRunCommand(values) {
+  const saved = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
+  if (!saved) return '';
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}/merge-command`, {
+      method: 'POST', body: { args: values, command: saved },
+    });
+    return (r.merged || saved).trim();
+  } catch { return saved; }
+}
 async function refreshCmd() {
   if (!state.selectedId) return;
   const saved = localStorage.getItem(userCmdKey(state.selectedId));
@@ -1206,6 +1297,8 @@ async function refreshCmd() {
   }
   $('#cmd-input').value = text;
   $('#cmd-preview').textContent = text || '（空）';
+  $('#cmd-inline').textContent = text || '';
+  $('#cmd-inline').title = text || '';
   $('#cmd-dot').hidden = !saved;
 }
 function initCmdStrip() {
@@ -1288,12 +1381,18 @@ async function runScript() {
   if (missing.length) { toast(`缺少必选参数：${missing.join(', ')}`, 'err'); return; }
 
   await saveArgs(values);
-  const custom = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
+  // 用户手改过命令时，先把当前参数合并进命令，避免「改了参数但命令里还是旧参数」
+  const custom = await resolveRunCommand(values);
   const payload = { script_id: state.selectedId, args: values, preset_id: state.activePresetId };
   if (custom) payload.command = custom;
 
   setRunning(true);
   setRunState('启动中…', 'run');
+  // 偏好开启时：收起脚本详情 + 展开控制台，让用户直接看到输出
+  if (state.autoConsole) {
+    closeDrawer();
+    if (state.dockCollapsed && state.toggleDock) state.toggleDock();
+  }
   try {
     const r = await api('/api/execute', { method: 'POST', body: payload });
     state.currentExecId = r.execution_id;
@@ -2360,6 +2459,7 @@ function openModal({ title, body, foot = [], wide = false }) {
   }
   $('#modal').classList.toggle('wide', !!wide);
   $('#modal-mask').classList.add('show');
+  if (DEBUG) debugReport('modal:' + title);
   const onMask = (e) => { if (e.target === $('#modal-mask')) closeModal(); };
   const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
   $('#modal-mask').addEventListener('click', onMask);
@@ -2823,7 +2923,9 @@ function switchView(name) {
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
   if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
+  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); }
   closeRunPopover();
+  if (DEBUG) debugReport('view:' + name);
 }
 
 function initTopbar() {
@@ -2865,6 +2967,7 @@ function initTopbar() {
     toast('命令已复制');
   });
   $('#opt-hide-empty').addEventListener('change', () => { applyEmptyFilter(); savePrefs(); });
+  initSettingsView();
   $('#q-open-dir').addEventListener('click', async () => {
     if (!state.script) return;
     try { await api('/api/utils/open-dir', { method: 'POST', body: { path: state.script.path } }); toast('已打开所在目录'); }
@@ -3028,4 +3131,46 @@ async function init() {
   if (last && state.scripts.some(s => s.id === last)) await selectScript(last, { keepDrawer: true });
 }
 
+/**
+ * 布局自检：URL 带 ?debug=1 时，在切视图 / 展开收起控制台后自动输出关键元素几何，
+ * 便于排查「控制台是否挤压页面」「开关是否错位」「命令条是否只占一行」这类纯视觉问题。
+ * 正常访问不带 debug，控制台保持干净。
+ */
+const DEBUG = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+function debugReport(tag = '') {
+  const box = (sel) => {
+    const el = $(sel);
+    if (!el) return `${sel}=缺失`;
+    const r = el.getBoundingClientRect();
+    return `${sel}=${Math.round(r.width)}x${Math.round(r.height)}@y${Math.round(r.top)}`;
+  };
+  const cs = (sel, prop) => {
+    const el = $(sel);
+    if (!el) return `${sel}.${prop}=缺失`;
+    return `${sel}.${prop}=${getComputedStyle(el)[prop]}`;
+  };
+  console.log(`[debug${tag ? ' ' + tag : ''}]`,
+    box('.views'), box('#hist-layout'), box('#hist-list-box'), box('#hist-detail-box'),
+    box('#dock'), box('#term-out'), box('#cmd-strip'), box('#cmd-inline'),
+    box('#drawer'),
+    '| dockEff=' + getComputedStyle(document.documentElement).getPropertyValue('--dock-eff').trim(),
+    '| drawerBottom=' + ($('#drawer') ? getComputedStyle($('#drawer')).bottom : 'n/a'),
+    '| drawerShow=' + ($('#drawer') ? $('#drawer').classList.contains('show') : 'n/a'),
+    '|', cs('.term-dock', 'position'), cs('.term-dock', 'zIndex'),
+    '| anim=' + ((($('.sched-card') || {}).className) || 'n/a'),
+    '| cursor=' + (($('.sched-card') ? getComputedStyle($('.sched-card')).cursor : 'n/a')),
+    '| scardAnim=' + (($('.scard') ? getComputedStyle($('.scard')).animationFillMode : 'n/a')),
+    '| swTrackW=' + ($('.switch .track') ? Math.round($('.switch .track').getBoundingClientRect().width) : 'n/a'),
+    '| switches=' + ($$('.switch').map((l) => {
+      const t = $('.track', l);
+      const w = t ? Math.round(t.getBoundingClientRect().width) : -1;
+      const h = t ? Math.round(t.getBoundingClientRect().height) : -1;
+      return `${w}x${h}`;
+    }).join(',') || '无'),
+    '| autoConsole=' + state.autoConsole);
+  return true;
+}
+window.__debugReport = debugReport;
+
 init();
+if (DEBUG) setTimeout(() => debugReport('boot'), 700);

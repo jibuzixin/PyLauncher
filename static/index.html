@@ -127,8 +127,26 @@ svg{flex-shrink:0;}
 .view.active{display:block;animation:viewIn .4s var(--ease);}
 @keyframes viewIn{from{opacity:0;transform:translateY(8px);}to{opacity:1;transform:translateY(0);}}
 .view-main,.view-page{padding:24px var(--gutter);}
+/* 控制台改为浮动覆盖层后：可滚动的页面在底部预留 dock 高度，保证能滚到最后一屏。
+   执行记录页是两栏固定布局，不加这段留白 —— 它不因控制台展开而被压缩。 */
+#view-scripts,#view-schedules,#view-settings{padding-bottom:calc(var(--dock-eff) + 20px);}
 .page-head{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:20px;}
 .page-head-row{display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:20px;gap:12px;flex-wrap:wrap;}
+
+/* ---------- 设置页 ---------- */
+.settings-group{background:#fff;border:1px solid var(--line-2);border-radius:var(--r-card);
+  box-shadow:var(--shadow-card);margin-bottom:16px;overflow:hidden;}
+.settings-title{padding:12px 18px;font-size:12px;font-weight:600;color:var(--ink-2);
+  border-bottom:1px solid var(--line);background:var(--bg-sub);}
+.settings-row{display:flex;align-items:center;justify-content:space-between;gap:20px;
+  padding:16px 18px;border-bottom:1px solid var(--line);cursor:pointer;}
+.settings-row:last-child{border-bottom:none;cursor:default;}
+.settings-desc{min-width:0;}
+.settings-desc .t{font-size:13px;font-weight:500;color:var(--ink);}
+.settings-desc .d{font-size:12px;color:var(--ink-4);line-height:1.6;margin-top:4px;}
+.settings-row .switch{flex-shrink:0;}
+.settings-ops{display:flex;gap:8px;flex-shrink:0;}
+.settings-ops .btn{height:30px;font-size:12px;padding:0 14px;}
 .head-ops{display:flex;gap:10px;flex-wrap:wrap;}
 .kicker{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:600;letter-spacing:.12em;
   margin-bottom:8px;background:linear-gradient(90deg,#fe3666,#ff8c21);
@@ -182,7 +200,9 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .scard{position:relative;background:#fff;border-radius:var(--r-card);border:1px solid var(--line-2);
   box-shadow:var(--shadow-card);padding:16px;display:flex;flex-direction:column;gap:10px;
   cursor:pointer;min-height:150px;
-  animation:cardIn .7s var(--ease) both;
+  /* 用 backwards 而非 both：both 会让动画结束后的 transform 一直占位，
+     从而覆盖 :hover 的 transform，导致卡片永远浮不起来 */
+  animation:cardIn .7s var(--ease) backwards;
   transition:transform .5s var(--ease),box-shadow .5s var(--ease),border-color .3s;}
 .scard:nth-child(1){animation-delay:.02s;} .scard:nth-child(2){animation-delay:.06s;}
 .scard:nth-child(3){animation-delay:.10s;} .scard:nth-child(4){animation-delay:.14s;}
@@ -225,10 +245,11 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .empty .empty-act{margin-top:14px;}
 
 /* ---------- 抽屉 ---------- */
-.drawer-mask{position:fixed;inset:var(--hdr-h) 0 0 0;background:rgba(24,30,37,.3);
+/* 控制台浮动后，抽屉与遮罩同步避开它，保证底部运行按钮不被压住 */
+.drawer-mask{position:fixed;inset:var(--hdr-h) 0 var(--dock-eff) 0;background:rgba(24,30,37,.3);
   backdrop-filter:blur(2px);z-index:90;opacity:0;pointer-events:none;transition:opacity var(--t-fast);}
 .drawer-mask.show{opacity:1;pointer-events:auto;}
-.drawer{position:fixed;top:var(--hdr-h);right:0;bottom:0;width:560px;max-width:100vw;
+.drawer{position:fixed;top:var(--hdr-h);right:0;bottom:var(--dock-eff);width:560px;max-width:100vw;
   background:#fff;border-left:1px solid var(--line-2);z-index:95;
   transform:translateX(100%);transition:transform .4s var(--ease);
   display:flex;flex-direction:column;box-shadow:var(--shadow-pop);}
@@ -348,13 +369,19 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
   border-radius:var(--r-sm);cursor:pointer;transition:all var(--t-fast);}
 .cmd-strip:hover{background:var(--bg-sub);}
 .cmd-strip.pop{border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
-.cmd-strip-head{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-3);}
-.cmd-strip-head .lbl{color:var(--ink-2);font-weight:500;}
-.cmd-strip-head .chev{margin-left:auto;transition:transform var(--t-fast);}
+.cmd-strip-head{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--ink-3);min-height:20px;}
+.cmd-strip-head .lbl{color:var(--ink-2);font-weight:500;flex-shrink:0;}
+/* 折叠态：整条只占一行，命令以省略号内联在标题后面 */
+.cmd-inline{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--ink-3);}
+.cmd-strip-head .chev{margin-left:auto;transition:transform var(--t-fast);flex-shrink:0;}
 .cmd-strip.open .chev{transform:rotate(180deg);}
 .cmd-dot{width:6px;height:6px;border-radius:999px;background:var(--brand-6);flex-shrink:0;}
-.cmd-preview{font-size:11px;color:var(--ink-2);margin-top:6px;word-break:break-all;line-height:1.5;
-  max-height:60px;overflow:hidden;}
+/* 完整命令只在展开后出现；折叠时占位的那一行已由 .cmd-inline 承担 */
+.cmd-preview{display:none;font-size:11px;color:var(--ink-2);margin-top:8px;word-break:break-all;
+  white-space:pre-wrap;line-height:1.6;max-height:150px;overflow:auto;
+  background:#fff;border:1px solid var(--line);border-radius:6px;padding:8px 10px;}
+.cmd-strip.open .cmd-preview{display:block;}
 .cmd-edit-pop{margin-top:10px;padding-top:10px;border-top:1px solid var(--line);display:none;}
 .cmd-strip.open .cmd-edit-pop{display:block;}
 .cmd-edit-pop textarea{width:100%;min-height:64px;padding:8px 10px;border:1px solid var(--line-2);
@@ -369,8 +396,12 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .run-state{font-size:12px;color:var(--ink-3);font-family:"JetBrains Mono",monospace;}
 
 /* ---------- 终端 ---------- */
-.term-dock{height:var(--dock-h);border-top:1px solid var(--line-2);background:#fff;
-  display:flex;flex-direction:column;flex-shrink:0;position:relative;
+/* 控制台：浮动覆盖层，固定贴在视口底部，不再挤压任何视图的内容 */
+.term-dock{position:fixed;left:0;right:0;bottom:0;z-index:60;
+  height:var(--dock-h);border-top:1px solid var(--line-2);
+  background:rgba(255,255,255,.94);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  box-shadow:0 -10px 34px -14px rgba(0,0,0,.28);
+  display:flex;flex-direction:column;
   animation:dockIn .4s var(--ease);transition:height .25s var(--ease);}
 @keyframes dockIn{from{transform:translateY(100%);}to{transform:translateY(0);}}
 .term-dock.collapsed{height:36px !important;}
@@ -531,13 +562,14 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .sched-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(380px,1fr));}
 @media(max-width:900px){ .sched-grid{grid-template-columns:1fr;} }
 .sched-card{background:#fff;border:1px solid var(--line-2);border-radius:var(--r-card);padding:18px;
-  box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:12px;
-  animation:cardIn .6s var(--ease) both;
-  transition:transform .4s var(--ease),box-shadow .4s var(--ease);}
+  box-shadow:var(--shadow-card);display:flex;flex-direction:column;gap:12px;cursor:pointer;
+  /* 同 .scard：backwards 才能让动画结束后 :hover 的浮起效果生效 */
+  animation:cardIn .6s var(--ease) backwards;
+  transition:transform .4s var(--ease),box-shadow .4s var(--ease),border-color .3s;}
+.sched-card:hover{transform:translateY(-6px);border-color:var(--ink-4);
+  box-shadow:0 20px 50px -12px rgba(0,0,0,.18),0 6px 16px rgba(0,0,0,.08);}
 /* 数据刷新（轮询 / 运行完成 / 编辑保存）时不再重放入场动画，避免整块闪 */
 .sched-card.no-anim{animation:none;}
-.sched-card:hover{transform:translateY(-6px);
-  box-shadow:0 20px 50px -12px rgba(0,0,0,.18),0 6px 16px rgba(0,0,0,.08);}
 .sched-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .sched-head-left{min-width:0;}
 .sched-title{font-size:13px;font-weight:600;color:var(--ink);word-break:break-all;line-height:1.4;}
@@ -603,6 +635,12 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .modal-foot .btn-left{margin-right:auto;}
 .mfield{margin-bottom:14px;}
 .mfield label{display:block;font-size:12px;font-weight:500;color:var(--ink-2);margin-bottom:5px;}
+/* 上面的 .mfield label 会命中嵌套的开关 label（.switch 权重更低），
+   display:block 会让开关的 .track 变成行内元素、宽度塌陷为 0，
+   表现为只剩一个白圆点压住文字。这里显式改回 flex。 */
+.mfield label.switch{display:inline-flex;align-items:center;gap:10px;margin-bottom:0;
+  font-weight:400;font-size:12px;color:var(--ink-2);cursor:pointer;vertical-align:middle;}
+.mfield label.switch .track{display:block;}
 .mfield label .req{color:var(--danger);}
 .mfield input[type=text],.mfield input[type=number],.mfield select,.mfield textarea{
   width:100%;height:36px;padding:0 12px;border:1px solid var(--line-2);border-radius:8px;
@@ -736,6 +774,7 @@ body.no-select{user-select:none;}
     <button class="nav-btn on" data-view="scripts">脚本</button>
     <button class="nav-btn" data-view="history">执行记录</button>
     <button class="nav-btn" data-view="schedules">定时任务 <span class="badge" id="sched-badge" hidden>0</span></button>
+    <button class="nav-btn" data-view="settings">设置</button>
   </div>
 </header>
 
@@ -836,6 +875,73 @@ body.no-select{user-select:none;}
       </div>
       <div class="sched-grid" id="sched-grid"></div>
     </section>
+
+    <!-- ============ 设置 ============ -->
+    <section class="view view-page" id="view-settings">
+      <div class="page-head-row">
+        <div>
+          <div class="kicker">SETTINGS</div><h1>设置</h1>
+          <div class="sub">偏好保存在本机浏览器中，改动即时生效。</div>
+        </div>
+        <button class="btn btn-ghost" id="btn-reset-prefs" title="恢复默认偏好">恢复默认</button>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">运行行为</div>
+        <label class="settings-row" for="opt-auto-console">
+          <div class="settings-desc">
+            <div class="t">运行后自动收起脚本详情并展开控制台</div>
+            <div class="d">在脚本详情里点击「运行」后，自动关闭抽屉并把底部控制台展开，方便直接看输出。关闭后则保持当前界面不变。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-auto-console"><span class="track"></span></span>
+        </label>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">界面</div>
+        <label class="settings-row" for="set-autoscroll">
+          <div class="settings-desc">
+            <div class="t">控制台自动滚动</div>
+            <div class="d">有新输出时自动滚到底部；手动向上滚动后会自动暂停跟随。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-autoscroll" checked><span class="track"></span></span>
+        </label>
+        <label class="settings-row" for="set-hide-empty">
+          <div class="settings-desc">
+            <div class="t">参数区只显示已填项</div>
+            <div class="d">脚本详情里隐藏没有填值的参数，让表单更紧凑。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-hide-empty"><span class="track"></span></span>
+        </label>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">数据</div>
+        <div class="settings-row">
+          <div class="settings-desc">
+            <div class="t">配置备份</div>
+            <div class="d">导出 / 导入脚本、预设与定时任务配置（不含执行记录与输出）。</div>
+          </div>
+          <div class="settings-ops">
+            <button class="btn btn-ghost" id="set-export">导出</button>
+            <button class="btn btn-ghost" id="set-import">导入</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">关于</div>
+        <div class="settings-row">
+          <div class="settings-desc">
+            <div class="t">ToolLauncher v2 · 本地脚本启动器</div>
+            <div class="d" id="settings-about">后端接口与版本信息加载中…</div>
+          </div>
+          <div class="settings-ops">
+            <button class="btn btn-ghost" id="set-usage">使用文档</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- ============ 底部终端 ============ -->
@@ -920,6 +1026,7 @@ body.no-select{user-select:none;}
     <div class="cmd-strip-head" id="cmd-strip-toggle">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
       <span class="lbl">运行命令</span>
+      <span class="cmd-inline" id="cmd-inline"></span>
       <span class="cmd-dot" id="cmd-dot" hidden title="已手动修改命令"></span>
       <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
@@ -1199,6 +1306,8 @@ const state = {
   uvOk: null,
   venvScanned: null,
   schedPatch: {},
+  autoConsole: true,
+  dockCollapsed: false,
   historyMulti: false,
   selectedHistory: new Set(),
   historyScope: 'all',
@@ -1210,6 +1319,53 @@ const state = {
   activeTab: 'welcome',
   offlineStreak: 0,
 };
+
+/* ---------- 设置页 ---------- */
+function initSettingsView() {
+  // 运行后自动收起详情 + 展开控制台
+  $('#set-auto-console').addEventListener('change', (e) => {
+    state.autoConsole = e.target.checked;
+    savePrefs();
+    toast(e.target.checked ? '运行后会自动收起详情并展开控制台' : '运行后保持当前界面不变');
+  });
+  // 与控件栏（dock / 抽屉）里的同名开关双向同步
+  $('#set-autoscroll').addEventListener('change', (e) => {
+    $('#opt-autoscroll').checked = e.target.checked;
+    savePrefs();
+  });
+  $('#set-hide-empty').addEventListener('change', (e) => {
+    $('#opt-hide-empty').checked = e.target.checked;
+    applyEmptyFilter();
+    savePrefs();
+  });
+  $('#opt-autoscroll').addEventListener('change', syncSettingsView);
+  $('#opt-hide-empty').addEventListener('change', syncSettingsView);
+  $('#set-export').addEventListener('click', exportData);
+  $('#set-import').addEventListener('click', importConfig);
+  $('#set-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
+  $('#btn-reset-prefs').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: '恢复默认偏好', message: '将重置本机保存的界面偏好（不影响脚本、预设与执行记录）。', okText: '恢复默认' });
+    if (!ok) return;
+    localStorage.removeItem(PREF_KEY);
+    applyPrefs();
+    applyEmptyFilter();
+    syncSettingsView();
+    toast('已恢复默认偏好');
+  });
+  syncSettingsView();
+}
+async function fillSettingsAbout() {
+  const el = $('#settings-about');
+  if (!el) return;
+  try {
+    const [h, uv] = await Promise.all([
+      api('/api/health'),
+      api('/api/system/uv').catch(() => null),
+    ]);
+    if (!h || !h.ok) throw new Error('health');
+    el.textContent = `本地服务运行中（${h.name}） · uv ${uv && uv.ok ? uv.version : '未安装'}`;
+  } catch { el.textContent = '无法读取本地服务信息'; }
+}
 
 /* ---------- 偏好持久化 ---------- */
 const PREF_KEY = 'launcher_prefs';
@@ -1223,6 +1379,7 @@ function savePrefs() {
       hideEmpty: $('#opt-hide-empty').checked,
       historyScope: state.historyScope,
       autoscroll: $('#opt-autoscroll').checked,
+      autoConsole: state.autoConsole,
     }));
   } catch { /* 隐私模式下忽略 */ }
 }
@@ -1230,8 +1387,21 @@ function applyPrefs() {
   const p = loadPrefs();
   state.favs = new Set((Array.isArray(p.favs) ? p.favs : []).map(Number));
   state.historyScope = p.historyScope === 'script' ? 'script' : 'all';
+  state.autoConsole = p.autoConsole !== false;
   $('#opt-hide-empty').checked = !!p.hideEmpty;
   $('#opt-autoscroll').checked = p.autoscroll !== false;
+  syncSettingsView();
+}
+
+/** 设置页里的开关与控件栏里的开关是同一份偏好的两个入口，改一个要同步另一个 */
+function syncSettingsView() {
+  const map = [['#set-autoscroll', '#opt-autoscroll'], ['#set-hide-empty', '#opt-hide-empty']];
+  for (const [setEl, srcEl] of map) {
+    const a = $(setEl), b = $(srcEl);
+    if (a && b) a.checked = b.checked;
+  }
+  const ac = $('#set-auto-console');
+  if (ac) ac.checked = state.autoConsole !== false;
 }
 const userCmdKey = (id) => `launcher_usercmd_${id}`;
 
@@ -1366,9 +1536,16 @@ function initDock() {
   const setDockCollapsed = (collapsed) => {
     dock.classList.toggle('collapsed', !!collapsed);
     $('#dock-collapse').innerHTML = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
+    state.dockCollapsed = !!collapsed;
     syncDockEff();
+    // 高度带 .25s 过渡，此刻读到的仍是过渡起始值；过渡结束后必须再同步一次，
+    // 否则展开/收起后 --dock-eff 会卡在旧高度，抽屉与窄屏详情跟着错位。
+    setTimeout(syncDockEff, 300);
+    if (DEBUG) debugReport('dock:' + (collapsed ? 'collapsed' : 'open'));
   };
   const toggleDock = () => setDockCollapsed(!dock.classList.contains('collapsed'));
+  // 暴露给运行流程用：跑完自动展开控制台
+  state.toggleDock = toggleDock;
   $('#dock-collapse').addEventListener('click', toggleDock);
   // 双击标题条 / 折叠条即可展开或收起，不必去够右边那个小按钮
   dock.addEventListener('dblclick', (e) => {
@@ -1491,6 +1668,11 @@ function syncDockEff() {
   if (!d) return;
   document.documentElement.style.setProperty('--dock-eff', `${Math.round(d.getBoundingClientRect().height)}px`);
 }
+// 兜底：拖拽与展开/收起的过渡结束时再校准一次实际占位高度
+const dockEl = () => $('#dock');
+if (dockEl()) dockEl().addEventListener('transitionend', (e) => {
+  if (e.propertyName === 'height') syncDockEff();
+});
 
 function setupDockResize() {
   const handle = $('#dock-resize');
@@ -1774,6 +1956,7 @@ async function selectScript(id, { keepDrawer = false } = {}) {
 function openDrawer() {
   $('#drawer').classList.add('show');
   $('#drawer-mask').classList.add('show');
+  if (DEBUG) setTimeout(() => debugReport('drawer'), 450);
 }
 function closeDrawer() {
   $('#drawer').classList.remove('show');
@@ -2162,6 +2345,21 @@ async function buildCommandText(values) {
     return { command: r.command || '' };
   } catch (e) { return { command: '', error: e.message }; }
 }
+/**
+ * 把「当前表单值」合并进用户手改过的命令里。
+ * 没有手改命令时返回空串（后端会自动生成）；有则返回合并后的整条命令，
+ * 保证用户改过命令后，再改参数运行，命令里的参数段也会跟着更新。
+ */
+async function resolveRunCommand(values) {
+  const saved = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
+  if (!saved) return '';
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}/merge-command`, {
+      method: 'POST', body: { args: values, command: saved },
+    });
+    return (r.merged || saved).trim();
+  } catch { return saved; }
+}
 async function refreshCmd() {
   if (!state.selectedId) return;
   const saved = localStorage.getItem(userCmdKey(state.selectedId));
@@ -2177,6 +2375,8 @@ async function refreshCmd() {
   }
   $('#cmd-input').value = text;
   $('#cmd-preview').textContent = text || '（空）';
+  $('#cmd-inline').textContent = text || '';
+  $('#cmd-inline').title = text || '';
   $('#cmd-dot').hidden = !saved;
 }
 function initCmdStrip() {
@@ -2259,12 +2459,18 @@ async function runScript() {
   if (missing.length) { toast(`缺少必选参数：${missing.join(', ')}`, 'err'); return; }
 
   await saveArgs(values);
-  const custom = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
+  // 用户手改过命令时，先把当前参数合并进命令，避免「改了参数但命令里还是旧参数」
+  const custom = await resolveRunCommand(values);
   const payload = { script_id: state.selectedId, args: values, preset_id: state.activePresetId };
   if (custom) payload.command = custom;
 
   setRunning(true);
   setRunState('启动中…', 'run');
+  // 偏好开启时：收起脚本详情 + 展开控制台，让用户直接看到输出
+  if (state.autoConsole) {
+    closeDrawer();
+    if (state.dockCollapsed && state.toggleDock) state.toggleDock();
+  }
   try {
     const r = await api('/api/execute', { method: 'POST', body: payload });
     state.currentExecId = r.execution_id;
@@ -3331,6 +3537,7 @@ function openModal({ title, body, foot = [], wide = false }) {
   }
   $('#modal').classList.toggle('wide', !!wide);
   $('#modal-mask').classList.add('show');
+  if (DEBUG) debugReport('modal:' + title);
   const onMask = (e) => { if (e.target === $('#modal-mask')) closeModal(); };
   const onKey = (e) => { if (e.key === 'Escape') closeModal(); };
   $('#modal-mask').addEventListener('click', onMask);
@@ -3794,7 +4001,9 @@ function switchView(name) {
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
   if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
+  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); }
   closeRunPopover();
+  if (DEBUG) debugReport('view:' + name);
 }
 
 function initTopbar() {
@@ -3836,6 +4045,7 @@ function initTopbar() {
     toast('命令已复制');
   });
   $('#opt-hide-empty').addEventListener('change', () => { applyEmptyFilter(); savePrefs(); });
+  initSettingsView();
   $('#q-open-dir').addEventListener('click', async () => {
     if (!state.script) return;
     try { await api('/api/utils/open-dir', { method: 'POST', body: { path: state.script.path } }); toast('已打开所在目录'); }
@@ -3999,7 +4209,49 @@ async function init() {
   if (last && state.scripts.some(s => s.id === last)) await selectScript(last, { keepDrawer: true });
 }
 
+/**
+ * 布局自检：URL 带 ?debug=1 时，在切视图 / 展开收起控制台后自动输出关键元素几何，
+ * 便于排查「控制台是否挤压页面」「开关是否错位」「命令条是否只占一行」这类纯视觉问题。
+ * 正常访问不带 debug，控制台保持干净。
+ */
+const DEBUG = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+function debugReport(tag = '') {
+  const box = (sel) => {
+    const el = $(sel);
+    if (!el) return `${sel}=缺失`;
+    const r = el.getBoundingClientRect();
+    return `${sel}=${Math.round(r.width)}x${Math.round(r.height)}@y${Math.round(r.top)}`;
+  };
+  const cs = (sel, prop) => {
+    const el = $(sel);
+    if (!el) return `${sel}.${prop}=缺失`;
+    return `${sel}.${prop}=${getComputedStyle(el)[prop]}`;
+  };
+  console.log(`[debug${tag ? ' ' + tag : ''}]`,
+    box('.views'), box('#hist-layout'), box('#hist-list-box'), box('#hist-detail-box'),
+    box('#dock'), box('#term-out'), box('#cmd-strip'), box('#cmd-inline'),
+    box('#drawer'),
+    '| dockEff=' + getComputedStyle(document.documentElement).getPropertyValue('--dock-eff').trim(),
+    '| drawerBottom=' + ($('#drawer') ? getComputedStyle($('#drawer')).bottom : 'n/a'),
+    '| drawerShow=' + ($('#drawer') ? $('#drawer').classList.contains('show') : 'n/a'),
+    '|', cs('.term-dock', 'position'), cs('.term-dock', 'zIndex'),
+    '| anim=' + ((($('.sched-card') || {}).className) || 'n/a'),
+    '| cursor=' + (($('.sched-card') ? getComputedStyle($('.sched-card')).cursor : 'n/a')),
+    '| scardAnim=' + (($('.scard') ? getComputedStyle($('.scard')).animationFillMode : 'n/a')),
+    '| swTrackW=' + ($('.switch .track') ? Math.round($('.switch .track').getBoundingClientRect().width) : 'n/a'),
+    '| switches=' + ($$('.switch').map((l) => {
+      const t = $('.track', l);
+      const w = t ? Math.round(t.getBoundingClientRect().width) : -1;
+      const h = t ? Math.round(t.getBoundingClientRect().height) : -1;
+      return `${w}x${h}`;
+    }).join(',') || '无'),
+    '| autoConsole=' + state.autoConsole);
+  return true;
+}
+window.__debugReport = debugReport;
+
 init();
+if (DEBUG) setTimeout(() => debugReport('boot'), 700);
 
 </script>
 </body>

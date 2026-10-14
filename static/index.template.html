@@ -49,6 +49,7 @@
     <button class="nav-btn on" data-view="scripts">脚本</button>
     <button class="nav-btn" data-view="history">执行记录</button>
     <button class="nav-btn" data-view="schedules">定时任务 <span class="badge" id="sched-badge" hidden>0</span></button>
+    <button class="nav-btn" data-view="settings">设置</button>
   </div>
 </header>
 
@@ -149,6 +150,73 @@
       </div>
       <div class="sched-grid" id="sched-grid"></div>
     </section>
+
+    <!-- ============ 设置 ============ -->
+    <section class="view view-page" id="view-settings">
+      <div class="page-head-row">
+        <div>
+          <div class="kicker">SETTINGS</div><h1>设置</h1>
+          <div class="sub">偏好保存在本机浏览器中，改动即时生效。</div>
+        </div>
+        <button class="btn btn-ghost" id="btn-reset-prefs" title="恢复默认偏好">恢复默认</button>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">运行行为</div>
+        <label class="settings-row" for="opt-auto-console">
+          <div class="settings-desc">
+            <div class="t">运行后自动收起脚本详情并展开控制台</div>
+            <div class="d">在脚本详情里点击「运行」后，自动关闭抽屉并把底部控制台展开，方便直接看输出。关闭后则保持当前界面不变。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-auto-console"><span class="track"></span></span>
+        </label>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">界面</div>
+        <label class="settings-row" for="set-autoscroll">
+          <div class="settings-desc">
+            <div class="t">控制台自动滚动</div>
+            <div class="d">有新输出时自动滚到底部；手动向上滚动后会自动暂停跟随。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-autoscroll" checked><span class="track"></span></span>
+        </label>
+        <label class="settings-row" for="set-hide-empty">
+          <div class="settings-desc">
+            <div class="t">参数区只显示已填项</div>
+            <div class="d">脚本详情里隐藏没有填值的参数，让表单更紧凑。</div>
+          </div>
+          <span class="switch"><input type="checkbox" id="set-hide-empty"><span class="track"></span></span>
+        </label>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">数据</div>
+        <div class="settings-row">
+          <div class="settings-desc">
+            <div class="t">配置备份</div>
+            <div class="d">导出 / 导入脚本、预设与定时任务配置（不含执行记录与输出）。</div>
+          </div>
+          <div class="settings-ops">
+            <button class="btn btn-ghost" id="set-export">导出</button>
+            <button class="btn btn-ghost" id="set-import">导入</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-title">关于</div>
+        <div class="settings-row">
+          <div class="settings-desc">
+            <div class="t">ToolLauncher v2 · 本地脚本启动器</div>
+            <div class="d" id="settings-about">后端接口与版本信息加载中…</div>
+          </div>
+          <div class="settings-ops">
+            <button class="btn btn-ghost" id="set-usage">使用文档</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- ============ 底部终端 ============ -->
@@ -233,6 +301,7 @@
     <div class="cmd-strip-head" id="cmd-strip-toggle">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
       <span class="lbl">运行命令</span>
+      <span class="cmd-inline" id="cmd-inline"></span>
       <span class="cmd-dot" id="cmd-dot" hidden title="已手动修改命令"></span>
       <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
