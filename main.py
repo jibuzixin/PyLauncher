@@ -90,6 +90,9 @@ class SaveArgsReq(BaseModel):
 class PresetReq(BaseModel):
     name: str
     args: dict
+    # 用户自定义命令的前缀 / 后缀；中间的参数段始终由系统按 args 生成，不存
+    cmd_prefix: Optional[str] = None
+    cmd_suffix: Optional[str] = None
 
 
 class PresetPatchReq(BaseModel):
@@ -1049,10 +1052,12 @@ async def create_preset(script_id: int, req: PresetReq):
         return JSONResponse({"ok": False, "error": "预设名称不能为空"}, status_code=400)
     existing = db.find_preset_by_name(script_id, name)
     if existing:
-        # 同名预设：覆盖其参数
-        p = db.update_preset(existing["id"], req.args)
+        # 同名预设：覆盖其参数与命令补充段
+        p = db.update_preset(existing["id"], req.args,
+                             cmd_prefix=req.cmd_prefix, cmd_suffix=req.cmd_suffix)
         return {"ok": True, "preset": p, "overwritten": True}
-    p = db.add_preset(script_id, name, req.args)
+    p = db.add_preset(script_id, name, req.args,
+                      cmd_prefix=req.cmd_prefix or "", cmd_suffix=req.cmd_suffix or "")
     return {"ok": True, "preset": p, "overwritten": False}
 
 
@@ -1175,7 +1180,20 @@ def merge_command(script_path: str, schema_args: list[dict], values: dict, user_
             continue
     if first is None:
         return None
-    prefix = " ".join(tokens[:first])
+    # 参数段的起点：脚本路径之后。
+    # 只认「第一个已知选项」会把位置参数误留在前缀里，导致旧的位置参数值被保留、
+    # 新值再追加一次（"old subject CHANGED-SUBJECT"）。这里先定位脚本路径 token，
+    # 它之后的全部内容都属于参数段；找不到脚本路径时退回按已知选项定位。
+    start = None
+    base_name = os.path.basename(script_path)
+    for i, tok in enumerate(tokens):
+        bare = tok.strip("'\"")
+        if bare == script_path or bare.endswith("/" + base_name) or bare == base_name:
+            start = i + 1
+            break
+    if start is None:
+        start = first
+    prefix = " ".join(tokens[:start])
     arg_list = build_arg_list(schema_args, values)
     args_text = " ".join(_shq(a) for a in arg_list)
     merged = (prefix + " " + args_text).strip() if args_text else prefix

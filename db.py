@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS presets (
     created_at TEXT NOT NULL,
     pinned INTEGER NOT NULL DEFAULT 0,
     sort_order INTEGER NOT NULL DEFAULT 0,
-    last_used_at TEXT
+    last_used_at TEXT,
+    cmd_prefix TEXT NOT NULL DEFAULT '',
+    cmd_suffix TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS executions (
@@ -141,6 +143,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE presets ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
     if "last_used_at" not in pcols:
         conn.execute("ALTER TABLE presets ADD COLUMN last_used_at TEXT")
+    # presets 表迁移：用户自定义命令的前缀 / 后缀（参数段始终由系统按表单生成，不存）
+    if "cmd_prefix" not in pcols:
+        conn.execute("ALTER TABLE presets ADD COLUMN cmd_prefix TEXT NOT NULL DEFAULT ''")
+    if "cmd_suffix" not in pcols:
+        conn.execute("ALTER TABLE presets ADD COLUMN cmd_suffix TEXT NOT NULL DEFAULT ''")
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
@@ -294,14 +301,15 @@ def save_auto_args(script_id: int, args: dict) -> None:
 
 # ---------- presets ----------
 
-def add_preset(script_id: int, name: str, args: dict) -> dict:
+def add_preset(script_id: int, name: str, args: dict, cmd_prefix: str = "", cmd_suffix: str = "") -> dict:
     with _lock, _conn() as conn:
         max_o = conn.execute(
             "SELECT COALESCE(MAX(sort_order), -1) FROM presets WHERE script_id=?", (script_id,)
         ).fetchone()[0]
         cur = conn.execute(
-            "INSERT INTO presets(script_id, name, args, created_at, sort_order) VALUES(?,?,?,?,?)",
-            (script_id, name, _dumps(args), now_iso(), max_o + 1),
+            "INSERT INTO presets(script_id, name, args, created_at, sort_order, cmd_prefix, cmd_suffix) "
+            "VALUES(?,?,?,?,?,?,?)",
+            (script_id, name, _dumps(args), now_iso(), max_o + 1, cmd_prefix or "", cmd_suffix or ""),
         )
         return dict(conn.execute("SELECT * FROM presets WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -314,12 +322,23 @@ def find_preset_by_name(script_id: int, name: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
-def update_preset(preset_id: int, args: dict) -> dict:
+def update_preset(preset_id: int, args: dict, cmd_prefix: Optional[str] = None,
+                  cmd_suffix: Optional[str] = None) -> dict:
     with _lock, _conn() as conn:
-        conn.execute(
-            "UPDATE presets SET args=? WHERE id=?",
-            (_dumps(args), preset_id),
-        )
+        if cmd_prefix is None and cmd_suffix is None:
+            conn.execute(
+                "UPDATE presets SET args=? WHERE id=?",
+                (_dumps(args), preset_id),
+            )
+        else:
+            # 只更新显式传入的一段，另一段保持原值
+            sets, vals = ["args=?"], [_dumps(args)]
+            if cmd_prefix is not None:
+                sets.append("cmd_prefix=?"); vals.append(cmd_prefix)
+            if cmd_suffix is not None:
+                sets.append("cmd_suffix=?"); vals.append(cmd_suffix)
+            vals.append(preset_id)
+            conn.execute(f"UPDATE presets SET {', '.join(sets)} WHERE id=?", vals)
         return dict(conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone())
 
 
@@ -647,7 +666,8 @@ def export_all() -> dict:
         for row in conn.execute("SELECT * FROM scripts").fetchall():
             s = dict(row)
             presets = [dict(r) for r in conn.execute(
-                "SELECT name, args, pinned, sort_order, last_used_at FROM presets WHERE script_id=?", (s["id"],)
+                "SELECT name, args, pinned, sort_order, last_used_at, cmd_prefix, cmd_suffix "
+                "FROM presets WHERE script_id=?", (s["id"],)
             ).fetchall()]
             scripts.append({
                 "name": s["name"],
@@ -703,12 +723,13 @@ def import_all(data: dict) -> dict:
                     ).fetchone()
                     if not dup:
                         conn.execute(
-                            "INSERT INTO presets(script_id, name, args, created_at, pinned, sort_order, last_used_at) "
-                            "VALUES(?,?,?,?,?,?,?)",
+                            "INSERT INTO presets(script_id, name, args, created_at, pinned, sort_order, last_used_at, cmd_prefix, cmd_suffix) "
+                            "VALUES(?,?,?,?,?,?,?,?,?)",
                             (sid, pname, _dumps(p.get("args") or {}), ts,
                              1 if p.get("pinned") else 0,
                              int(p.get("sort_order") or 0),
-                             p.get("last_used_at") or None),
+                             p.get("last_used_at") or None,
+                             p.get("cmd_prefix") or "", p.get("cmd_suffix") or ""),
                         )
             except Exception as e:  # noqa: BLE001
                 skipped.append({"path": path, "error": str(e)})

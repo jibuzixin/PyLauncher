@@ -38,12 +38,6 @@
   <button class="icon-btn hide-md" id="btn-usage" title="使用文档">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
   </button>
-  <button class="icon-btn hide-md" id="btn-export" title="导出配置备份">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
-  </button>
-  <button class="icon-btn hide-md" id="btn-import" title="导入配置备份">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 8 5-5 5 5"/><path d="M5 21h14"/></svg>
-  </button>
 
   <div class="hdr-nav">
     <button class="nav-btn on" data-view="scripts">脚本</button>
@@ -147,6 +141,11 @@
           <div class="sub">cron 表达式：分 时 日 月 周（如 <span class="mono">0 6 * * *</span> 每天 06:00）</div>
         </div>
         <button class="btn btn-solid" id="btn-new-sched">+ 新建定时任务</button>
+      </div>
+      <div class="sched-toolbar">
+        <input id="sched-search" placeholder="搜索任务名称 / 脚本名 / 预设 / cron…" autocomplete="off">
+        <span class="sched-count mono" id="sched-count"></span>
+        <button class="quick-btn" id="btn-sched-search-clear" hidden title="清空搜索">清空</button>
       </div>
       <div class="sched-grid" id="sched-grid"></div>
     </section>
@@ -305,9 +304,27 @@
       <span class="cmd-dot" id="cmd-dot" hidden title="已手动修改命令"></span>
       <svg class="chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="6 9 12 15 18 9"/></svg>
     </div>
-    <div class="cmd-preview mono" id="cmd-preview"></div>
+    <div class="cmd-parts" id="cmd-parts">
+      <div class="cmd-part">
+        <div class="cmd-part-lbl"><b>前缀</b><span>可改 · 放在命令之前，如环境变量、uv 选项</span></div>
+        <textarea id="cmd-prefix" class="mono" spellcheck="false" rows="2"
+          placeholder="例：MY_ENV=1 CUDA_VISIBLE_DEVICES=0"></textarea>
+      </div>
+      <div class="cmd-part">
+        <div class="cmd-part-lbl"><b>参数段</b><span class="lock" title="由系统按左侧填写的参数自动生成，不可修改">🔒 自动生成</span></div>
+        <textarea id="cmd-args" class="mono" readonly rows="2" tabindex="-1"></textarea>
+      </div>
+      <div class="cmd-part">
+        <div class="cmd-part-lbl"><b>后缀</b><span>可改 · 放在命令之后，如管道、重定向</span></div>
+        <textarea id="cmd-suffix" class="mono" spellcheck="false" rows="2"
+          placeholder="例：| tee run.log"></textarea>
+      </div>
+      <div class="cmd-final">
+        <div class="cmd-final-lbl">即将运行的完整命令</div>
+        <div class="cmd-final-cmd mono" id="cmd-final"></div>
+      </div>
+    </div>
     <div class="cmd-edit-pop" id="cmd-edit-pop">
-      <textarea id="cmd-input" spellcheck="false" class="mono"></textarea>
       <div class="cmd-edit-foot">
         <button class="btn btn-ghost" id="cmd-reset">恢复默认</button>
         <button class="btn btn-ghost" id="cmd-cancel">取消</button>

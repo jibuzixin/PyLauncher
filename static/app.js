@@ -236,6 +236,7 @@ const state = {
   histSig: null,
   schedSig: null,
   schedAnimated: false,
+  schedKw: '',
   historyDetailMode: false,
   tabs: [],
   activeTab: 'welcome',
@@ -325,7 +326,6 @@ function syncSettingsView() {
   const ac = $('#set-auto-console');
   if (ac) ac.checked = state.autoConsole !== false;
 }
-const userCmdKey = (id) => `launcher_usercmd_${id}`;
 
 /* ========================= 1. 控制台与终端 ========================= */
 
@@ -1111,6 +1111,10 @@ async function applyPreset(p) {
   state.activePresetId = p.id;
   fillValues(p.args || {});
   await saveArgs(p.args || {});
+  // 预设同时携带自定义命令的前后缀，套用预设 = 套用「参数 + 命令补充」整套运行预期
+  if (state.selectedId) {
+    saveCmdParts(state.selectedId, { prefix: p.cmd_prefix || '', suffix: p.cmd_suffix || '' });
+  }
   renderPresets();
   refreshCmd();
   toast(`已应用预设「${p.name}」`);
@@ -1258,7 +1262,29 @@ async function saveArgs(values) {
   catch { /* 自动保存失败不打扰用户 */ }
 }
 
-/* ---------- 命令预览 / 编辑 ---------- */
+/* ---------- 命令：三段式（前缀 + 参数段 + 后缀） ----------
+   参数段始终由系统按当前表单值生成，用户只能在前 / 后补充内容（环境变量、
+   管道、重定向等），这样改参数时命令一定会跟着变，不会出现「用户手改的参数
+   留在命令里和表单打架」。                              */
+const cmdPartsKey = (id) => `launcher_cmdparts_${id}`;
+
+/** 读取该脚本保存的命令补充段（没有则两段都为空） */
+function getCmdParts(id) {
+  try {
+    const p = JSON.parse(localStorage.getItem(cmdPartsKey(id)) || '{}');
+    return { prefix: String(p.prefix || '').trim(), suffix: String(p.suffix || '').trim() };
+  } catch { return { prefix: '', suffix: '' }; }
+}
+function saveCmdParts(id, parts) {
+  const p = { prefix: (parts.prefix || '').trim(), suffix: (parts.suffix || '').trim() };
+  if (!p.prefix && !p.suffix) localStorage.removeItem(cmdPartsKey(id));
+  else localStorage.setItem(cmdPartsKey(id), JSON.stringify(p));
+}
+/** 前缀 + 参数段 + 后缀 → 最终整条命令 */
+function joinCommand(autoCmd, parts) {
+  return [parts.prefix, autoCmd, parts.suffix].filter((x) => x && x.trim()).join(' ').trim();
+}
+
 async function buildCommandText(values) {
   if (!state.selectedId) return { command: '' };
   try {
@@ -1267,49 +1293,44 @@ async function buildCommandText(values) {
     return { command: r.command || '' };
   } catch (e) { return { command: '', error: e.message }; }
 }
-/**
- * 把「当前表单值」合并进用户手改过的命令里。
- * 没有手改命令时返回空串（后端会自动生成）；有则返回合并后的整条命令，
- * 保证用户改过命令后，再改参数运行，命令里的参数段也会跟着更新。
- */
-async function resolveRunCommand(values) {
-  const saved = (localStorage.getItem(userCmdKey(state.selectedId)) || '').trim();
-  if (!saved) return '';
-  try {
-    const r = await api(`/api/scripts/${state.selectedId}/merge-command`, {
-      method: 'POST', body: { args: values, command: saved },
-    });
-    return (r.merged || saved).trim();
-  } catch { return saved; }
+
+/** 当前表单值对应的参数段（系统生成，用户不可编辑） */
+async function buildArgsSegment(values) {
+  const { command } = await buildCommandText(values);
+  return command;
 }
+
+/** 即将真正执行的整条命令 */
+async function resolveRunCommand(values) {
+  const { command } = await buildCommandText(values || collectValues());
+  if (!command) return '';
+  return joinCommand(command, getCmdParts(state.selectedId));
+}
+
 async function refreshCmd() {
   if (!state.selectedId) return;
-  const saved = localStorage.getItem(userCmdKey(state.selectedId));
-  const { command } = await buildCommandText();
-  let text = command;
-  if (saved && saved.trim()) {
-    try {
-      const r = await api(`/api/scripts/${state.selectedId}/merge-command`, {
-        method: 'POST', body: { args: collectValues(), command: saved },
-      });
-      text = r.merged || saved;
-    } catch { text = saved; }
+  const parts = getCmdParts(state.selectedId);
+  const autoCmd = await buildArgsSegment();
+  const finalCmd = joinCommand(autoCmd, parts);
+  const prefixEl = $('#cmd-prefix'), suffixEl = $('#cmd-suffix');
+  const argsEl = $('#cmd-args'), finalEl = $('#cmd-final');
+  // 正在输入的框不覆盖光标
+  if (prefixEl && document.activeElement !== prefixEl) prefixEl.value = parts.prefix;
+  if (suffixEl && document.activeElement !== suffixEl) suffixEl.value = parts.suffix;
+  if (argsEl) argsEl.value = autoCmd;
+  if (finalEl) finalEl.textContent = finalCmd || '（命令为空，请检查参数）';
+  const inline = $('#cmd-inline');
+  if (inline) {
+    inline.textContent = finalCmd || '';
+    inline.title = finalCmd || '';
   }
-  $('#cmd-input').value = text;
-  $('#cmd-preview').textContent = text || '（空）';
-  $('#cmd-inline').textContent = text || '';
-  $('#cmd-inline').title = text || '';
-  $('#cmd-dot').hidden = !saved;
+  const dot = $('#cmd-dot');
+  if (dot) dot.hidden = !(parts.prefix || parts.suffix);
 }
+
 function initCmdStrip() {
   const strip = $('#cmd-strip');
-  const pop = $('#cmd-edit-pop');
-  const open = () => {
-    strip.classList.add('open', 'pop');
-    const ta = $('#cmd-input');
-    refreshCmd();
-    setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
-  };
+  const open = () => { strip.classList.add('open', 'pop'); refreshCmd(); };
   const close = () => { strip.classList.remove('open', 'pop'); };
   $('#cmd-strip-toggle').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -1318,28 +1339,38 @@ function initCmdStrip() {
   $('#cmd-strip').addEventListener('click', (e) => {
     if (e.target.closest('.cmd-edit-pop')) e.stopPropagation();
   });
-  $('#cmd-cancel').addEventListener('click', (e) => { e.stopPropagation(); close(); refreshCmd(); });
+  $('#cmd-cancel').addEventListener('click', (e) => {
+    e.stopPropagation(); close(); refreshCmd();
+  });
   $('#cmd-reset').addEventListener('click', async (e) => {
     e.stopPropagation();
-    localStorage.removeItem(userCmdKey(state.selectedId));
+    if (state.selectedId) localStorage.removeItem(cmdPartsKey(state.selectedId));
     close();
     await refreshCmd();
-    toast('已恢复为自动生成的命令');
+    toast('已清除自定义前后缀，命令回到系统生成');
   });
   $('#cmd-save').addEventListener('click', async (e) => {
     e.stopPropagation();
-    const v = $('#cmd-input').value.trim();
-    if (v) localStorage.setItem(userCmdKey(state.selectedId), v);
-    else localStorage.removeItem(userCmdKey(state.selectedId));
+    if (state.selectedId) {
+      saveCmdParts(state.selectedId, {
+        prefix: $('#cmd-prefix').value,
+        suffix: $('#cmd-suffix').value,
+      });
+    }
     close();
     await refreshCmd();
-    toast(v ? '命令已保存，将按此执行' : '已恢复为自动生成的命令');
+    const p = getCmdParts(state.selectedId);
+    toast((p.prefix || p.suffix) ? '前后缀已保存，运行时会用上' : '已恢复为系统生成的命令');
   });
-  const debouncedSave = debounce(() => {
-    const v = $('#cmd-input').value.trim();
-    if (v) localStorage.setItem(userCmdKey(state.selectedId), v);
-  }, 600);
-  $('#cmd-input').addEventListener('input', debouncedSave);
+  // 边输入边更新「即将运行的完整命令」，并自动保存草稿
+  const onInput = debounce(() => {
+    if (state.selectedId) {
+      saveCmdParts(state.selectedId, { prefix: $('#cmd-prefix').value, suffix: $('#cmd-suffix').value });
+    }
+    refreshCmd();
+  }, 400);
+  $('#cmd-prefix').addEventListener('input', onInput);
+  $('#cmd-suffix').addEventListener('input', onInput);
 }
 
 /* ---------- 执行 ---------- */
@@ -1919,6 +1950,20 @@ async function fetchSchedules() {
   return api('/api/schedules');
 }
 
+/** 定时任务页搜索：按 任务名 / 脚本名 / 预设名 / cron / 徽章 文案 过滤 */
+function filterSchedules(list) {
+  // 以搜索框实际值为准，state.schedKw 只作兜底：两者都是关键词，拼在一起会变成「知识知识」而永远搜不到
+  const box = $('#sched-search');
+  const kw = String((box && box.value) || state.schedKw || '').trim().toLowerCase();
+  if (!kw) return list;
+  return list.filter((s) => {
+    const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
+    const badgeTxt = autoDone ? `已完成 ${s.run_count}/${s.max_runs}` : (s.enabled ? '已启用' : '已停用');
+    return [s.name, s.script_name, s.preset_name, s.cron, badgeTxt]
+      .filter(Boolean).some((v) => String(v).toLowerCase().includes(kw));
+  });
+}
+
 async function renderSchedules(silent = false) {
   const wrap = $('#sched-grid');
   if (silent && wrap.contains(document.activeElement)
@@ -1928,7 +1973,8 @@ async function renderSchedules(silent = false) {
   // 乐观补丁（立即运行时的临时状态）
   list = list.map(s => (state.schedPatch[s.id] ? { ...s, ...state.schedPatch[s.id] } : s));
   // 静默轮询：数据没变就整块跳过，否则每 3 秒重绘一次会不停闪烁
-  const sig = signature(list, SCHED_SIG_FIELDS);
+  // （搜索词也算进指纹，否则改了关键词界面不会更新）
+  const sig = signature(list, SCHED_SIG_FIELDS) + '|' + (state.schedKw || '');
   if (silent && sig === state.schedSig) return;
   state.schedSig = sig;
   state.schedules = list;
@@ -1938,9 +1984,20 @@ async function renderSchedules(silent = false) {
   badge.hidden = enabled === 0;
   badge.textContent = enabled;
 
+  const shown = filterSchedules(list);
+  const countEl = $('#sched-count');
+  const clearBtn = $('#btn-sched-search-clear');
+  const kw = (state.schedKw || '').trim();
+  if (countEl) countEl.textContent = kw ? `${shown.length} / ${list.length} 个任务` : `${list.length} 个任务`;
+  if (clearBtn) clearBtn.hidden = !kw;
+
   if (!list.length) {
     wrap.innerHTML = `<div class="empty">还没有定时任务。<div class="empty-act">
       <button class="btn btn-solid" onclick="document.getElementById('btn-new-sched').click()">新建定时任务</button></div></div>`;
+    return;
+  }
+  if (!shown.length) {
+    wrap.innerHTML = `<div class="empty">没有匹配「${escapeHtml(kw)}」的定时任务。</div>`;
     return;
   }
   wrap.innerHTML = '';
@@ -1948,7 +2005,7 @@ async function renderSchedules(silent = false) {
   // 编辑保存 / 删除）都不重播，否则每张卡片都会闪一下。
   const animate = !state.schedAnimated;
   state.schedAnimated = true;
-  for (const s of list) wrap.appendChild(scheduleCard(s, animate));
+  for (const s of shown) wrap.appendChild(scheduleCard(s, animate));
 }
 
 function lastStatusClass(txt) {
@@ -2831,8 +2888,12 @@ function openSavePreset() {
           return;
         }
         const values = collectValues();
+        const cp = getCmdParts(state.selectedId);
         try {
-          const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
+          const r = await api(`/api/scripts/${state.selectedId}/presets`, {
+            method: 'POST',
+            body: { name, args: values, cmd_prefix: cp.prefix, cmd_suffix: cp.suffix },
+          });
           closeModal();
           toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
           await reloadPresets();
@@ -2947,10 +3008,19 @@ function initTopbar() {
 
   $('#btn-add').addEventListener('click', () => openImportModal('file'));
   $('#btn-new-sched').addEventListener('click', () => openScheduleModal(null));
+  $('#sched-search').addEventListener('input', debounce((e) => {
+    state.schedKw = e.target.value;
+    renderSchedules();
+  }, 180));
+  $('#btn-sched-search-clear').addEventListener('click', () => {
+    state.schedKw = '';
+    $('#sched-search').value = '';
+    renderSchedules();
+    $('#sched-search').focus();
+  });
   $('#btn-scan-dir').addEventListener('click', () => openImportModal('scan'));
   $('#btn-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
-  $('#btn-export').addEventListener('click', exportData);
-  $('#btn-import').addEventListener('click', importConfig);
+  // 导入 / 导出只保留在设置页，顶栏不再重复放
   $('#lan-toggle').addEventListener('click', toggleLan);
 
   $('#drawer-close').addEventListener('click', closeDrawer);
