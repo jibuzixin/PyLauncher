@@ -639,11 +639,22 @@ function startTabRename(id) {
 }
 /** 重命名写回服务端：换浏览器、刷新、执行记录里都是同一个名字 */
 async function saveTabName(tab) {
+  if (tab.id == null) return;
+  // 本地缓存同步打标：否则下一次轮询拿到的旧记录会把新名字覆盖回去
+  const stamp = (list) => (list || []).forEach(r => {
+    if (String(r.id) === String(tab.id)) { r.tab_name = tab.name; r.name = tab.name; }
+  });
+  stamp(state.runningExecs); stamp(state.executions);
+  tab.nameSyncedAt = Date.now();
+  if (state.view === 'history') renderHistory();
   try {
     await api(`/api/executions/${tab.id}/tab-name`, { method: 'PUT', body: { name: tab.name } });
+    // 服务端确认后再刷一次执行记录，列表名字立刻跟上
+    await refreshHistory().catch(() => {});
   } catch (e) { toast('重命名未能保存：' + e.message, 'err'); }
 }
 /** 轮询时把别处（另一个浏览器 / 另一个标签页）改过的名字同步过来 */
+const NAME_SYNC_GUARD_MS = 8000;
 function syncTabNames() {
   const recs = new Map();
   state.runningExecs.forEach(x => recs.set(x.id, x));
@@ -652,6 +663,8 @@ function syncTabNames() {
   state.tabs.forEach(tab => {
     const rec = recs.get(tab.id);
     if (!rec) return;
+    // 刚改过名的标签，先不采纳本地缓存里的旧名字，等服务端回读
+    if (Date.now() - (tab.nameSyncedAt || 0) < NAME_SYNC_GUARD_MS) return;
     const name = rec.tab_name || rec.script_name || rec.name;
     if (name && tab.name !== name && state.tabEditing !== tab.id) { tab.name = name; changed = true; }
   });
@@ -1929,7 +1942,7 @@ async function refreshHistory() {
     }
     state.lastStatus = latest;
     // 只有列表内容真的变了才重绘，否则 6 秒轮询会让整页反复闪
-    const sig = signature(list, ['id', 'status', 'finished_at', 'tags', 'script_name']);
+    const sig = signature(list, ['id', 'status', 'finished_at', 'tags', 'script_name', 'tab_name']);
     const changed = sig !== state.histSig;
     state.histSig = sig;
     if (changed) renderHistory();
