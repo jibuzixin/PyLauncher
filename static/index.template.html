@@ -252,6 +252,9 @@
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
           终止
         </button>
+        <button class="dock-btn" id="dock-copy" title="复制当前标签的全部输出">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+        </button>
         <button class="dock-btn" id="dock-clear" title="清空当前输出">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/><path d="M19 6l-1 14H6L5 6"/></svg>
         </button>
@@ -386,6 +389,11 @@
 
 <!-- 复制浮标 -->
 <button class="copy-float" id="copy-float" hidden>复制选中 <b id="copy-count">0</b> 行</button>
+<div class="tab-ctx" id="tab-ctx" hidden>
+  <button data-act="close">关闭该标签</button>
+  <button data-act="others">关闭其它标签</button>
+  <button data-act="all" class="danger">关闭全部标签</button>
+</div>
 
 <!-- toast -->
 <div class="toast-box" id="toast-box"></div>

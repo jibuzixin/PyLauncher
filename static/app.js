@@ -49,19 +49,38 @@ function debounce(fn, ms) {
   return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
 }
 
+/** 复制到剪贴板。Electron / 非安全上下文下 navigator.clipboard 常被拒，
+ *  依次降级：async clipboard → 保留现有选区 execCommand → 隐藏 textarea。 */
 async function copyText(text) {
   const s = String(text == null ? '' : text);
+  // 1) 异步剪贴板 API
   try {
-    await navigator.clipboard.writeText(s);
-  } catch {
-    const ta = document.createElement('textarea');
-    ta.value = s;
-    ta.style.cssText = 'position:fixed;opacity:0;left:-9999px';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch { /* 忽略 */ }
-    ta.remove();
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(s);
+      return true;
+    }
+  } catch { /* 继续降级 */ }
+  // 2) 直接复制当前选区（用户正在拖选时最可靠）
+  const sel = window.getSelection();
+  const hadRange = sel && sel.rangeCount && !sel.isCollapsed;
+  let saved = null;
+  if (hadRange) saved = sel.getRangeAt(0).cloneRange();
+  if (hadRange) {
+    try { if (document.execCommand('copy')) return true; } catch { /* 继续降级 */ }
   }
+  // 3) 隐藏 textarea
+  const ta = document.createElement('textarea');
+  ta.value = s;
+  ta.setAttribute('readonly', '');
+  ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:none;opacity:0';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, ta.value.length);
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch { /* 忽略 */ }
+  ta.remove();
+  if (saved) { sel.removeAllRanges(); sel.addRange(saved); }
+  return ok;
 }
 
 /* ---------- Toast ---------- */
@@ -87,6 +106,61 @@ function toast(msg, type = 'ok', duration = 2600) {
     el.addEventListener('animationend', () => el.remove(), { once: true });
     setTimeout(() => el.remove(), 400);
   }, duration);
+}
+
+/* ---------- 破坏性操作二次确认（胶囊气泡，不弹窗） ----------
+ * 规则：第一次点击 → 按钮变成「再点一次确认」+ 胶囊气泡提醒，2.5 秒内再次点击才真正执行；
+ * 超过 2.5 秒自动恢复，或点击了别的地方立即取消。
+ */
+const DEL_CONFIRM_MS = 2500;
+const delPending = new Map();
+
+function armDelConfirm(btn, { label, hint, onConfirm, pendingText = '再点一次确认' }) {
+  if (!btn) return;
+  const prev = delPending.get(btn);
+  if (prev) {
+    // 第二次点击 → 真正执行
+    clearTimeout(prev.timer);
+    delPending.delete(btn);
+    btn.textContent = prev.originText;
+    btn.classList.remove('pending-del');
+    onConfirm();
+    return;
+  }
+  const originText = btn.dataset.delOrigin || btn.textContent;
+  btn.dataset.delOrigin = originText;
+  const timer = setTimeout(() => cancelDelConfirm(btn), DEL_CONFIRM_MS);
+  delPending.set(btn, { timer, originText });
+  btn.classList.add('pending-del');
+  btn.textContent = pendingText;
+  toast(`⚠ ${hint || `确认${label}？`} · 2.5 秒内再点一次`, 'warn');
+}
+function cancelDelConfirm(btn) {
+  const prev = delPending.get(btn);
+  if (!prev) return;
+  clearTimeout(prev.timer);
+  delPending.delete(btn);
+  btn.textContent = prev.originText;
+  btn.classList.remove('pending-del');
+}
+/** 点击待确认按钮以外的任何地方 → 全部取消 */
+function cancelAllDelConfirm(e) {
+  if (!delPending.size) return;
+  let hit = false;
+  delPending.forEach((_, btn) => { if (e && e.target && btn.contains(e.target)) hit = true; });
+  if (hit) return;
+  Array.from(delPending.keys()).forEach(btn => cancelDelConfirm(btn));
+}
+document.addEventListener('pointerdown', cancelAllDelConfirm, true);
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') cancelAllDelConfirm(); });
+
+/** 一步调用：把任意删除按钮接上胶囊二次确认 */
+function bindDelConfirm(btn, { label, hint, onConfirm }) {
+  if (!btn) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    armDelConfirm(btn, { label, hint, onConfirm });
+  });
 }
 
 /* ---------- 时间格式化 ---------- */
@@ -237,6 +311,9 @@ const state = {
   schedSig: null,
   schedAnimated: false,
   schedKw: '',
+  restoring: {},
+  restoredOnce: null,
+  closedTabs: new Set(),
   historyDetailMode: false,
   tabs: [],
   activeTab: 'welcome',
@@ -276,17 +353,22 @@ function initSettingsView() {
       toast(r.count ? `已保存 ${r.count} 个环境变量，对后续运行生效` : '环境变量已清空');
     } catch (e) { toast(e.message, 'err'); }
   });
-  $('#set-env-clear').addEventListener('click', async () => {
-    const ok = await confirmModal({ title: '清空环境变量', message: '所有脚本将不再注入这批环境变量（如 API_KEY）。', okText: '清空' });
-    if (!ok) return;
-    const box = $('#set-env');
-    box.value = '';
-    try {
-      await api('/api/settings/env', { method: 'PUT', body: { text: '' } });
-      const hint = $('#set-env-hint');
-      if (hint) hint.textContent = '尚未配置';
-      toast('环境变量已清空');
-    } catch (e) { toast(e.message, 'err'); }
+  $('#set-env-clear').addEventListener('click', (e) => {
+    e.stopPropagation();
+    armDelConfirm($('#set-env-clear'), {
+      label: '清空环境变量',
+      hint: '确认清空全部环境变量？脚本将不再注入这批变量（如 API_KEY）',
+      onConfirm: async () => {
+        const box = $('#set-env');
+        box.value = '';
+        try {
+          await api('/api/settings/env', { method: 'PUT', body: { text: '' } });
+          const hint = $('#set-env-hint');
+          if (hint) hint.textContent = '尚未配置';
+          toast('环境变量已清空');
+        } catch (err) { toast(err.message, 'err'); }
+      },
+    });
   });
   $('#set-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
   $('#btn-reset-prefs').addEventListener('click', async () => {
@@ -519,7 +601,23 @@ function initDock() {
     toast('已清空该任务的输出显示（数据库记录不受影响）');
   });
   $('#dock-terminate').addEventListener('click', terminateCurrent);
+  $('#dock-copy').addEventListener('click', () => {
+    const tab = currentTab();
+    if (!tab || tab.id === 'welcome') { toast('当前没有可复制的输出', 'warn'); return; }
+    copyAllOutput($('#term-out'), `「${tab.name}」的全部输出`);
+  });
+  // 每行「复制」按钮（悬停出现）
+  $('#term-out').addEventListener('click', (e) => {
+    const c = e.target.closest('.con-copy');
+    if (!c) return;
+    const line = c.closest('.con-line');
+    const t = line && $('.con-text', line);
+    const text = (t ? t.textContent : (line ? line.textContent : '')).trim();
+    if (!text) { toast('这一行没有内容', 'warn'); return; }
+    copyText(text).then(ok => toast(ok ? '已复制该行' : '复制失败', ok ? 'ok' : 'err'));
+  });
   $('#opt-autoscroll').addEventListener('change', savePrefs);
+  setupTabContextMenu();
   setupDockResize();
   syncDockEff();
   setupCopyFloat();
@@ -531,6 +629,11 @@ function currentTab() {
   return state.tabs.find(t => t.id === state.activeTab) || null;
 }
 function getTab(id) { return state.tabs.find(t => t.id === id) || null; }
+/** data-tab 是字符串，state.tabs 里 id 可能是数字，这里做一次宽松匹配 */
+function findTab(id) {
+  if (id == null) return null;
+  return state.tabs.find(t => String(t.id) === String(id)) || null;
+}
 
 /** 每次执行开一个独立 tab，输出流互不干扰 */
 function newTab(id, name) {
@@ -547,9 +650,52 @@ function newTab(id, name) {
 function closeTab(id) {
   const idx = state.tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
-  state.tabs.splice(idx, 1);
+  const tab = state.tabs[idx];
+  const drop = () => {
+    if (tab.ws) { try { tab.ws.close(); } catch { /* ignore */ } tab.ws = null; }
+    state.closedTabs.add(id);
+    state.tabs.splice(idx, 1);
+    renderTabs();
+    if (state.activeTab === id) switchTab(state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : 'welcome');
+  };
+  if (tab.status === 'running') {
+    // 仍在跑：先发终止信号，进程真的停了才收标签，避免后台留下野进程
+    api(`/api/executions/${id}/terminate`, { method: 'POST' }).catch(() => {});
+    toast('已向该任务发送终止信号，标签稍后自动关闭', 'warn');
+    setTimeout(() => {
+      const t = getTab(id);
+      if (!t) return;
+      if (t.status === 'running') { drop(); toast('已关闭标签（进程可能仍在后台运行）', 'warn'); }
+    }, 900);
+    return;
+  }
+  drop();
+}
+function closeOtherTabs(id) {
+  const others = state.tabs.filter(t => t.id !== id);
+  others.forEach(t => {
+    if (t.ws) { try { t.ws.close(); } catch { /* ignore */ } t.ws = null; }
+    // 用户明确关掉的标签不再被「刷新恢复」自动加回来
+    state.closedTabs.add(t.id);
+    if (t.status === 'running') api(`/api/executions/${t.id}/terminate`, { method: 'POST' }).catch(() => {});
+  });
+  state.tabs = state.tabs.filter(t => t.id === id);
   renderTabs();
-  if (state.activeTab === id) switchTab(state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : 'welcome');
+  switchTab(id);
+  const n = others.filter(t => t.status === 'running').length;
+  toast(n ? `已关闭其它 ${others.length} 个标签，并向 ${n} 个运行中任务发送终止信号` : `已关闭其它 ${others.length} 个标签`);
+}
+function closeAllTabs() {
+  const running = state.tabs.filter(t => t.status === 'running');
+  state.tabs.forEach(t => {
+    if (t.ws) { try { t.ws.close(); } catch { /* ignore */ } t.ws = null; }
+    state.closedTabs.add(t.id);
+    if (t.status === 'running') api(`/api/executions/${t.id}/terminate`, { method: 'POST' }).catch(() => {});
+  });
+  state.tabs = [];
+  renderTabs();
+  switchTab('welcome');
+  toast(running.length ? `已关闭全部标签，并向 ${running.length} 个运行中任务发送终止信号` : '已关闭全部标签');
 }
 function switchTab(id) {
   state.activeTab = id;
@@ -591,9 +737,15 @@ function renderTabs() {
 /* ---------- 控制台拖选复制 ---------- */
 function setupCopyFloat() {
   const float = $('#copy-float');
+  let lastCopied = '';
+  const autoCopy = async (n, text) => {
+    if (!text || text === lastCopied) return;
+    lastCopied = text;
+    const ok = await copyText(text);
+    toast(ok ? `已复制选中 ${n} 行` : '复制失败，可点「复制选中」重试', ok ? 'ok' : 'err');
+  };
   const update = () => {
     const sel = window.getSelection();
-    const termOut = $('#term-out');
     if (!sel || sel.isCollapsed || !sel.rangeCount) { float.hidden = true; return; }
     const range = sel.getRangeAt(0);
     const host = range.commonAncestorContainer.nodeType === 1
@@ -609,15 +761,72 @@ function setupCopyFloat() {
     $('#copy-count').textContent = n;
     float.style.left = Math.max(10, Math.min(rect.left + rect.width / 2 - 60, window.innerWidth - 140)) + 'px';
     float.style.top = Math.max(10, rect.top - 36) + 'px';
+    // 拖选松手即自动复制，无需再点一次
+    autoCopy(n, sel.toString());
   };
   document.addEventListener('mouseup', () => setTimeout(update, 0));
   document.addEventListener('keyup', () => setTimeout(update, 0));
+  // 选区变化的兜底通道：部分环境下 mouseup 早于选区落定，这里再补一次
+  document.addEventListener('selectionchange', debounce(() => update(), 220));
+  float.addEventListener('mousedown', (e) => e.preventDefault());
   float.addEventListener('click', async () => {
     const sel = window.getSelection();
-    if (sel) { await copyText(sel.toString()); toast(`已复制 ${$('#copy-count').textContent} 行`); }
+    const n = $('#copy-count').textContent;
+    if (sel && sel.toString()) {
+      const ok = await copyText(sel.toString());
+      lastCopied = sel.toString();
+      toast(ok ? `已复制 ${n} 行` : '复制失败', ok ? 'ok' : 'err');
+    }
     float.hidden = true;
     window.getSelection().removeAllRanges();
   });
+}
+
+/** 复制整块输出（控制台 / 日志全屏） */
+async function copyAllOutput(container, label) {
+  if (!container) return;
+  const text = $$('.con-line', container).map(l => {
+    const t = $('.con-text', l);
+    return (t ? t.textContent : l.textContent) || '';
+  }).join('\n').replace(/\n+$/, '');
+  if (!text) { toast('当前没有可复制的输出', 'warn'); return; }
+  const ok = await copyText(text);
+  toast(ok ? `已复制${label || '全部输出'}` : '复制失败', ok ? 'ok' : 'err');
+}
+
+/** 控制台标签页右键菜单：关闭该标签 / 关闭其它 / 关闭全部 */
+function setupTabContextMenu() {
+  const menu = $('#tab-ctx');
+  const box = $('#dock-tabs');
+  if (!menu || !box) return;
+  let targetId = null;
+  const hide = () => { menu.hidden = true; targetId = null; };
+  box.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    const b = e.target.closest('.term-tab');
+    if (!b) return;
+    targetId = b.dataset.tab;
+    if (targetId === 'welcome') targetId = state.tabs.length ? state.tabs[0].id : null;
+    const has = targetId != null && findTab(targetId);
+    $$('button', menu).forEach(x => { x.disabled = !has; });
+    if (!has) { hide(); return; }
+    targetId = findTab(targetId).id;
+    menu.hidden = false;
+    const r = menu.getBoundingClientRect();
+    menu.style.left = Math.min(e.clientX, window.innerWidth - r.width - 8) + 'px';
+    menu.style.top = Math.min(e.clientY, window.innerHeight - r.height - 8) + 'px';
+  });
+  menu.addEventListener('click', (e) => {
+    const act = e.target.closest('button');
+    if (!act || act.disabled || !targetId) { hide(); return; }
+    const id = targetId;
+    hide();
+    if (act.dataset.act === 'close') closeTab(id);
+    else if (act.dataset.act === 'others') closeOtherTabs(id);
+    else if (act.dataset.act === 'all') closeAllTabs();
+  });
+  document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target)) hide(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
 }
 
 /* ---------- 底部 dock 高度拖拽 ---------- */
@@ -1506,12 +1715,16 @@ async function terminateCurrent() {
 
 function connectWs(path, { tabId, envInit = false } = {}) {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  if (state.ws) { try { state.ws.close(); } catch { /* ignore */ } }
-  const ws = new WebSocket(`${proto}//${location.host}${path}`);
-  state.ws = ws;
   const tab = getTab(tabId);
+  // 每个 tab 独立持有自己的 socket，多个任务可以同时接收输出
+  const old = tab ? tab.ws : null;
+  if (old) { try { old.close(); } catch { /* ignore */ } }
+  const ws = new WebSocket(`${proto}//${location.host}${path}`);
+  if (tab) tab.ws = ws;
+  state.ws = ws;
   ws.onmessage = (ev) => {
-    if (state.ws !== ws) return;
+    if (tab && tab.ws !== ws) return;
+    if (!tab && state.ws !== ws) return;
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === 'line') {
@@ -1529,8 +1742,11 @@ function connectWs(path, { tabId, envInit = false } = {}) {
       }
       const map = { success: ['ok', '执行成功'], failed: ['err', '执行失败'], terminated: ['err', '已终止'] };
       const [cls, text] = map[r.status] || ['err', '执行结束'];
-      setRunState(`${text} · 退出码 ${r.exit_code == null ? '-' : r.exit_code}`, cls);
-      setRunning(false);
+      // 只有当前抽屉里那次运行才改详情页状态；恢复出来的后台 tab 不打扰用户
+      if (!tab || tab.id === state.currentExecId) {
+        setRunState(`${text} · 退出码 ${r.exit_code == null ? '-' : r.exit_code}`, cls);
+        setRunning(false);
+      }
       refreshRunning();
       refreshHistory();
       state.lastStatus[state.selectedId] = r.status || 'failed';
@@ -1539,7 +1755,10 @@ function connectWs(path, { tabId, envInit = false } = {}) {
     }
   };
   ws.onerror = () => toast('实时连接断开', 'err');
-  ws.onclose = () => { if (state.ws === ws) state.ws = null; };
+  ws.onclose = () => {
+    if (tab && tab.ws === ws) tab.ws = null;
+    if (state.ws === ws) state.ws = null;
+  };
 }
 /* ========================= 4. 执行记录 ========================= */
 
@@ -1662,24 +1881,19 @@ function initHistoryRowEvents() {
 }
 
 function armDeleteRow(row, id) {
-  if (row.classList.contains('confirm-del')) {
-    clearTimeout(row._arm);
-    row.classList.remove('confirm-del');
-    api(`/api/executions/${id}`, { method: 'DELETE' }).then(async () => {
+  const btn = $('.hi-del', row);
+  armDelConfirm(btn, {
+    label: '删除该记录',
+    hint: '确认删除这条执行记录？',
+    pendingText: '确认',
+    onConfirm: () => {
       state.selectedHistory.delete(id);
       if (state.detailId === id) clearHistoryDetail();
-      toast('已删除该记录');
-      await refreshHistory();
-    }).catch(e => toast(e.message, 'err'));
-    return;
-  }
-  row.classList.add('confirm-del');
-  $('.hi-del', row).textContent = '确认删除';
-  row._arm = setTimeout(() => {
-    row.classList.remove('confirm-del');
-    const b = $('.hi-del', row);
-    if (b) b.textContent = '×';
-  }, 3000);
+      api(`/api/executions/${id}`, { method: 'DELETE' })
+        .then(async () => { toast('已删除该记录'); await refreshHistory(); })
+        .catch(e => toast(e.message, 'err'));
+    },
+  });
 }
 
 function clearHistoryDetail() {
@@ -1739,14 +1953,17 @@ async function showHistoryDetail(id) {
       toast('命令已复制');
     });
     mk('↻ 重跑', '用这次参数重新填入表单').addEventListener('click', () => rerunExecution(rec));
-    mk('删除', '删除该记录', 'quick-btn danger').addEventListener('click', async () => {
-      const ok = await confirmModal({ title: '删除执行记录', message: '该记录及其输出将一并删除，无法恢复。', okText: '删除', danger: true });
-      if (!ok) return;
-      if (state.detailWs) { try { state.detailWs.close(); } catch { /* ignore */ } state.detailWs = null; }
-      await api(`/api/executions/${id}`, { method: 'DELETE' });
-      state.detailId = null;
-      toast('已删除');
-      await refreshHistory();
+    const delBtn = mk('删除', '删除该记录', 'quick-btn danger');
+    bindDelConfirm(delBtn, {
+      label: '删除执行记录',
+      hint: '确认删除该记录及其输出？',
+      onConfirm: async () => {
+        if (state.detailWs) { try { state.detailWs.close(); } catch { /* ignore */ } state.detailWs = null; }
+        await api(`/api/executions/${id}`, { method: 'DELETE' });
+        state.detailId = null;
+        toast('已删除该记录');
+        await refreshHistory();
+      },
     });
     const fsBtn = mk('全屏日志', '全屏查看运行日志');
     fsBtn.dataset.opFs = '1';
@@ -1903,30 +2120,38 @@ function initHistoryView() {
     else list.forEach(h => state.selectedHistory.add(h.id));
     renderHistory();
   });
-  $('#hm-delete').addEventListener('click', async () => {
+  $('#hm-delete').addEventListener('click', () => {
     const ids = Array.from(state.selectedHistory);
     if (!ids.length) { toast('请先选择要删除的记录', 'warn'); return; }
-    const ok = await confirmModal({ title: '批量删除', message: `将删除 ${ids.length} 条执行记录（运行中的记录会自动跳过）。`, okText: '删除', danger: true });
-    if (!ok) return;
-    try {
-      const r = await api('/api/executions/delete', { method: 'POST', body: { ids } });
-      const skip = (r.skipped_running || []).length;
-      toast(skip ? `已删除 ${r.deleted} 条，跳过 ${skip} 条运行中记录` : `已删除 ${r.deleted} 条记录`);
-      state.selectedHistory.clear();
-      state.detailId = null;
-      await refreshHistory();
-    } catch (e) { toast(e.message, 'err'); }
+    armDelConfirm($('#hm-delete'), {
+      label: '批量删除',
+      hint: `确认删除选中的 ${ids.length} 条记录？（运行中的会自动跳过）`,
+      onConfirm: async () => {
+        try {
+          const r = await api('/api/executions/delete', { method: 'POST', body: { ids } });
+          const skip = (r.skipped_running || []).length;
+          toast(skip ? `已删除 ${r.deleted} 条，跳过 ${skip} 条运行中记录` : `已删除 ${r.deleted} 条记录`);
+          state.selectedHistory.clear();
+          state.detailId = null;
+          await refreshHistory();
+        } catch (e) { toast(e.message, 'err'); }
+      },
+    });
   });
-  $('#btn-clear-history').addEventListener('click', async () => {
-    const ok = await confirmModal({ title: '清空执行记录', message: `将清空全部 ${state.executions.length} 条执行记录，无法恢复。`, okText: '清空', danger: true });
-    if (!ok) return;
-    try {
-      const r = await api('/api/executions/clear', { method: 'POST', body: {} });
-      state.detailId = null;
-      state.tabs.forEach(t => t.stream.clear());
-      toast(`已清空 ${r.deleted} 条记录`);
-      await refreshHistory();
-    } catch (e) { toast(e.message, 'err'); }
+  $('#btn-clear-history').addEventListener('click', () => {
+    armDelConfirm($('#btn-clear-history'), {
+      label: '清空执行记录',
+      hint: `确认清空全部 ${state.executions.length} 条执行记录？`,
+      onConfirm: async () => {
+        try {
+          const r = await api('/api/executions/clear', { method: 'POST', body: {} });
+          state.detailId = null;
+          state.tabs.forEach(t => t.stream.clear());
+          toast(`已清空 ${r.deleted} 条记录`);
+          await refreshHistory();
+        } catch (e) { toast(e.message, 'err'); }
+      },
+    });
   });
 }
 function updateHistoryScopeBtn() {
@@ -1943,6 +2168,7 @@ async function refreshRunning() {
     const r = await api('/api/executions/running');
     state.runningExecs = r.running || [];
     state.runningExecs.forEach(x => { state.lastStatus[x.script_id] = 'running'; });
+    restoreRunningTabs(state.runningExecs);
     updateRunBadges();
     updateFilterCounts();
     updatePageBadge();
@@ -1951,6 +2177,32 @@ async function refreshRunning() {
     // 定时任务页可见时同步刷新
     if (state.view === 'schedules') renderSchedules(true);
   } catch { markOffline(); }
+}
+
+/** 页面刷新 / 切走再回来后，把服务端仍在跑的进程恢复成控制台标签页，
+ *  回填已经产生的历史输出，并重新接上实时流。 */
+async function restoreRunningTabs(running) {
+  for (const x of running) {
+    const id = x.id;
+    if (getTab(id)) continue;          // 本地已有标签
+    if (state.closedTabs.has(id)) continue;  // 用户刚手动关掉，不再自动复活
+    if (state.restoring[id]) continue;  // 防止轮询期间重复创建
+    state.restoring[id] = true;
+    const tab = newTab(id, x.script_name || x.name || '运行中');
+    tab.name = x.script_name || x.name || '运行中';
+    tab.execId = id;
+    tab.restored = true;
+    setTabStatus(id, 'running');
+    try {
+      const rec = await api(`/api/executions/${id}`);
+      if (rec && rec.output) tab.stream.renderSnapshot(rec.output, rec.output_ts);
+      connectWs(`/ws/run/${id}`, { tabId: id });
+    } catch { /* 输出读不到就只留一个空标签 */ }
+    if (state.restoredOnce !== id) {
+      state.restoredOnce = id;
+      toast(`「${tab.name}」仍在后台运行，已恢复控制台标签`, 'warn');
+    }
+  }
 }
 
 function refreshDetailStatus() {
@@ -2186,15 +2438,19 @@ function scheduleCard(s, animate = true) {
 
   $('[data-op=run]', card).addEventListener('click', (e) => { e.stopPropagation(); runScheduleNow(s); });
   $('[data-op=edit]', card).addEventListener('click', (e) => { e.stopPropagation(); openScheduleModal(s); });
-  $('[data-op=del]', card).addEventListener('click', async (e) => {
+  $('[data-op=del]', card).addEventListener('click', (e) => {
     e.stopPropagation();
-    const ok = await confirmModal({ title: '删除定时任务', message: `「${s.name}」将被删除，已产生的执行记录不受影响。`, okText: '删除', danger: true });
-    if (!ok) return;
-    try {
-      await api(`/api/schedules/${s.id}`, { method: 'DELETE' });
-      toast('已删除');
-      await renderSchedules();
-    } catch (err) { toast(err.message, 'err'); }
+    armDelConfirm($('[data-op=del]', card), {
+      label: '删除定时任务',
+      hint: `确认删除定时任务「${s.name}」？`,
+      onConfirm: async () => {
+        try {
+          await api(`/api/schedules/${s.id}`, { method: 'DELETE' });
+          toast('已删除该定时任务');
+          await renderSchedules();
+        } catch (err) { toast(err.message, 'err'); }
+      },
+    });
   });
   card.addEventListener('click', (e) => {
     if (e.target.closest('button, input, label, .sw')) return;
@@ -2330,13 +2586,17 @@ async function openScheduleModal(sched) {
     wide: true,
     body,
     foot: [
-      ...(isEdit ? [{ label: '删除', danger: true, left: true, onClick: async () => {
-        closeModal();
-        const ok = await confirmModal({ title: '删除定时任务', message: `「${sched.name}」将被删除。`, okText: '删除', danger: true });
-        if (!ok) return;
-        await api(`/api/schedules/${sched.id}`, { method: 'DELETE' });
-        toast('已删除');
-        await renderSchedules();
+      ...(isEdit ? [{ label: '删除', danger: true, left: true, onClick: (b) => {
+        armDelConfirm(b, {
+          label: '删除定时任务',
+          hint: `确认删除定时任务「${sched.name}」？`,
+          onConfirm: async () => {
+            closeModal();
+            await api(`/api/schedules/${sched.id}`, { method: 'DELETE' });
+            toast('已删除该定时任务');
+            await renderSchedules();
+          },
+        });
       } }] : []),
       { label: '取消' },
       { label: isEdit ? '保存' : '创建', primary: true, onClick: submitSchedule },
@@ -3111,7 +3371,7 @@ function initTopbar() {
   });
   $('#q-meta').addEventListener('click', openMetaModal);
   $('#q-reload').addEventListener('click', reloadCurrentScript);
-  $('#q-delete').addEventListener('click', deleteCurrentScript);
+  $('#q-delete').addEventListener('click', (e) => { e.stopPropagation(); deleteCurrentScript(e.currentTarget); });
   // 状态标签只是显示当前状态，不再当作「运行」按钮；
   // 只有正在运行时才可点，点它 = 终止当前实例。
   $('#q-run-status').addEventListener('click', () => {
@@ -3144,23 +3404,24 @@ async function reloadCurrentScript() {
     await selectScript(state.selectedId, { keepDrawer: true });
   } catch (e) { toast(e.message, 'err'); }
 }
-async function deleteCurrentScript() {
+async function deleteCurrentScript(btn) {
   if (!state.script) return;
-  const ok = await confirmModal({
-    title: '移除脚本',
-    message: `确定从启动器移除「${state.script.name}」？\n该脚本的预设与执行记录会一并删除，脚本文件本身不受影响。`,
-    okText: '移除', danger: true,
+  armDelConfirm(btn || $('#q-delete'), {
+    label: '移除脚本',
+    hint: `确认移除「${state.script.name}」？其预设与执行记录会一并删除`,
+    pendingText: '确认移除',
+    onConfirm: async () => {
+      try {
+        await api(`/api/scripts/${state.script.id}`, { method: 'DELETE' });
+        toast('已移除');
+        state.script = null; state.selectedId = null; state.activePresetId = null;
+        try { localStorage.removeItem('last_script_id'); } catch { /* ignore */ }
+        closeDrawer();
+        await loadScripts();
+        await refreshHistory();
+      } catch (e) { toast(e.message, 'err'); }
+    },
   });
-  if (!ok) return;
-  try {
-    await api(`/api/scripts/${state.script.id}`, { method: 'DELETE' });
-    toast('已移除');
-    state.script = null; state.selectedId = null; state.activePresetId = null;
-    try { localStorage.removeItem('last_script_id'); } catch { /* ignore */ }
-    closeDrawer();
-    await loadScripts();
-    await refreshHistory();
-  } catch (e) { toast(e.message, 'err'); }
 }
 
 /* ---------- 导出 / 导入 ---------- */

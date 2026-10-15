@@ -156,6 +156,12 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .btn-ghost{background:#fff;color:var(--ink);border-color:var(--line-2);} .btn-ghost:hover{background:var(--bg-hover);border-color:var(--ink-4);}
 .btn-danger{color:var(--danger);border-color:#ffd0d0;background:#fff;} .btn-danger:hover{background:#fff1f1;}
 .btn:disabled{opacity:.55;pointer-events:none;}
+/* 破坏性操作二次确认：按钮进入「待确认」态 */
+.pending-del{color:var(--warning) !important;border-color:var(--warning) !important;
+  background:#FFF7E8 !important;animation:pendingDelPulse 1s var(--ease) infinite;}
+.quick-btn.pending-del,.quick-btn.pending-del:hover{color:#fff;background:var(--warning);border-color:var(--warning);}
+.term-tab.pending-del{color:var(--warning);}
+@keyframes pendingDelPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,140,33,.28);}50%{box-shadow:0 0 0 5px rgba(255,140,33,0);}}
 .btn.icon-only{width:44px;padding:0;}
 .quick-btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;
   border-radius:6px;border:1px solid var(--line-2);background:#fff;font-size:11px;color:var(--ink-2);
@@ -761,6 +767,17 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .copy-float{position:fixed;z-index:300;background:var(--ink);color:#fff;font-size:11px;
   padding:6px 12px;border-radius:var(--r-pill);box-shadow:var(--shadow-pop);pointer-events:auto;}
 .copy-float:hover{background:#0c1014;}
+
+/* 控制台标签页右键菜单 */
+.tab-ctx{position:fixed;z-index:320;min-width:150px;padding:6px;background:#fff;
+  border:1px solid var(--line);border-radius:var(--r-sm,8px);box-shadow:var(--shadow-pop);animation:viewIn .16s var(--ease);}
+.tab-ctx[hidden]{display:none;}
+.tab-ctx button{display:block;width:100%;text-align:left;padding:8px 12px;border:0;border-radius:6px;
+  background:transparent;font-size:12px;color:var(--ink);cursor:pointer;}
+.tab-ctx button:hover{background:var(--bg-hover);}
+.tab-ctx button.danger{color:var(--danger);}
+.tab-ctx button.danger:hover{background:#fff1f1;}
+.tab-ctx button:disabled{color:var(--ink-4);cursor:default;background:transparent;}
 
 /* ---------- 加载态 ---------- */
 .spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;
