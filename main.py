@@ -31,6 +31,33 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
 
+def _extend_path() -> None:
+    """补全进程 PATH 里的常见可执行目录。
+
+    用 Finder 双击、IDE 任务或 nohup 直接启动时，继承到的 PATH 很窄
+    （通常不含 Homebrew），于是 shutil.which("uv") 找不到 uv —— 界面会误报
+    「未检测到 uv」，生成命令时也会退回到项目 venv。这里在进程内补上，
+    保证无论以哪种方式启动，uv 的检测和实际调用都一致。
+    """
+    extra = [
+        os.path.expanduser("~/.local/bin"),
+        os.path.expanduser("~/.cargo/bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+        "/usr/bin",
+        "/bin",
+    ]
+    cur = os.environ.get("PATH", "")
+    parts = cur.split(os.pathsep) if cur else []
+    for d in extra:
+        if d and os.path.isdir(d) and d not in parts:
+            parts.append(d)
+    os.environ["PATH"] = os.pathsep.join(parts)
+
+
+_extend_path()
+
+
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     # 启动时清理上次进程遗留的 running 记录（服务重启后旧进程已不存在）

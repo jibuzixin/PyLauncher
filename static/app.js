@@ -457,8 +457,6 @@ function initDock() {
   const ICON_EXPAND = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>';
   const setDockCollapsed = (collapsed) => {
     dock.classList.toggle('collapsed', !!collapsed);
-    // 抽屉本身通到屏幕底部，只有底部的操作条需要避开控制台；收起时不必留白。
-    document.body.classList.toggle('dock-collapsed', !!collapsed);
     $('#dock-collapse').innerHTML = collapsed ? ICON_EXPAND : ICON_COLLAPSE;
     state.dockCollapsed = !!collapsed;
     syncDockEff();
@@ -1332,8 +1330,17 @@ async function refreshCmd() {
 
 function initCmdStrip() {
   const strip = $('#cmd-strip');
-  const open = () => { strip.classList.add('open', 'pop'); refreshCmd(); };
-  const close = () => { strip.classList.remove('open', 'pop'); };
+  const headLbl = $('.cmd-strip-head .lbl', strip);
+  const setHead = (open) => { if (headLbl) headLbl.textContent = open ? '编辑运行命令' : '运行命令'; };
+  const open = () => {
+    strip.classList.add('open', 'pop');
+    setHead(true);
+    refreshCmd();
+    // 面板覆盖整个参数区，进来就直接落在可编辑的前缀上
+    const p = $('#cmd-prefix');
+    if (p) setTimeout(() => p.focus(), 60);
+  };
+  const close = () => { strip.classList.remove('open', 'pop'); setHead(false); };
   $('#cmd-strip-toggle').addEventListener('click', (e) => {
     e.stopPropagation();
     if (strip.classList.contains('open')) close(); else open();
@@ -1954,9 +1961,9 @@ async function fetchSchedules() {
 
 /** 定时任务页搜索：按 任务名 / 脚本名 / 预设名 / cron / 徽章 文案 过滤 */
 function filterSchedules(list) {
-  // 以搜索框实际值为准，state.schedKw 只作兜底：两者都是关键词，拼在一起会变成「知识知识」而永远搜不到
-  const box = $('#sched-search');
-  const kw = String((box && box.value) || state.schedKw || '').trim().toLowerCase();
+  // 以顶栏搜索框实际值为准，state.schedKw 只作兜底：两者都是关键词，拼在一起会变成「知识知识」而永远搜不到
+  const box = $('#search');
+  const kw = String((box && state.view === 'schedules' && box.value) || state.schedKw || '').trim().toLowerCase();
   if (!kw) return list;
   return list.filter((s) => {
     const autoDone = !s.enabled && s.max_runs && (s.run_count || 0) >= s.max_runs;
@@ -2977,11 +2984,22 @@ function showUvInstall(hint) {
 
 /* ========================= 7. 顶栏与初始化 ========================= */
 
+/** 顶栏搜索框在「脚本 / 定时任务」两个 tab 间复用：
+ *  同一个输入框、切过去就换 placeholder 和搜索目标，各自记住自己的关键词。 */
+function syncTopSearch() {
+  const box = $('#search');
+  if (!box) return;
+  const isSched = state.view === 'schedules';
+  box.placeholder = isSched ? '搜索定时任务 / 脚本名 / 预设 / cron…' : '搜索脚本…';
+  box.value = isSched ? (state.schedKw || '') : (state.kw || '');
+}
+
 function switchView(name) {
   state.view = name;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   $$('.hdr-nav .nav-btn').forEach(b => b.classList.toggle('on', b.dataset.view === name));
-  $('#search').style.visibility = name === 'scripts' ? '' : 'hidden';
+  $('#search').style.visibility = (name === 'scripts' || name === 'schedules') ? '' : 'hidden';
+  syncTopSearch();
   // 抽屉遮罩会挡住整页，切到别的页面时自动收起
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
@@ -2995,10 +3013,12 @@ function initTopbar() {
   $$('.hdr-nav .nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('#brand').addEventListener('click', () => switchView('scripts'));
 
+  // 同一个搜索框按当前 tab 分派：脚本 tab 搜脚本，定时任务 tab 搜定时任务
   $('#search').addEventListener('input', debounce((e) => {
-    state.kw = e.target.value;
-    renderGrid();
-  }, 140));
+    const v = e.target.value;
+    if (state.view === 'schedules') { state.schedKw = v; renderSchedules(); }
+    else { state.kw = v; renderGrid(); }
+  }, 160));
 
   $('#seg-filter').addEventListener('click', (e) => {
     const b = e.target.closest('button[data-f]');
@@ -3010,15 +3030,13 @@ function initTopbar() {
 
   $('#btn-add').addEventListener('click', () => openImportModal('file'));
   $('#btn-new-sched').addEventListener('click', () => openScheduleModal(null));
-  $('#sched-search').addEventListener('input', debounce((e) => {
-    state.schedKw = e.target.value;
-    renderSchedules();
-  }, 180));
+  // 搜索框在顶栏复用，这里只放计数旁的「清空」
   $('#btn-sched-search-clear').addEventListener('click', () => {
     state.schedKw = '';
-    $('#sched-search').value = '';
+    const box = $('#search');
+    box.value = '';
     renderSchedules();
-    $('#sched-search').focus();
+    box.focus();
   });
   $('#btn-scan-dir').addEventListener('click', () => openImportModal('scan'));
   $('#btn-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
