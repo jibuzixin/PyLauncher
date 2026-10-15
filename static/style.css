@@ -505,7 +505,7 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .hist-layout{display:grid;grid-template-columns:minmax(260px,1fr) minmax(300px,1.1fr);gap:16px;
   flex:1;min-height:0;}
 /* 窄屏：详情改成从右侧滑出的抽屉，列表保留在后面 */
-.hd-back,.hd-mask{display:none;}
+.hd-mask{display:none;}
 @media(max-width:820px){
   .hist-layout{grid-template-columns:1fr;}
   #hist-layout:not(.show-detail) #detail-back{display:none;}
@@ -525,12 +525,6 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .hist-list-box,.hist-detail-box{background:#fff;border:1px solid var(--line-2);border-radius:var(--r-card);
   box-shadow:var(--shadow-card);overflow:hidden;display:flex;flex-direction:column;
   min-height:260px;}
-.hist-toolbar{display:flex;align-items:center;gap:8px;padding:10px 14px;
-  border-bottom:1px solid var(--line);background:var(--bg-sub);flex-shrink:0;}
-.hist-toolbar input{flex:1;height:30px;padding:0 10px;border:1px solid var(--line-2);
-  border-radius:6px;font-size:12px;background:#fff;min-width:0;}
-.hist-toolbar input:focus{outline:none;border-color:var(--brand-6);}
-.hist-toolbar .quick-btn{height:30px;flex-shrink:0;}
 .hist-multi-bar{display:none;align-items:center;gap:10px;padding:8px 14px;background:#FFF7E8;
   border-bottom:1px solid #FFE4BA;font-size:12px;color:#8A5A00;flex-shrink:0;}
 .hist-multi-bar.show{display:flex;}
@@ -778,6 +772,10 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .tab-ctx button.danger{color:var(--danger);}
 .tab-ctx button.danger:hover{background:#fff1f1;}
 .tab-ctx button:disabled{color:var(--ink-4);cursor:default;background:transparent;}
+/* 标签重命名输入框 */
+.tab-rename{width:96px;height:20px;padding:0 6px;border:1px solid var(--brand-6);border-radius:4px;
+  background:#fff;font:inherit;font-size:11px;color:var(--ink);outline:none;}
+.term-tab{padding-right:8px;}
 
 /* ---------- 加载态 ---------- */
 .spin{width:13px;height:13px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;

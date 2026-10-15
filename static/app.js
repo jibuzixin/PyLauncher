@@ -306,7 +306,6 @@ const state = {
   dockCollapsed: false,
   historyMulti: false,
   selectedHistory: new Set(),
-  historyScope: 'all',
   histSig: null,
   schedSig: null,
   schedAnimated: false,
@@ -314,6 +313,7 @@ const state = {
   restoring: {},
   restoredOnce: null,
   closedTabs: new Set(),
+  tabEditing: null,
   historyDetailMode: false,
   tabs: [],
   activeTab: 'welcome',
@@ -419,7 +419,6 @@ function savePrefs() {
     localStorage.setItem(PREF_KEY, JSON.stringify({
       favs: Array.from(state.favs),
       hideEmpty: $('#opt-hide-empty').checked,
-      historyScope: state.historyScope,
       autoscroll: $('#opt-autoscroll').checked,
       autoConsole: state.autoConsole,
     }));
@@ -428,7 +427,6 @@ function savePrefs() {
 function applyPrefs() {
   const p = loadPrefs();
   state.favs = new Set((Array.isArray(p.favs) ? p.favs : []).map(Number));
-  state.historyScope = p.historyScope === 'script' ? 'script' : 'all';
   state.autoConsole = p.autoConsole !== false;
   $('#opt-hide-empty').checked = !!p.hideEmpty;
   $('#opt-autoscroll').checked = p.autoscroll !== false;
@@ -593,14 +591,6 @@ function initDock() {
     if (e.target.closest('.term-dock-actions, .term-out, .dock-resize')) return;
     toggleDock();
   });
-  $('#dock-clear').addEventListener('click', () => {
-    const tab = currentTab();
-    if (!tab) return;
-    if (tab.id === 'welcome') { switchTab('welcome'); return; }
-    tab.stream.clear();
-    toast('已清空该任务的输出显示（数据库记录不受影响）');
-  });
-  $('#dock-terminate').addEventListener('click', terminateCurrent);
   $('#dock-copy').addEventListener('click', () => {
     const tab = currentTab();
     if (!tab || tab.id === 'welcome') { toast('当前没有可复制的输出', 'warn'); return; }
@@ -629,6 +619,12 @@ function currentTab() {
   return state.tabs.find(t => t.id === state.activeTab) || null;
 }
 function getTab(id) { return state.tabs.find(t => t.id === id) || null; }
+/** 进入标签重命名态（右键菜单 / 双击标签名都会调它） */
+function startTabRename(id) {
+  if (!findTab(id)) return;
+  state.tabEditing = id;
+  renderTabs();
+}
 /** data-tab 是字符串，state.tabs 里 id 可能是数字，这里做一次宽松匹配 */
 function findTab(id) {
   if (id == null) return null;
@@ -647,55 +643,51 @@ function newTab(id, name) {
   switchTab(id);
   return tab;
 }
+/** 关闭标签：只关界面，不动进程。输出仍可在「执行记录」里查看。 */
 function closeTab(id) {
   const idx = state.tabs.findIndex(t => t.id === id);
   if (idx < 0) return;
   const tab = state.tabs[idx];
-  const drop = () => {
-    if (tab.ws) { try { tab.ws.close(); } catch { /* ignore */ } tab.ws = null; }
-    state.closedTabs.add(id);
-    state.tabs.splice(idx, 1);
-    renderTabs();
-    if (state.activeTab === id) switchTab(state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : 'welcome');
-  };
-  if (tab.status === 'running') {
-    // 仍在跑：先发终止信号，进程真的停了才收标签，避免后台留下野进程
-    api(`/api/executions/${id}/terminate`, { method: 'POST' }).catch(() => {});
-    toast('已向该任务发送终止信号，标签稍后自动关闭', 'warn');
-    setTimeout(() => {
-      const t = getTab(id);
-      if (!t) return;
-      if (t.status === 'running') { drop(); toast('已关闭标签（进程可能仍在后台运行）', 'warn'); }
-    }, 900);
-    return;
-  }
-  drop();
+  if (tab.ws) { try { tab.ws.close(); } catch { /* ignore */ } tab.ws = null; }
+  state.closedTabs.add(id);
+  state.tabs.splice(idx, 1);
+  renderTabs();
+  if (state.activeTab === id) switchTab(state.tabs.length ? state.tabs[Math.max(0, idx - 1)].id : 'welcome');
+  if (tab.status === 'running') toast(`已关闭「${tab.name}」的标签，程序仍在后台运行，可在执行记录里看输出`, 'warn');
+}
+/** 终止：只停进程，不关标签，输出留在控制台里 */
+function terminateTab(id) {
+  const tab = findTab(id);
+  if (!tab) return;
+  if (tab.status !== 'running') { toast('该任务当前没有在运行', 'warn'); return; }
+  api(`/api/executions/${id}/terminate`, { method: 'POST' })
+    .then(() => toast(`已向「${tab.name}」发送终止信号`, 'warn'))
+    .catch(e => toast(e.message, 'err'));
+  if (tab.ws) { try { tab.ws.close(); } catch { /* ignore */ } tab.ws = null; }
+  setTabStatus(tab.id, 'warn');
 }
 function closeOtherTabs(id) {
   const others = state.tabs.filter(t => t.id !== id);
   others.forEach(t => {
     if (t.ws) { try { t.ws.close(); } catch { /* ignore */ } t.ws = null; }
-    // 用户明确关掉的标签不再被「刷新恢复」自动加回来
     state.closedTabs.add(t.id);
-    if (t.status === 'running') api(`/api/executions/${t.id}/terminate`, { method: 'POST' }).catch(() => {});
   });
   state.tabs = state.tabs.filter(t => t.id === id);
   renderTabs();
   switchTab(id);
   const n = others.filter(t => t.status === 'running').length;
-  toast(n ? `已关闭其它 ${others.length} 个标签，并向 ${n} 个运行中任务发送终止信号` : `已关闭其它 ${others.length} 个标签`);
+  toast(n ? `已关闭其它 ${others.length} 个标签（${n} 个仍在后台运行）` : `已关闭其它 ${others.length} 个标签`);
 }
 function closeAllTabs() {
   const running = state.tabs.filter(t => t.status === 'running');
   state.tabs.forEach(t => {
     if (t.ws) { try { t.ws.close(); } catch { /* ignore */ } t.ws = null; }
     state.closedTabs.add(t.id);
-    if (t.status === 'running') api(`/api/executions/${t.id}/terminate`, { method: 'POST' }).catch(() => {});
   });
   state.tabs = [];
   renderTabs();
   switchTab('welcome');
-  toast(running.length ? `已关闭全部标签，并向 ${running.length} 个运行中任务发送终止信号` : '已关闭全部标签');
+  toast(running.length ? `已关闭全部标签，其中 ${running.length} 个任务仍在后台运行` : '已关闭全部标签');
 }
 function switchTab(id) {
   state.activeTab = id;
@@ -722,12 +714,44 @@ function renderTabs() {
     const b = document.createElement('button');
     b.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
     b.dataset.tab = tab.id;
+    const editing = !isWelcome && state.tabEditing === tab.id;
     b.innerHTML = `<span class="dot"></span><span class="nm">${escapeHtml(tab.name)}</span>`
       + (isWelcome ? '' : '<span class="close" title="关闭">×</span>');
-    b.addEventListener('click', (e) => {
-      if (e.target.classList.contains('close')) { e.stopPropagation(); closeTab(tab.id); return; }
-      switchTab(tab.id);
-    });
+    if (editing) {
+      const nm = $('.nm', b);
+      const inp = document.createElement('input');
+      inp.className = 'tab-rename';
+      inp.value = tab.name;
+      nm.replaceWith(inp);
+      b.addEventListener('click', (e) => e.stopPropagation());
+      const done = (commit) => {
+        state.tabEditing = null;
+        if (commit) {
+          const v = inp.value.trim();
+          if (v && v !== tab.name) { tab.name = v; tab.renamed = true; }
+        }
+        renderTabs();
+        if (commit) toast(`已重命名为「${tab.name}」`);
+      };
+      inp.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') { e.preventDefault(); done(true); }
+        else if (e.key === 'Escape') { e.preventDefault(); done(false); }
+      });
+      inp.addEventListener('blur', () => done(true));
+      setTimeout(() => { inp.focus(); inp.select(); }, 0);
+    } else {
+      b.addEventListener('click', (e) => {
+        if (e.target.classList.contains('close')) { e.stopPropagation(); closeTab(tab.id); return; }
+        switchTab(tab.id);
+      });
+      // 双击标签名直接重命名
+      b.addEventListener('dblclick', (e) => {
+        if (e.target.classList.contains('close')) return;
+        e.stopPropagation();
+        startTabRename(tab.id);
+      });
+    }
     box.insertBefore(b, actions);
   };
   mk(state.welcomeTab, true);
@@ -741,8 +765,10 @@ function setupCopyFloat() {
   const autoCopy = async (n, text) => {
     if (!text || text === lastCopied) return;
     lastCopied = text;
+    // 选中即复制是静默的，避免同时冒出「复制选中 N 行」气泡和「已复制」toast 两处提示；
+    // 只有失败时才提示，避免用户以为没生效。
     const ok = await copyText(text);
-    toast(ok ? `已复制选中 ${n} 行` : '复制失败，可点「复制选中」重试', ok ? 'ok' : 'err');
+    if (!ok) toast('复制失败，可点「复制选中」重试', 'err');
   };
   const update = () => {
     const sel = window.getSelection();
@@ -810,7 +836,10 @@ function setupTabContextMenu() {
     const has = targetId != null && findTab(targetId);
     $$('button', menu).forEach(x => { x.disabled = !has; });
     if (!has) { hide(); return; }
-    targetId = findTab(targetId).id;
+    const t = findTab(targetId);
+    $('[data-act=terminate]', menu).disabled = t.status !== 'running';
+    $('[data-act=rename]', menu).disabled = false;
+    targetId = t.id;
     menu.hidden = false;
     const r = menu.getBoundingClientRect();
     menu.style.left = Math.min(e.clientX, window.innerWidth - r.width - 8) + 'px';
@@ -824,6 +853,8 @@ function setupTabContextMenu() {
     if (act.dataset.act === 'close') closeTab(id);
     else if (act.dataset.act === 'others') closeOtherTabs(id);
     else if (act.dataset.act === 'all') closeAllTabs();
+    else if (act.dataset.act === 'terminate') terminateTab(id);
+    else if (act.dataset.act === 'rename') startTabRename(id);
   });
   document.addEventListener('pointerdown', (e) => { if (!menu.hidden && !menu.contains(e.target)) hide(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hide(); });
@@ -1638,7 +1669,6 @@ function setRunning(running) {
   const btn = $('#btn-run');
   btn.classList.toggle('running', running);
   $('#run-label').textContent = running ? '■ 终止' : '▶ 运行';
-  $('#dock-terminate').hidden = !running;
   $('#q-run-status').className = 'quick-btn status-chip' + (running ? ' clickable' : '');
   const stEl = $('#q-run-status .st') || $('#q-run-status');
   const [cls, label] = running ? ['running', '运行中'] : statusMeta(statusOf(state.selectedId));
@@ -1808,9 +1838,8 @@ function updatePageBadge() {
 }
 
 function historyFiltered() {
-  const kw = ($('#history-search').value || '').trim().toLowerCase();
+  const kw = (state.histKw || '').trim().toLowerCase();
   return state.executions.filter(h => {
-    if (state.historyScope === 'script' && state.selectedId && h.script_id !== state.selectedId) return false;
     if (!kw) return true;
     const tags = jparse(h.tags, []).join(' ');
     const hay = `${h.script_name || ''} ${h.status} ${STATUS_TEXT[h.status] || ''} ${tags} ${h.command || ''}`.toLowerCase();
@@ -1836,12 +1865,11 @@ function renderHistory() {
     row.className = 'hist-row' + (state.detailId === h.id ? ' sel' : '');
     row.dataset.id = h.id;
     const tags = jparse(h.tags, []);
-    const scopeNote = state.historyScope === 'script' && !state.selectedId ? '（未选择脚本，显示全部）' : '';
     row.innerHTML = `
       ${state.historyMulti ? `<input type="checkbox" class="hi-cb" ${state.selectedHistory.has(h.id) ? 'checked' : ''}>` : '<span></span>'}
       <div class="main">
         <div class="script">${escapeHtml(h.script_name || '（脚本已删除）')}</div>
-        <div class="meta">${tags.map(t => `<span class="tg">#${escapeHtml(t)}</span>`).join('')}${escapeHtml(fmtTime(h.started_at, false))} → ${h.finished_at ? escapeHtml(fmtTime(h.finished_at, false)) : '进行中'} · ${escapeHtml(durText(h.started_at, h.finished_at))}${scopeNote}</div>
+        <div class="meta">${tags.map(t => `<span class="tg">#${escapeHtml(t)}</span>`).join('')}${escapeHtml(fmtTime(h.started_at, false))} → ${h.finished_at ? escapeHtml(fmtTime(h.finished_at, false)) : '进行中'} · ${escapeHtml(durText(h.started_at, h.finished_at))}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
         <span class="status-pill ${escapeHtml(h.status)}">${escapeHtml(STATUS_TEXT[h.status] || h.status)}</span>
@@ -2090,21 +2118,12 @@ async function rerunExecution(rec) {
 
 /* ---------- 历史工具栏 ---------- */
 function initHistoryView() {
-  const search = debounce(() => renderHistory(), 220);
-  $('#history-search').addEventListener('input', search);
-  $('#btn-history-scope').addEventListener('click', () => {
-    state.historyScope = state.historyScope === 'all' ? 'script' : 'all';
-    updateHistoryScopeBtn();
-    savePrefs();
-    renderHistory();
-  });
   $('#btn-history-multi').addEventListener('click', () => {
     state.historyMulti = !state.historyMulti;
     if (!state.historyMulti) state.selectedHistory.clear();
     if (state.historyMulti) setDetailMode(false);
     renderHistory();
   });
-  $('#hist-back').addEventListener('click', () => setDetailMode(false));
   $('#detail-back').addEventListener('click', () => { clearHistoryDetail(); setDetailMode(false); });
   // 窄屏详情是右侧抽屉：点遮罩或按 Esc 都能退回列表
   $('#hd-mask').addEventListener('click', () => clearHistoryDetail());
@@ -2154,13 +2173,6 @@ function initHistoryView() {
     });
   });
 }
-function updateHistoryScopeBtn() {
-  const b = $('#btn-history-scope');
-  b.textContent = state.historyScope === 'all' ? '全部' : '当前脚本';
-  b.classList.toggle('active', state.historyScope === 'script');
-  b.title = state.historyScope === 'all' ? '显示全部脚本的记录' : '只显示当前选中脚本的记录';
-}
-
 /* ========================= 轮询与连接状态 ========================= */
 
 async function refreshRunning() {
@@ -3290,16 +3302,20 @@ function showUvInstall(hint) {
 function syncTopSearch() {
   const box = $('#search');
   if (!box) return;
-  const isSched = state.view === 'schedules';
-  box.placeholder = isSched ? '搜索定时任务 / 脚本名 / 预设 / cron…' : '搜索脚本…';
-  box.value = isSched ? (state.schedKw || '') : (state.kw || '');
+  const map = {
+    schedules: ['搜索定时任务 / 脚本名 / 预设 / cron…', state.schedKw],
+    history: ['搜索执行记录：脚本名 / 状态 / 标签…', state.histKw],
+  };
+  const [ph, kw] = map[state.view] || ['搜索脚本…', state.kw];
+  box.placeholder = ph;
+  box.value = kw || '';
 }
 
 function switchView(name) {
   state.view = name;
   $$('.view').forEach(v => v.classList.toggle('active', v.id === `view-${name}`));
   $$('.hdr-nav .nav-btn').forEach(b => b.classList.toggle('on', b.dataset.view === name));
-  $('#search').style.visibility = (name === 'scripts' || name === 'schedules') ? '' : 'hidden';
+  $('#search').style.visibility = (name === 'scripts' || name === 'schedules' || name === 'history') ? '' : 'hidden';
   syncTopSearch();
   // 抽屉遮罩会挡住整页，切到别的页面时自动收起
   if (name !== 'scripts') closeDrawer();
@@ -3314,10 +3330,11 @@ function initTopbar() {
   $$('.hdr-nav .nav-btn').forEach(b => b.addEventListener('click', () => switchView(b.dataset.view)));
   $('#brand').addEventListener('click', () => switchView('scripts'));
 
-  // 同一个搜索框按当前 tab 分派：脚本 tab 搜脚本，定时任务 tab 搜定时任务
+  // 同一个搜索框按当前 tab 分派：脚本 / 定时任务 / 执行记录
   $('#search').addEventListener('input', debounce((e) => {
     const v = e.target.value;
     if (state.view === 'schedules') { state.schedKw = v; renderSchedules(); }
+    else if (state.view === 'history') { state.histKw = v; renderHistory(); }
     else { state.kw = v; renderGrid(); }
   }, 160));
 
@@ -3509,7 +3526,6 @@ async function init() {
   initHistoryRowEvents();
   initGridEvents();
   initTopbar();
-  updateHistoryScopeBtn();
   await loadLan();
   checkUv();
   try {
