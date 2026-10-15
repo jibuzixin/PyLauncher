@@ -50,9 +50,18 @@ svg{flex-shrink:0;}
 .toast{display:flex;align-items:center;gap:8px;max-width:min(90vw,460px);
   background:var(--success);color:#fff;padding:10px 18px;border-radius:999px;
   font-size:13px;line-height:1.5;box-shadow:0 8px 30px rgba(0,0,0,.2);
-  opacity:0;transform:translateY(-14px) scale(.96);transition:all var(--t-hover) var(--ease);}
-.toast.in{opacity:1;transform:translateY(0) scale(1);}
-.toast.out{opacity:0;transform:translateY(-10px) scale(.98);}
+  transform-origin:center center;
+  opacity:0;transform:translateY(-14px) scale(.86);
+  max-height:60px;
+  transition:opacity .3s var(--ease),transform .3s var(--ease),
+    max-height .3s var(--ease),padding .3s var(--ease),margin .3s var(--ease);}
+/* 入场：放大 + 下移 + 淡入 */
+.toast.in{opacity:1;transform:translateY(0) scale(1);max-height:60px;}
+/* 退场：缩小 + 上浮 + 淡出（不影响其它气泡的位置） */
+.toast.out{opacity:0;transform:translateY(-14px) scale(.7);}
+/* 超出 3 条时，最早（最下面）的一条收缩消失，队列收紧 */
+.toast.shrink{opacity:0;transform:translateY(-14px) scale(.7);
+  max-height:0;padding-top:0;padding-bottom:0;margin-bottom:-8px;}
 .toast.warn{background:var(--warning);}
 .toast.err{background:var(--danger);}
 .toast svg{flex-shrink:0;}

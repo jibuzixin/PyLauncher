@@ -106,22 +106,45 @@ const TOAST_ICON = {
   err: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
 };
 
+/** 气泡退场：先淡出，再由 CSS 收缩消失（先进先出） */
+function dismissToast(el, shrink) {
+  if (!el || el.dataset.gone) return;
+  el.dataset.gone = '1';
+  el.classList.remove('in');
+  el.classList.add(shrink ? 'shrink' : 'out');
+  el.addEventListener('transitionend', () => el.remove(), { once: true });
+  setTimeout(() => el.remove(), 520);
+}
+
+/* 顶部先进先出：最多同时保留 3 条，超出的最早一条缩小淡出 */
+const TOAST_MAX = 3;
+
 function toast(msg, type = 'ok', duration = 2600) {
   if (type === true) type = 'err';
   if (type === 'err') console.error('[toast:err]', msg);
   const box = $('#toast-box');
-  $$('.toast', box).forEach(t => { t.classList.remove('in'); t.classList.add('out'); });
+  // 记下旧气泡的位置，新气泡插入后用 FLIP 把它们平滑地往下推
+  const before = $$('.toast:not([data-gone])', box).map(t => t.offsetTop);
   const el = document.createElement('div');
   el.className = `toast ${type}`;
   el.innerHTML = `${TOAST_ICON[type] || TOAST_ICON.ok}<span>${escapeHtml(msg)}</span>`;
-  box.appendChild(el);
+  box.insertBefore(el, box.firstChild);   // 新的永远在最上面，早的被挤到最下面
   requestAnimationFrame(() => requestAnimationFrame(() => el.classList.add('in')));
-  setTimeout(() => {
-    el.classList.remove('in');
-    el.classList.add('out');
-    el.addEventListener('animationend', () => el.remove(), { once: true });
-    setTimeout(() => el.remove(), 400);
-  }, duration);
+
+  const live = $$('.toast:not([data-gone])', box);
+  live.slice(1).forEach((t, i) => {          // live[0] 是刚插入的新气泡
+    const delta = before[i] - t.offsetTop;
+    if (!delta) return;
+    t.style.transition = 'none';
+    t.style.transform = `translateY(${delta}px)`;
+    void t.offsetHeight;                       // 强制回流，让起点生效
+    t.style.transition = '';
+    t.style.transform = '';                    // 归位，由 CSS 过渡接管
+  });
+
+  setTimeout(() => dismissToast(el, false), duration);
+  // 只保留最新三条：更早的先收缩淡出，动画结束后自然移除
+  live.slice(TOAST_MAX).forEach(t => dismissToast(t, true));
 }
 
 /* ---------- 破坏性操作二次确认（胶囊气泡，不弹窗） ----------
@@ -3742,3 +3765,4 @@ window.__debugReport = debugReport;
 
 init();
 if (DEBUG) setTimeout(() => debugReport('boot'), 700);
+
