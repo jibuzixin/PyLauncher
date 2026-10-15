@@ -83,6 +83,11 @@ _extend_path()
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    # 设置页配置的环境变量：注入所有被运行的脚本
+    try:
+        executor.set_extra_env(db.get_run_env())
+    except Exception:  # noqa: BLE001
+        executor.set_extra_env({})
     # 启动时清理上次进程遗留的 running 记录（服务重启后旧进程已不存在）
     try:
         n = db.mark_stale_running()
@@ -1253,6 +1258,25 @@ def merge_command(script_path: str, schema_args: list[dict], values: dict, user_
 class MergeCommandReq(BaseModel):
     args: dict = {}
     command: str = ""
+
+
+class RunEnvReq(BaseModel):
+    text: str = ""
+
+
+@app.get("/api/settings/env")
+async def get_settings_env():
+    """设置页「环境变量」：读回当前配置。"""
+    env = db.get_run_env()
+    return {"ok": True, "text": db.format_env_text(env), "count": len(env)}
+
+
+@app.put("/api/settings/env")
+async def put_settings_env(req: RunEnvReq):
+    """保存环境变量并立即对后续运行生效（不需要重启服务）。"""
+    env = db.set_run_env(req.text)
+    executor.set_extra_env(env)
+    return {"ok": True, "text": db.format_env_text(env), "count": len(env)}
 
 
 @app.post("/api/scripts/{script_id}/merge-command")

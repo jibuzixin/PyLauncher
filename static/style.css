@@ -273,6 +273,16 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 /* 状态只是状态：看起来不可点，只有运行中才允许点（= 终止） */
 .status-chip{cursor:default;}
 .status-chip.clickable{cursor:pointer;}
+
+/* 设置页 · 环境变量 */
+.settings-row-block{align-items:flex-start;}
+.settings-ops-block{flex-direction:column;align-items:stretch;gap:8px;width:100%;max-width:420px;}
+.settings-ops-block textarea{width:100%;min-height:104px;padding:10px 12px;border:1px solid var(--line-2);
+  border-radius:8px;font-size:12px;line-height:1.7;background:#fff;resize:vertical;word-break:break-all;}
+.settings-ops-block textarea:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.settings-ops-row{display:flex;align-items:center;gap:8px;}
+.settings-env-hint{flex:1;font-size:11px;color:var(--ink-4);}
+.settings-desc code{background:var(--bg-sub);padding:1px 5px;border-radius:4px;font-size:11px;}
 .drawer-body{flex:1;overflow-y:auto;padding:16px 22px;position:relative;}
 
 /* 环境条 */

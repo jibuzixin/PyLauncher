@@ -189,6 +189,30 @@
       </div>
 
       <div class="settings-group">
+        <div class="settings-title">运行环境</div>
+        <div class="settings-row settings-row-block">
+          <div class="settings-desc">
+            <div class="t">环境变量</div>
+            <div class="d">
+              注入给所有运行的脚本，用来补终端 shell 里 export 过、但后台服务拿不到的变量
+              （如 <code class="mono">OPENAI_API_KEY=sk-xxx</code>）。每行一条，支持
+              <code class="mono">#</code> 注释、<code class="mono">export</code> 前缀与引号。
+              保存后立即生效，不用重启服务。
+            </div>
+          </div>
+          <div class="settings-ops settings-ops-block">
+            <textarea id="set-env" class="mono" rows="5" spellcheck="false"
+              placeholder="OPENAI_API_KEY=sk-xxx&#10;HF_TOKEN=&quot;hf xxx&quot;&#10;# 以 # 开头的行会被忽略"></textarea>
+            <div class="settings-ops-row">
+              <span class="settings-env-hint" id="set-env-hint"></span>
+              <button class="btn btn-ghost" id="set-env-clear">清空</button>
+              <button class="btn btn-solid" id="set-env-save">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
         <div class="settings-title">数据</div>
         <div class="settings-row">
           <div class="settings-desc">

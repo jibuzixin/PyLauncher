@@ -283,6 +283,16 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 /* 状态只是状态：看起来不可点，只有运行中才允许点（= 终止） */
 .status-chip{cursor:default;}
 .status-chip.clickable{cursor:pointer;}
+
+/* 设置页 · 环境变量 */
+.settings-row-block{align-items:flex-start;}
+.settings-ops-block{flex-direction:column;align-items:stretch;gap:8px;width:100%;max-width:420px;}
+.settings-ops-block textarea{width:100%;min-height:104px;padding:10px 12px;border:1px solid var(--line-2);
+  border-radius:8px;font-size:12px;line-height:1.7;background:#fff;resize:vertical;word-break:break-all;}
+.settings-ops-block textarea:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.settings-ops-row{display:flex;align-items:center;gap:8px;}
+.settings-env-hint{flex:1;font-size:11px;color:var(--ink-4);}
+.settings-desc code{background:var(--bg-sub);padding:1px 5px;border-radius:4px;font-size:11px;}
 .drawer-body{flex:1;overflow-y:auto;padding:16px 22px;position:relative;}
 
 /* 环境条 */
@@ -957,6 +967,30 @@ body.no-select{user-select:none;}
       </div>
 
       <div class="settings-group">
+        <div class="settings-title">运行环境</div>
+        <div class="settings-row settings-row-block">
+          <div class="settings-desc">
+            <div class="t">环境变量</div>
+            <div class="d">
+              注入给所有运行的脚本，用来补终端 shell 里 export 过、但后台服务拿不到的变量
+              （如 <code class="mono">OPENAI_API_KEY=sk-xxx</code>）。每行一条，支持
+              <code class="mono">#</code> 注释、<code class="mono">export</code> 前缀与引号。
+              保存后立即生效，不用重启服务。
+            </div>
+          </div>
+          <div class="settings-ops settings-ops-block">
+            <textarea id="set-env" class="mono" rows="5" spellcheck="false"
+              placeholder="OPENAI_API_KEY=sk-xxx&#10;HF_TOKEN=&quot;hf xxx&quot;&#10;# 以 # 开头的行会被忽略"></textarea>
+            <div class="settings-ops-row">
+              <span class="settings-env-hint" id="set-env-hint"></span>
+              <button class="btn btn-ghost" id="set-env-clear">清空</button>
+              <button class="btn btn-solid" id="set-env-save">保存</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="settings-group">
         <div class="settings-title">数据</div>
         <div class="settings-row">
           <div class="settings-desc">
@@ -1402,6 +1436,29 @@ function initSettingsView() {
   $('#opt-hide-empty').addEventListener('change', syncSettingsView);
   $('#set-export').addEventListener('click', exportData);
   $('#set-import').addEventListener('click', importConfig);
+  $('#set-env-save').addEventListener('click', async () => {
+    const box = $('#set-env');
+    const text = box.value;
+    try {
+      const r = await api('/api/settings/env', { method: 'PUT', body: { text } });
+      box.value = r.text || '';
+      const hint = $('#set-env-hint');
+      if (hint) hint.textContent = r.count ? `已配置 ${r.count} 个` : '尚未配置';
+      toast(r.count ? `已保存 ${r.count} 个环境变量，对后续运行生效` : '环境变量已清空');
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#set-env-clear').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: '清空环境变量', message: '所有脚本将不再注入这批环境变量（如 API_KEY）。', okText: '清空' });
+    if (!ok) return;
+    const box = $('#set-env');
+    box.value = '';
+    try {
+      await api('/api/settings/env', { method: 'PUT', body: { text: '' } });
+      const hint = $('#set-env-hint');
+      if (hint) hint.textContent = '尚未配置';
+      toast('环境变量已清空');
+    } catch (e) { toast(e.message, 'err'); }
+  });
   $('#set-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
   $('#btn-reset-prefs').addEventListener('click', async () => {
     const ok = await confirmModal({ title: '恢复默认偏好', message: '将重置本机保存的界面偏好（不影响脚本、预设与执行记录）。', okText: '恢复默认' });
@@ -1413,6 +1470,20 @@ function initSettingsView() {
     toast('已恢复默认偏好');
   });
   syncSettingsView();
+  loadRunEnv();
+}
+
+/** 读回设置页「环境变量」内容（正在输入时不覆盖，避免打断编辑）。 */
+async function loadRunEnv(force) {
+  const box = $('#set-env');
+  if (!box) return;
+  if (!force && document.activeElement === box) return;
+  try {
+    const r = await api('/api/settings/env');
+    box.value = r.text || '';
+    const hint = $('#set-env-hint');
+    if (hint) hint.textContent = r.count ? `已配置 ${r.count} 个` : '尚未配置';
+  } catch { /* 读不到就保持现状 */ }
 }
 async function fillSettingsAbout() {
   const el = $('#settings-about');
@@ -4145,7 +4216,7 @@ function switchView(name) {
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
   if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
-  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); }
+  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); loadRunEnv(); }
   closeRunPopover();
   if (DEBUG) debugReport('view:' + name);
 }

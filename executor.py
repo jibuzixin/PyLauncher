@@ -19,6 +19,15 @@ from typing import Any, Awaitable, Callable, Optional
 # 运行中的进程句柄：execution_id -> 进程控制对象
 _RUNNING: dict[int, dict[str, Any]] = {}
 
+# 启动器层面配置的环境变量（设置页维护）。每次起进程时合并进子进程 env，
+# 让脚本能读到 API_KEY 之类在终端 shell 里 export 过、但服务进程本身没有的变量。
+EXTRA_ENV: dict[str, str] = {}
+
+
+def set_extra_env(env: dict[str, str]) -> None:
+    global EXTRA_ENV
+    EXTRA_ENV = dict(env or {})
+
 # 伪终端模式：macOS / Linux 使用 pty 获得完整终端体验（\r 进度条、ANSI 颜色），Windows 自动退回管道
 USE_PTY = os.name != "nt"
 
@@ -297,6 +306,7 @@ async def _stream_proc(
     env = dict(os.environ)
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.update(EXTRA_ENV)
     if env_extra:
         env.update(env_extra)
     kwargs["env"] = env
@@ -356,6 +366,7 @@ async def _stream_proc_pty(
     env = dict(os.environ)
     env.setdefault("PYTHONUNBUFFERED", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
+    env.update(EXTRA_ENV)
     if env_extra:
         env.update(env_extra)
 

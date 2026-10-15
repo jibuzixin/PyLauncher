@@ -265,6 +265,29 @@ function initSettingsView() {
   $('#opt-hide-empty').addEventListener('change', syncSettingsView);
   $('#set-export').addEventListener('click', exportData);
   $('#set-import').addEventListener('click', importConfig);
+  $('#set-env-save').addEventListener('click', async () => {
+    const box = $('#set-env');
+    const text = box.value;
+    try {
+      const r = await api('/api/settings/env', { method: 'PUT', body: { text } });
+      box.value = r.text || '';
+      const hint = $('#set-env-hint');
+      if (hint) hint.textContent = r.count ? `已配置 ${r.count} 个` : '尚未配置';
+      toast(r.count ? `已保存 ${r.count} 个环境变量，对后续运行生效` : '环境变量已清空');
+    } catch (e) { toast(e.message, 'err'); }
+  });
+  $('#set-env-clear').addEventListener('click', async () => {
+    const ok = await confirmModal({ title: '清空环境变量', message: '所有脚本将不再注入这批环境变量（如 API_KEY）。', okText: '清空' });
+    if (!ok) return;
+    const box = $('#set-env');
+    box.value = '';
+    try {
+      await api('/api/settings/env', { method: 'PUT', body: { text: '' } });
+      const hint = $('#set-env-hint');
+      if (hint) hint.textContent = '尚未配置';
+      toast('环境变量已清空');
+    } catch (e) { toast(e.message, 'err'); }
+  });
   $('#set-usage').addEventListener('click', () => window.open('/static/usage.html?v=2', '_blank', 'noopener'));
   $('#btn-reset-prefs').addEventListener('click', async () => {
     const ok = await confirmModal({ title: '恢复默认偏好', message: '将重置本机保存的界面偏好（不影响脚本、预设与执行记录）。', okText: '恢复默认' });
@@ -276,6 +299,20 @@ function initSettingsView() {
     toast('已恢复默认偏好');
   });
   syncSettingsView();
+  loadRunEnv();
+}
+
+/** 读回设置页「环境变量」内容（正在输入时不覆盖，避免打断编辑）。 */
+async function loadRunEnv(force) {
+  const box = $('#set-env');
+  if (!box) return;
+  if (!force && document.activeElement === box) return;
+  try {
+    const r = await api('/api/settings/env');
+    box.value = r.text || '';
+    const hint = $('#set-env-hint');
+    if (hint) hint.textContent = r.count ? `已配置 ${r.count} 个` : '尚未配置';
+  } catch { /* 读不到就保持现状 */ }
 }
 async function fillSettingsAbout() {
   const el = $('#settings-about');
@@ -3008,7 +3045,7 @@ function switchView(name) {
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
   if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
-  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); }
+  if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); loadRunEnv(); }
   closeRunPopover();
   if (DEBUG) debugReport('view:' + name);
 }

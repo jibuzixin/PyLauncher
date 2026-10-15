@@ -189,6 +189,21 @@ def _loads(s: str, default: Any = None) -> Any:
         return default if default is not None else {}
 
 
+def get_meta(key: str, default: Optional[str] = None) -> Optional[str]:
+    with _conn() as conn:
+        row = conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
+    return row["value"] if row is not None else default
+
+
+def set_meta(key: str, value: str) -> None:
+    with _lock, _conn() as conn:
+        conn.execute(
+            "INSERT INTO meta(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+
+
 def _with_tags(row: Any) -> Optional[dict]:
     """scripts 行 → dict，并把 tags 解析成数组。
 
@@ -418,6 +433,56 @@ def move_preset(preset_id: int, direction: str) -> None:
         a, b = same[idx], same[nxt]
         conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (b["sort_order"], a["id"]))
         conn.execute("UPDATE presets SET sort_order=? WHERE id=?", (a["sort_order"], b["id"]))
+
+
+# ---------- 全局环境变量（设置页维护，运行时注入子进程） ----------
+
+ENV_KEY = "run_env"
+
+
+def parse_env_text(text: str) -> dict[str, str]:
+    """解析 KEY=VALUE 文本 → dict。
+
+    支持空行、`#` 注释、`export KEY=VALUE`，以及用单/双引号包裹的值
+    （值里带空格或 `#` 时不必转义）。
+    """
+    out: dict[str, str] = {}
+    for raw in (text or "").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].strip()
+        if "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        if not k:
+            continue
+        v = v.strip()
+        if len(v) >= 2 and v[0] == v[-1] and v[0] in ("'", '"'):
+            v = v[1:-1]
+        out[k] = v
+    return out
+
+
+def format_env_text(env: dict[str, str]) -> str:
+    return "\n".join(f"{k}={v}" for k, v in env.items())
+
+
+def get_run_env() -> dict[str, str]:
+    """读出配置的环境变量（启动器层面，注入所有被运行的脚本）。"""
+    try:
+        return parse_env_text(get_meta(ENV_KEY, "") or "")
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def set_run_env(text: str) -> dict[str, str]:
+    env = parse_env_text(text)
+    # 规范化后回写，去掉无效行，避免下次再看到一堆解析不出来的内容
+    set_meta(ENV_KEY, format_env_text(env))
+    return env
 
 
 def mark_stale_running() -> int:
