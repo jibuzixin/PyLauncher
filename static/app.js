@@ -131,24 +131,21 @@ function toast(msg, type = 'ok', duration = 2600) {
 const DEL_CONFIRM_MS = 2500;
 const delPending = new Map();
 
-function armDelConfirm(btn, { label, hint, onConfirm, pendingText = '再点一次确认' }) {
+function armDelConfirm(btn, { label, hint, onConfirm }) {
   if (!btn) return;
   const prev = delPending.get(btn);
   if (prev) {
     // 第二次点击 → 真正执行
     clearTimeout(prev.timer);
     delPending.delete(btn);
-    btn.textContent = prev.originText;
     btn.classList.remove('pending-del');
     onConfirm();
     return;
   }
-  const originText = btn.dataset.delOrigin || btn.textContent;
-  btn.dataset.delOrigin = originText;
   const timer = setTimeout(() => cancelDelConfirm(btn), DEL_CONFIRM_MS);
-  delPending.set(btn, { timer, originText });
+  delPending.set(btn, { timer });
+  // 按钮本身不改字（叉叉太小，塞不下「确认」），只用高亮脉冲表示待确认
   btn.classList.add('pending-del');
-  btn.textContent = pendingText;
   toast(`⚠ ${hint || `确认${label}？`} · 2.5 秒内再点一次`, 'warn');
 }
 function cancelDelConfirm(btn) {
@@ -156,7 +153,6 @@ function cancelDelConfirm(btn) {
   if (!prev) return;
   clearTimeout(prev.timer);
   delPending.delete(btn);
-  btn.textContent = prev.originText;
   btn.classList.remove('pending-del');
 }
 /** 点击待确认按钮以外的任何地方 → 全部取消 */
@@ -1066,10 +1062,10 @@ function updateRunBadges() {
       if (!badge) {
         badge = document.createElement('span');
         badge.className = 'run-badge';
-        badge.innerHTML = '● 1';
         $('.card-foot .right', card).prepend(badge);
       }
-      badge.textContent = `● ${runs.length}`;
+      badge.textContent = `● ${runs.length} 实例`;
+      badge.title = `正在运行 ${runs.length} 个实例，点击查看`;
     } else {
       card.classList.remove('running');
       if (badge) badge.remove();
@@ -1080,6 +1076,16 @@ function updateRunBadges() {
     stEl.className = `st ${cls}`;
     stEl.innerHTML = `<i></i>${label}`;
   });
+  updateInstancesChip();
+}
+
+/** 脚本详情页顶部的「运行中 N 实例」入口，和卡片上的徽章是同一套数据 */
+function updateInstancesChip() {
+  const chip = $('#q-instances');
+  if (!chip) return;
+  const n = state.runningExecs.filter(r => r.script_id === state.selectedId).length;
+  chip.hidden = !n;
+  chip.innerHTML = `运行中 <b>${n}</b> 实例`;
 }
 
 function renderGrid() {
@@ -1098,8 +1104,18 @@ function renderGrid() {
   });
 
   if (!list.length) {
-    grid.innerHTML = `<div class="empty">没有匹配的脚本。<div class="empty-act">
-      <button class="btn btn-ghost" onclick="document.getElementById('btn-add').click()">导入脚本</button></div></div>`;
+    // 不同筛选给不同的空态：在「收藏 / 运行中 / 失败」里提示去导入脚本不合逻辑
+    const emptyByFilter = {
+      fav: { text: '还没有收藏的脚本。', act: '' },
+      running: { text: '当前没有正在运行的实例。', act: '' },
+      failed: { text: '没有失败或被终止的脚本。', act: '' },
+      tag: { text: '这个标签下还没有脚本。', act: '' },
+      kw: { text: `没有匹配「${escapeHtml(state.kw.trim())}」的脚本。`, act: '' },
+      all: { text: '还没有脚本。', act: '<button class="btn btn-ghost" onclick="document.getElementById(\'btn-add\').click()">导入脚本</button>' },
+    };
+    const key = state.kw.trim() ? 'kw' : (state.activeTag ? 'tag' : (state.filter !== 'all' ? state.filter : 'all'));
+    const e0 = emptyByFilter[key];
+    grid.innerHTML = `<div class="empty">${e0.text}<div class="empty-act">${e0.act}</div></div>`;
     return;
   }
 
@@ -1163,8 +1179,7 @@ function initGridEvents() {
       const runs = state.runningExecs.filter(r => r.script_id === id);
       if (runs.length) openRunPopover(badge, runs);
       return;
-    }
-    const fav = e.target.closest('.fav');
+    }    const fav = e.target.closest('.fav');
     if (fav) {
       if (state.favs.has(id)) state.favs.delete(id); else state.favs.add(id);
       savePrefs();
@@ -1796,24 +1811,23 @@ function setRunning(running) {
   const btn = $('#btn-run');
   btn.classList.toggle('running', running);
   $('#run-label').textContent = running ? '■ 终止' : '▶ 运行';
-  $('#q-run-status').className = 'quick-btn status-chip' + (running ? ' clickable' : '');
+  // 状态芯片只做显示，不再是「点一下就终止」的按钮：终止走行内终止 + 标签右键
+  $('#q-run-status').className = 'quick-btn status-chip';
   const stEl = $('#q-run-status .st') || $('#q-run-status');
   const [cls, label] = running ? ['running', '运行中'] : statusMeta(statusOf(state.selectedId));
   stEl.className = `st ${cls}`;
   stEl.innerHTML = `<i></i>${label}`;
   $$('.scard').forEach(c => c.classList.toggle('running', running && Number(c.dataset.id) === state.selectedId));
-  if (state.selectedId) {
+  if (running && state.selectedId) {
     const card = $(`.scard[data-id="${state.selectedId}"]`);
-    if (card) {
-      const badge = $('.run-badge', card);
-      if (running && !badge) {
-        const b = document.createElement('span');
-        b.className = 'run-badge';
-        b.textContent = '● 1';
-        $('.card-foot .right', card).prepend(b);
-      }
+    if (card && !$('.run-badge', card)) {
+      const b = document.createElement('span');
+      b.className = 'run-badge';
+      b.textContent = '● 1 实例';
+      $('.card-foot .right', card).prepend(b);
     }
   }
+  updateInstancesChip();
 }
 
 async function runScript() {
@@ -1936,8 +1950,10 @@ async function refreshHistory() {
     const list = await api('/api/executions?limit=200');
     state.executions = list;
     // 用最新一次执行推导每个脚本的状态（卡片徽章 + 失败筛选）
+    // 列表按时间倒序返回，所以第一条命中就是最新那次；
+    // 曾经先 reverse 再取，导致脚本永远显示「最老那次」的状态。
     const latest = {};
-    for (const h of [...list].reverse()) {
+    for (const h of list) {
       if (h.script_id && !latest[h.script_id]) latest[h.script_id] = h.status;
     }
     state.lastStatus = latest;
@@ -1995,7 +2011,7 @@ function renderHistory() {
     row.innerHTML = `
       ${state.historyMulti ? `<input type="checkbox" class="hi-cb" ${state.selectedHistory.has(h.id) ? 'checked' : ''}>` : '<span></span>'}
       <div class="main">
-        <div class="script">${escapeHtml(h.tab_name || h.script_name || '（脚本已删除）')}</div>
+        <div class="script">${escapeHtml(h.tab_name || h.script_name || '（脚本已删除）')}<span class="started-at mono" title="本次启动时刻（同一脚本多次运行时用来区分）">启动 ${escapeHtml(fmtTime(h.started_at))}</span></div>
         <div class="meta">${tags.map(t => `<span class="tg">#${escapeHtml(t)}</span>`).join('')}${escapeHtml(fmtTime(h.started_at, false))} → ${h.finished_at ? escapeHtml(fmtTime(h.finished_at, false)) : '进行中'} · ${escapeHtml(durText(h.started_at, h.finished_at))}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
@@ -2040,7 +2056,6 @@ function armDeleteRow(row, id) {
   armDelConfirm(btn, {
     label: '删除该记录',
     hint: '确认删除这条执行记录？',
-    pendingText: '确认',
     onConfirm: () => {
       state.selectedHistory.delete(id);
       if (state.detailId === id) clearHistoryDetail();
@@ -3517,14 +3532,16 @@ function initTopbar() {
   $('#q-meta').addEventListener('click', openMetaModal);
   $('#q-reload').addEventListener('click', reloadCurrentScript);
   $('#q-delete').addEventListener('click', (e) => { e.stopPropagation(); deleteCurrentScript(e.currentTarget); });
-  // 状态标签只是显示当前状态，不再当作「运行」按钮；
-  // 只有正在运行时才可点，点它 = 终止当前实例。
-  $('#q-run-status').addEventListener('click', () => {
-    if (state.running) terminateCurrent();
+  // 状态芯片只是显示，不再触发终止；
+  // 查看 / 终止实例走行内「运行中 N 实例」与标签右键菜单。
+  $('#q-instances').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const runs = state.runningExecs.filter(r => r.script_id === state.selectedId);
+    if (runs.length) openRunPopover(e.currentTarget, runs);
   });
 
   document.addEventListener('click', (e) => {
-    if (!e.target.closest('#run-popover') && !e.target.closest('.run-badge')) closeRunPopover();
+    if (!e.target.closest('#run-popover') && !e.target.closest('.run-badge') && !e.target.closest('#q-instances')) closeRunPopover();
   });
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -3554,7 +3571,6 @@ async function deleteCurrentScript(btn) {
   armDelConfirm(btn || $('#q-delete'), {
     label: '移除脚本',
     hint: `确认移除「${state.script.name}」？其预设与执行记录会一并删除`,
-    pendingText: '确认移除',
     onConfirm: async () => {
       try {
         await api(`/api/scripts/${state.script.id}`, { method: 'DELETE' });
