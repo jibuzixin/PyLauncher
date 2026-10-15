@@ -778,9 +778,19 @@ function setTabStatus(id, status) {
 }
 function renderTabs() {
   const box = $('#dock-tabs');
-  $$('.term-tab', box).forEach(n => n.remove());
+  // 正在重命名的那个标签要原样保留：3 秒轮询也会调 renderTabs，
+  // 若照旧重建，用户刚打的字（以及中文输入法的拼音）会被冲掉。
+  const editingId = state.tabEditing;
+  const kept = editingId == null ? null
+    : $$('.term-tab', box).find(n => String(n.dataset.tab) === String(editingId) && $('.tab-rename', n));
+  $$('.term-tab', box).forEach(n => { if (n !== kept && n.parentNode === box) n.remove(); });
   const actions = $('.term-dock-actions', box);
   const mk = (tab, isWelcome) => {
+    if (kept && !isWelcome && String(tab.id) === String(editingId)) {
+      kept.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
+      box.insertBefore(kept, actions);
+      return;
+    }
     const b = document.createElement('button');
     b.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
     b.dataset.tab = tab.id;
@@ -794,15 +804,23 @@ function renderTabs() {
       inp.value = tab.name;
       nm.replaceWith(inp);
       b.addEventListener('click', (e) => e.stopPropagation());
+      // 重命名会重绘整条标签栏（输入框随之被移除 → 触发 blur），
+      // 所以这里必须幂等，否则会重入 renderTabs 报 remove 错误。
+      let settled = false;
       const done = (commit) => {
+        if (settled) return;
+        settled = true;
         state.tabEditing = null;
         const v = inp.value.trim();
-        if (commit && v && v !== tab.name) { tab.name = v; tab.renamed = true; saveTabName(tab); }
+        const renamed = commit && v && v !== tab.name;
+        if (renamed) { tab.name = v; tab.renamed = true; saveTabName(tab); }
         renderTabs();
-        if (commit && v && v !== tab.name) toast(`已重命名为「${tab.name}」`);
+        if (renamed) toast(`已重命名为「${tab.name}」`);
       };
       inp.addEventListener('keydown', (e) => {
         e.stopPropagation();
+        // 中文输入法上屏途中：回车是「选词」，不能当作确认
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter') { e.preventDefault(); done(true); }
         else if (e.key === 'Escape') { e.preventDefault(); done(false); }
       });

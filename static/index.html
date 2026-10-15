@@ -496,11 +496,11 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .con-no{flex-shrink:0;width:96px;display:flex;align-items:center;gap:4px;
   color:var(--ink-4);font-size:10px;user-select:none;padding-top:1px;}
 .con-ts{opacity:.85;}
-/* 复制按钮常驻可见（半透明），悬停/聚焦才完全显形——窄面板里也点得到 */
+/* 复制按钮：仍然悬停才出现，但给了足够的点击区域 */
 .con-copy{margin-left:auto;padding:1px 5px;border-radius:4px;cursor:pointer;
-  color:var(--ink-4);font-size:10px;line-height:1.5;opacity:.45;
+  color:var(--ink-4);font-size:10px;line-height:1.5;opacity:0;pointer-events:none;
   transition:opacity var(--t-fast),background var(--t-fast),color var(--t-fast);}
-.con-line:hover .con-copy,.con-copy:focus-visible{opacity:1;background:rgba(20,86,240,.08);}
+.con-line:hover .con-copy,.con-copy:focus-visible{opacity:1;pointer-events:auto;background:rgba(20,86,240,.08);}
 .con-copy:hover{color:var(--brand-6);opacity:1;}
 .con-text{flex:1;white-space:pre-wrap;word-break:break-all;min-width:0;}
 .con-line.stderr .con-text{color:var(--danger);}
@@ -1962,9 +1962,19 @@ function setTabStatus(id, status) {
 }
 function renderTabs() {
   const box = $('#dock-tabs');
-  $$('.term-tab', box).forEach(n => n.remove());
+  // 正在重命名的那个标签要原样保留：3 秒轮询也会调 renderTabs，
+  // 若照旧重建，用户刚打的字（以及中文输入法的拼音）会被冲掉。
+  const editingId = state.tabEditing;
+  const kept = editingId == null ? null
+    : $$('.term-tab', box).find(n => String(n.dataset.tab) === String(editingId) && $('.tab-rename', n));
+  $$('.term-tab', box).forEach(n => { if (n !== kept && n.parentNode === box) n.remove(); });
   const actions = $('.term-dock-actions', box);
   const mk = (tab, isWelcome) => {
+    if (kept && !isWelcome && String(tab.id) === String(editingId)) {
+      kept.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
+      box.insertBefore(kept, actions);
+      return;
+    }
     const b = document.createElement('button');
     b.className = `term-tab ${tab.status || ''}${state.activeTab === tab.id ? ' active' : ''}`;
     b.dataset.tab = tab.id;
@@ -1978,15 +1988,23 @@ function renderTabs() {
       inp.value = tab.name;
       nm.replaceWith(inp);
       b.addEventListener('click', (e) => e.stopPropagation());
+      // 重命名会重绘整条标签栏（输入框随之被移除 → 触发 blur），
+      // 所以这里必须幂等，否则会重入 renderTabs 报 remove 错误。
+      let settled = false;
       const done = (commit) => {
+        if (settled) return;
+        settled = true;
         state.tabEditing = null;
         const v = inp.value.trim();
-        if (commit && v && v !== tab.name) { tab.name = v; tab.renamed = true; saveTabName(tab); }
+        const renamed = commit && v && v !== tab.name;
+        if (renamed) { tab.name = v; tab.renamed = true; saveTabName(tab); }
         renderTabs();
-        if (commit && v && v !== tab.name) toast(`已重命名为「${tab.name}」`);
+        if (renamed) toast(`已重命名为「${tab.name}」`);
       };
       inp.addEventListener('keydown', (e) => {
         e.stopPropagation();
+        // 中文输入法上屏途中：回车是「选词」，不能当作确认
+        if (e.isComposing || e.keyCode === 229) return;
         if (e.key === 'Enter') { e.preventDefault(); done(true); }
         else if (e.key === 'Escape') { e.preventDefault(); done(false); }
       });

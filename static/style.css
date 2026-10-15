@@ -486,11 +486,11 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .con-no{flex-shrink:0;width:96px;display:flex;align-items:center;gap:4px;
   color:var(--ink-4);font-size:10px;user-select:none;padding-top:1px;}
 .con-ts{opacity:.85;}
-/* 复制按钮常驻可见（半透明），悬停/聚焦才完全显形——窄面板里也点得到 */
+/* 复制按钮：仍然悬停才出现，但给了足够的点击区域 */
 .con-copy{margin-left:auto;padding:1px 5px;border-radius:4px;cursor:pointer;
-  color:var(--ink-4);font-size:10px;line-height:1.5;opacity:.45;
+  color:var(--ink-4);font-size:10px;line-height:1.5;opacity:0;pointer-events:none;
   transition:opacity var(--t-fast),background var(--t-fast),color var(--t-fast);}
-.con-line:hover .con-copy,.con-copy:focus-visible{opacity:1;background:rgba(20,86,240,.08);}
+.con-line:hover .con-copy,.con-copy:focus-visible{opacity:1;pointer-events:auto;background:rgba(20,86,240,.08);}
 .con-copy:hover{color:var(--brand-6);opacity:1;}
 .con-text{flex:1;white-space:pre-wrap;word-break:break-all;min-width:0;}
 .con-line.stderr .con-text{color:var(--danger);}
