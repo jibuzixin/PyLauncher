@@ -31,6 +31,22 @@ async function api(path, { method = 'GET', body } = {}) {
   return data;
 }
 
+/** 每行「复制」。直接绑在容器上（不只靠 document 委托）：
+ *  执行记录详情 / 控制台可能被别的容器处理过事件，绑在最近的祖先上最稳。 */
+function bindLineCopy(root) {
+  if (!root) return;
+  root.addEventListener('click', (e) => {
+    const c = e.target.closest && e.target.closest('.con-copy');
+    if (!c || !root.contains(c)) return;
+    e.stopPropagation();
+    const line = c.closest('.con-line');
+    const t = line && line.querySelector('.con-text');
+    const text = (t ? t.textContent : (line ? line.textContent : '')).trim();
+    if (!text) { toast('这一行没有内容', 'warn'); return; }
+    copyText(text).then(ok => toast(ok ? '已复制该行' : '复制失败', ok ? 'ok' : 'err'));
+  });
+}
+
 function escapeHtml(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -580,11 +596,13 @@ function initDock() {
     // 高度带 .25s 过渡，此刻读到的仍是过渡起始值；过渡结束后必须再同步一次，
     // 否则展开/收起后 --dock-eff 会卡在旧高度，抽屉与窄屏详情跟着错位。
     setTimeout(syncDockEff, 300);
+    saveDockLayout();
     if (DEBUG) debugReport('dock:' + (collapsed ? 'collapsed' : 'open'));
   };
   const toggleDock = () => setDockCollapsed(!dock.classList.contains('collapsed'));
-  // 暴露给运行流程用：跑完自动展开控制台
+  // 暴露给运行流程 / 布局恢复用
   state.toggleDock = toggleDock;
+  state.setDockCollapsed = setDockCollapsed;
   $('#dock-collapse').addEventListener('click', toggleDock);
   // 双击标题条 / 折叠条即可展开或收起，不必去够右边那个小按钮
   dock.addEventListener('dblclick', (e) => {
@@ -596,16 +614,10 @@ function initDock() {
     if (!tab || tab.id === 'welcome') { toast('当前没有可复制的输出', 'warn'); return; }
     copyAllOutput($('#term-out'), `「${tab.name}」的全部输出`);
   });
-  // 每行「复制」按钮（悬停出现）
-  $('#term-out').addEventListener('click', (e) => {
-    const c = e.target.closest('.con-copy');
-    if (!c) return;
-    const line = c.closest('.con-line');
-    const t = line && $('.con-text', line);
-    const text = (t ? t.textContent : (line ? line.textContent : '')).trim();
-    if (!text) { toast('这一行没有内容', 'warn'); return; }
-    copyText(text).then(ok => toast(ok ? '已复制该行' : '复制失败', ok ? 'ok' : 'err'));
-  });
+  // 每行「复制」：控制台和执行记录详情共用
+  bindLineCopy($('#term-out'));
+  bindLineCopy($('#hd-out'));
+  bindLineCopy(document);
   $('#opt-autoscroll').addEventListener('change', savePrefs);
   setupTabContextMenu();
   setupDockResize();
@@ -624,6 +636,64 @@ function startTabRename(id) {
   if (!findTab(id)) return;
   state.tabEditing = id;
   renderTabs();
+}
+/** 重命名写回服务端：换浏览器、刷新、执行记录里都是同一个名字 */
+async function saveTabName(tab) {
+  try {
+    await api(`/api/executions/${tab.id}/tab-name`, { method: 'PUT', body: { name: tab.name } });
+  } catch (e) { toast('重命名未能保存：' + e.message, 'err'); }
+}
+/** 轮询时把别处（另一个浏览器 / 另一个标签页）改过的名字同步过来 */
+function syncTabNames() {
+  const recs = new Map();
+  state.runningExecs.forEach(x => recs.set(x.id, x));
+  state.executions.forEach(x => recs.set(x.id, x));
+  let changed = false;
+  state.tabs.forEach(tab => {
+    const rec = recs.get(tab.id);
+    if (!rec) return;
+    const name = rec.tab_name || rec.script_name || rec.name;
+    if (name && tab.name !== name && state.tabEditing !== tab.id) { tab.name = name; changed = true; }
+  });
+  if (changed) renderTabs();
+}
+
+/** 记住当前打开的标签页：存在服务端，因此刷新 / 重开浏览器 / 换浏览器都一致 */
+let tabsSaveTimer = null;
+function saveTabList() {
+  clearTimeout(tabsSaveTimer);
+  tabsSaveTimer = setTimeout(() => {
+    const ids = state.tabs.map(t => t.id);
+    api('/api/console/tabs', { method: 'PUT', body: { ids } }).catch(() => {});
+  }, 400);
+}
+async function loadTabList() {
+  try {
+    const r = await api('/api/console/tabs');
+    return Array.isArray(r.ids) ? r.ids : [];
+  } catch { return []; }
+}
+
+/** 恢复标签页：仍在跑的接实时流，已完成的回填输出后静静待命 */
+async function restoreTabs() {
+  const savedIds = await loadTabList();
+  for (const id of savedIds) {
+    if (getTab(id) || state.closedTabs.has(id) || state.restoring[id]) continue;
+    state.restoring[id] = true;
+    let rec = null;
+    try { rec = await api(`/api/executions/${id}`); } catch { state.restoring[id] = false; continue; }
+    if (!rec) { state.restoring[id] = false; continue; }   // 记录已被清空/删除
+    const name = rec.tab_name || rec.script_name || '已结束';
+    const tab = newTab(id, name);
+    tab.name = name;
+    tab.execId = id;
+    tab.restored = true;
+    const running = rec.status === 'running';
+    setTabStatus(id, running ? 'running' : (rec.status === 'success' ? 'ok' : rec.status === 'terminated' ? 'warn' : 'err'));
+    if (rec.output) tab.stream.renderSnapshot(rec.output, rec.output_ts);
+    if (running) connectWs(`/ws/run/${id}`, { tabId: id });
+  }
+  saveTabList();
 }
 /** data-tab 是字符串，state.tabs 里 id 可能是数字，这里做一次宽松匹配 */
 function findTab(id) {
@@ -726,12 +796,10 @@ function renderTabs() {
       b.addEventListener('click', (e) => e.stopPropagation());
       const done = (commit) => {
         state.tabEditing = null;
-        if (commit) {
-          const v = inp.value.trim();
-          if (v && v !== tab.name) { tab.name = v; tab.renamed = true; }
-        }
+        const v = inp.value.trim();
+        if (commit && v && v !== tab.name) { tab.name = v; tab.renamed = true; saveTabName(tab); }
         renderTabs();
-        if (commit) toast(`已重命名为「${tab.name}」`);
+        if (commit && v && v !== tab.name) toast(`已重命名为「${tab.name}」`);
       };
       inp.addEventListener('keydown', (e) => {
         e.stopPropagation();
@@ -756,6 +824,7 @@ function renderTabs() {
   };
   mk(state.welcomeTab, true);
   state.tabs.forEach(t => mk(t, false));
+  saveTabList();
 }
 
 /* ---------- 控制台拖选复制 ---------- */
@@ -892,11 +961,38 @@ function setupDockResize() {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       syncDockEff();
+      saveDockLayout();      // 松手才落盘，拖动过程中不写 localStorage
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
   });
   window.addEventListener('resize', syncDockEff);
+}
+
+/* ---------- 控制台高度 / 折叠状态记忆 ---------- */
+const DOCK_KEY = 'launcher_dock';
+function saveDockLayout() {
+  try {
+    const dock = $('#dock');
+    if (!dock) return;
+    localStorage.setItem(DOCK_KEY, JSON.stringify({
+      h: Math.round(dock.getBoundingClientRect().height),
+      collapsed: dock.classList.contains('collapsed'),
+    }));
+  } catch { /* 隐私模式忽略 */ }
+}
+/** 刷新 / 重开浏览器后恢复上次的高度与折叠状态 */
+function restoreDockLayout() {
+  let p = null;
+  try { p = JSON.parse(localStorage.getItem(DOCK_KEY) || 'null'); } catch { p = null; }
+  if (!p) return;
+  const maxH = Math.max(120, window.innerHeight - 140);
+  if (p.h && !p.collapsed) {
+    const h = Math.min(Math.max(Number(p.h) || 0, 80), maxH);
+    $('#dock').style.height = h + 'px';
+    document.documentElement.style.setProperty('--dock-h', h + 'px');
+  }
+  if (p.collapsed) setTimeout(() => state.setDockCollapsed && state.setDockCollapsed(true), 0);
 }
 /* ========================= 2. 脚本卡片 ========================= */
 
@@ -1868,7 +1964,7 @@ function renderHistory() {
     row.innerHTML = `
       ${state.historyMulti ? `<input type="checkbox" class="hi-cb" ${state.selectedHistory.has(h.id) ? 'checked' : ''}>` : '<span></span>'}
       <div class="main">
-        <div class="script">${escapeHtml(h.script_name || '（脚本已删除）')}</div>
+        <div class="script">${escapeHtml(h.tab_name || h.script_name || '（脚本已删除）')}</div>
         <div class="meta">${tags.map(t => `<span class="tg">#${escapeHtml(t)}</span>`).join('')}${escapeHtml(fmtTime(h.started_at, false))} → ${h.finished_at ? escapeHtml(fmtTime(h.finished_at, false)) : '进行中'} · ${escapeHtml(durText(h.started_at, h.finished_at))}</div>
       </div>
       <div style="display:flex;align-items:center;gap:6px">
@@ -1956,7 +2052,7 @@ async function showHistoryDetail(id) {
     state.detailId = id;
     setDetailMode(true);
     $$('.hist-row').forEach(r => r.classList.toggle('sel', Number(r.dataset.id) === id));
-    $('#hd-script').textContent = rec.script_name || '（脚本已删除）';
+    $('#hd-script').textContent = rec.tab_name || rec.script_name || '（脚本已删除）';
 
     // 操作区
     const ops = $('#hd-ops');
@@ -2181,6 +2277,7 @@ async function refreshRunning() {
     state.runningExecs = r.running || [];
     state.runningExecs.forEach(x => { state.lastStatus[x.script_id] = 'running'; });
     restoreRunningTabs(state.runningExecs);
+    syncTabNames();
     updateRunBadges();
     updateFilterCounts();
     updatePageBadge();
@@ -2200,8 +2297,8 @@ async function restoreRunningTabs(running) {
     if (state.closedTabs.has(id)) continue;  // 用户刚手动关掉，不再自动复活
     if (state.restoring[id]) continue;  // 防止轮询期间重复创建
     state.restoring[id] = true;
-    const tab = newTab(id, x.script_name || x.name || '运行中');
-    tab.name = x.script_name || x.name || '运行中';
+    const tab = newTab(id, x.tab_name || x.script_name || x.name || '运行中');
+    tab.name = x.tab_name || x.script_name || x.name || '运行中';
     tab.execId = id;
     tab.restored = true;
     setTabStatus(id, 'running');
@@ -3520,6 +3617,7 @@ async function loadLan() {
 async function init() {
   applyPrefs();
   initDock();
+  restoreDockLayout();
   initEditables();
   initCmdStrip();
   initHistoryView();
@@ -3531,16 +3629,18 @@ async function init() {
   try {
     await loadScripts();
   } catch (e) {
-    toast('加载脚本列表失败：' + e.message, 'err');
+    reportFatal(e.message);
   }
   refreshHistory();
   refreshRunning();
+  restoreTabs();          // 恢复上次打开的标签页（含已完成的）
   setInterval(refreshRunning, 3000);
-  setInterval(() => { if (state.view === 'history') refreshHistory(); else updateRunBadges(); }, 6000);
+  setInterval(() => { if (state.view === 'history') refreshHistory(); else { updateRunBadges(); syncTabNames(); } }, 6000);
 
   const last = Number(localStorage.getItem('last_script_id') || 0);
   // 恢复上次选中的脚本，但不自动弹出抽屉（否则遮罩会挡住整页）
   if (last && state.scripts.some(s => s.id === last)) await selectScript(last, { keepDrawer: true });
+
 }
 
 /**
@@ -3549,6 +3649,15 @@ async function init() {
  * 正常访问不带 debug，控制台保持干净。
  */
 const DEBUG = /(?:^|[?&])debug=1(?:&|$)/.test(location.search);
+
+// 兜底：脚本级异常直接把原因显示出来，避免页面停在半初始化状态且毫无提示
+function reportFatal(msg) {
+  const badge = document.getElementById('page-badge');
+  if (badge) { badge.textContent = `启动出错：${msg}`; badge.classList.add('bad'); badge.title = msg; }
+  try { toast(`页面出错：${msg}`, 'err', 6000); } catch { /* ignore */ }
+}
+window.addEventListener('error', (e) => reportFatal(e.message));
+window.addEventListener('unhandledrejection', (e) => reportFatal((e.reason && e.reason.message) || String(e.reason)));
 function debugReport(tag = '') {
   const box = (sel) => {
     const el = $(sel);

@@ -483,12 +483,15 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 /* 控制台行 */
 .con-line{display:flex;align-items:flex-start;gap:0;padding:0 18px;}
 .con-line:hover{background:rgba(20,86,240,.04);}
-.con-no{flex-shrink:0;width:82px;display:flex;align-items:center;gap:4px;
+.con-no{flex-shrink:0;width:96px;display:flex;align-items:center;gap:4px;
   color:var(--ink-4);font-size:10px;user-select:none;padding-top:1px;}
 .con-ts{opacity:.85;}
-.con-copy{opacity:0;cursor:pointer;color:var(--ink-4);font-size:10px;transition:opacity var(--t-fast);}
-.con-line:hover .con-copy{opacity:1;}
-.con-copy:hover{color:var(--brand-6);}
+/* 复制按钮常驻可见（半透明），悬停/聚焦才完全显形——窄面板里也点得到 */
+.con-copy{margin-left:auto;padding:1px 5px;border-radius:4px;cursor:pointer;
+  color:var(--ink-4);font-size:10px;line-height:1.5;opacity:.45;
+  transition:opacity var(--t-fast),background var(--t-fast),color var(--t-fast);}
+.con-line:hover .con-copy,.con-copy:focus-visible{opacity:1;background:rgba(20,86,240,.08);}
+.con-copy:hover{color:var(--brand-6);opacity:1;}
 .con-text{flex:1;white-space:pre-wrap;word-break:break-all;min-width:0;}
 .con-line.stderr .con-text{color:var(--danger);}
 .con-line.info .con-text{color:var(--ink-3);}

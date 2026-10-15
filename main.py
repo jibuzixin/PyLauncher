@@ -29,6 +29,7 @@ import scanner
 
 APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
+CONSOLE_TABS_KEY = "console_tabs"
 
 
 def _login_shell_path() -> str:
@@ -171,6 +172,14 @@ class CommandReq(BaseModel):
 
 class TagsReq(BaseModel):
     tags: list[str]
+
+
+class TabNameReq(BaseModel):
+    name: str = ""
+
+
+class ConsoleTabsReq(BaseModel):
+    ids: list = []
 
 
 class ClearReq(BaseModel):
@@ -1361,6 +1370,32 @@ async def update_tags(exec_id: int, req: TagsReq):
 async def delete_execution(exec_id: int):
     db.delete_execution(exec_id)
     return {"ok": True}
+
+
+@app.get("/api/console/tabs")
+async def get_console_tabs():
+    """当前打开的控制台标签页（按执行 id）。存服务端，刷新/换浏览器都一致。"""
+    try:
+        ids = json.loads(db.meta_get(CONSOLE_TABS_KEY, "[]")) or []
+    except (ValueError, TypeError):
+        ids = []
+    return {"ok": True, "ids": [int(i) for i in ids if str(i).lstrip("-").isdigit()]}
+
+
+@app.put("/api/console/tabs")
+async def put_console_tabs(req: ConsoleTabsReq):
+    ids = [int(i) for i in (req.ids or []) if str(i).lstrip("-").isdigit()][:50]
+    db.meta_set(CONSOLE_TABS_KEY, json.dumps(ids))
+    return {"ok": True, "ids": ids}
+
+
+@app.put("/api/executions/{exec_id}/tab-name")
+async def rename_execution_tab(exec_id: int, req: TabNameReq):
+    """重命名控制台标签页。存在执行记录里，所以刷新页面、换浏览器打开都一致。"""
+    rec = db.set_execution_tab_name(exec_id, req.name)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "执行记录不存在"}, status_code=404)
+    return {"ok": True, "tab_name": rec.get("tab_name", "")}
 
 
 @app.post("/api/executions/clear")

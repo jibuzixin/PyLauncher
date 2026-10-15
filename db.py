@@ -135,6 +135,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE executions ADD COLUMN command TEXT NOT NULL DEFAULT ''")
     if "output_ts" not in ecols:
         conn.execute("ALTER TABLE executions ADD COLUMN output_ts TEXT NOT NULL DEFAULT ''")
+    # 控制台标签页自定义名称（多浏览器共享，随执行记录一起留痕）
+    if "tab_name" not in ecols:
+        conn.execute("ALTER TABLE executions ADD COLUMN tab_name TEXT NOT NULL DEFAULT ''")
     # presets 表迁移：固定 / 排序 / 最近使用
     pcols = {r[1] for r in conn.execute("PRAGMA table_info(presets)")}
     if "pinned" not in pcols:
@@ -635,6 +638,14 @@ def finish_execution(exec_id: int, status: str, exit_code: int | None, output_li
 
 def get_execution(exec_id: int) -> Optional[dict]:
     with _conn() as conn:
+        row = conn.execute("SELECT * FROM executions WHERE id=?", (exec_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def set_execution_tab_name(exec_id: int, name: str) -> Optional[dict]:
+    """重命名控制台标签页；名称存执行记录上，因此所有浏览器 / 所有页面都一致。"""
+    with _lock, _conn() as conn:
+        conn.execute("UPDATE executions SET tab_name=? WHERE id=?", (name.strip()[:80], exec_id))
         row = conn.execute("SELECT * FROM executions WHERE id=?", (exec_id,)).fetchone()
         return dict(row) if row else None
 
