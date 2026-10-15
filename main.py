@@ -31,27 +31,50 @@ APP_DIR = Path(__file__).resolve().parent
 STATIC_DIR = APP_DIR / "static"
 
 
-def _extend_path() -> None:
-    """补全进程 PATH 里的常见可执行目录。
+def _login_shell_path() -> str:
+    """问一次用户的登录 shell 要 PATH。
 
-    用 Finder 双击、IDE 任务或 nohup 直接启动时，继承到的 PATH 很窄
-    （通常不含 Homebrew），于是 shutil.which("uv") 找不到 uv —— 界面会误报
-    「未检测到 uv」，生成命令时也会退回到项目 venv。这里在进程内补上，
-    保证无论以哪种方式启动，uv 的检测和实际调用都一致。
+    Finder 双击 / IDE 任务 / nohup 启动时进程继承的 PATH 很窄，而用户在终端里
+    手动执行脚本时用的是登录 shell 的完整环境（含 Homebrew、conda 等）。
+    这里在启动时把两边的差异补齐，这样无论用哪种方式启动启动器，
+    它跑起来的脚本都能找到同样的命令。
     """
-    extra = [
+    shell = os.environ.get("SHELL") or "/bin/zsh"
+    for argv in ([shell, "-l", "-c", "echo $PATH"], [shell, "-lic", "echo $PATH"]):
+        try:
+            out = subprocess.run(argv, capture_output=True, text=True, timeout=8)
+        except (OSError, subprocess.SubprocessError):
+            continue
+        got = (out.stdout or "").strip()
+        if out.returncode == 0 and got:
+            return got
+    return ""
+
+
+def _extend_path() -> None:
+    """补全进程 PATH：先并入登录 shell 的 PATH，再兜底常见可执行目录。
+
+    只补 PATH，不去解析 shell 配置里 export 的变量 —— 那是另一回事，
+    也不该把凭据无声地注入到每个子进程里。
+    """
+    fallback = [
         os.path.expanduser("~/.local/bin"),
         os.path.expanduser("~/.cargo/bin"),
         "/opt/homebrew/bin",
         "/usr/local/bin",
         "/usr/bin",
         "/bin",
+        "/usr/sbin",
+        "/sbin",
     ]
     cur = os.environ.get("PATH", "")
     parts = cur.split(os.pathsep) if cur else []
-    for d in extra:
-        if d and os.path.isdir(d) and d not in parts:
-            parts.append(d)
+    for src in (_login_shell_path(), os.pathsep.join(fallback)):
+        for d in src.split(os.pathsep):
+            d = d.strip()
+            # 优先保留当前进程里已有的目录（含已激活的 conda 等虚拟环境）
+            if d and os.path.isdir(d) and d not in parts:
+                parts.append(d)
     os.environ["PATH"] = os.pathsep.join(parts)
 
 

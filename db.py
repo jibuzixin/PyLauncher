@@ -189,6 +189,22 @@ def _loads(s: str, default: Any = None) -> Any:
         return default if default is not None else {}
 
 
+def _with_tags(row: Any) -> Optional[dict]:
+    """scripts 行 → dict，并把 tags 解析成数组。
+
+    写操作（新增 / 更新 / 重载）直接 SELECT * 返回的原始行里，tags 还是
+    JSON 字符串；前端拿到后直接 tags.forEach 会抛
+    「tags.forEach is not a function」，且抛错发生在标签行已清空之后，
+    表现就是标签整行消失。所有对外返回脚本的出口都统一走这里。
+    （args_schema / auto_saved_args 由调用方各自按需解析，不在这里动。）
+    """
+    if row is None:
+        return None
+    d = dict(row)
+    d["tags"] = _loads(d.get("tags") or "[]", [])
+    return d
+
+
 # ---------- scripts ----------
 
 def add_script(name: str, path: str, args_schema: list[dict], description: str = "", has_inline_meta: bool = False) -> Optional[dict]:
@@ -205,12 +221,12 @@ def add_script(name: str, path: str, args_schema: list[dict], description: str =
                 "UPDATE scripts SET name=?, args_schema=?, description=?, has_inline_meta=?, updated_at=? WHERE id=?",
                 (final_name, _dumps(args_schema), final_desc, 1 if has_inline_meta else 0, ts, existing["id"]),
             )
-            return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (existing["id"],)).fetchone())
+            return _with_tags(conn.execute("SELECT * FROM scripts WHERE id=?", (existing["id"],)).fetchone())
         cur = conn.execute(
             "INSERT INTO scripts(name, path, args_schema, description, has_inline_meta, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
             (name, path, _dumps(args_schema), description or "", 1 if has_inline_meta else 0, ts, ts),
         )
-        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (cur.lastrowid,)).fetchone())
+        return _with_tags(conn.execute("SELECT * FROM scripts WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
 def update_script(script_id: int, name: str | None = None, description: str | None = None,
@@ -241,7 +257,7 @@ def update_script(script_id: int, name: str | None = None, description: str | No
     params.append(script_id)
     with _lock, _conn() as conn:
         conn.execute(f"UPDATE scripts SET {', '.join(sets)} WHERE id=?", params)
-        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
+        return _with_tags(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
 
 
 def update_script_schema(script_id: int, args_schema: list[dict], description: str, has_inline_meta: bool = False) -> Optional[dict]:
@@ -255,7 +271,7 @@ def update_script_schema(script_id: int, args_schema: list[dict], description: s
             "UPDATE scripts SET args_schema=?, description=?, has_inline_meta=?, updated_at=? WHERE id=?",
             (_dumps(args_schema), final_desc, 1 if has_inline_meta else 0, now_iso(), script_id),
         )
-        return dict(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
+        return _with_tags(conn.execute("SELECT * FROM scripts WHERE id=?", (script_id,)).fetchone())
 
 
 def list_scripts() -> list[dict]:

@@ -280,6 +280,9 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .tag-input:focus{outline:none;border-style:solid;border-color:var(--brand-6);background:#fff;}
 .drawer-quick{display:flex;gap:6px;margin-top:14px;flex-wrap:wrap;}
 .drawer-quick .quick-btn{height:28px;}
+/* 状态只是状态：看起来不可点，只有运行中才允许点（= 终止） */
+.status-chip{cursor:default;}
+.status-chip.clickable{cursor:pointer;}
 .drawer-body{flex:1;overflow-y:auto;padding:16px 22px;position:relative;}
 
 /* 环境条 */
@@ -1021,7 +1024,7 @@ body.no-select{user-select:none;}
       </button>
     </div>
     <div class="drawer-quick">
-      <button class="quick-btn" id="q-run-status"><span class="st idle"><i></i>就绪</span></button>
+      <span class="quick-btn status-chip" id="q-run-status" title="运行状态（点击可终止正在运行的实例）"><span class="st idle"><i></i>就绪</span></span>
       <button class="quick-btn" id="q-open-dir" title="在文件管理器中打开所在目录">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>目录
       </button>
@@ -2077,7 +2080,9 @@ function initEditables() {
 
 function renderScriptTags() {
   const box = $('#d-tags');
-  const tags = state.script.tags || [];
+  // tags 正常是数组；接口偶尔回字符串时兜底解析，绝不能让它把整个标签行打崩
+  const raw = state.script && state.script.tags;
+  const tags = Array.isArray(raw) ? raw : jparse(raw, []);
   box.innerHTML = '<span style="font-size:11px;color:var(--ink-4)">标签</span>';
   tags.forEach(t => {
     const el = document.createElement('span');
@@ -2106,7 +2111,9 @@ function renderScriptTags() {
 async function setScriptTags(tags) {
   try {
     const r = await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { tags } });
-    state.script.tags = r.script ? r.script.tags : tags;
+    const back = r.script ? r.script.tags : tags;
+    // 以服务端回读为准（重命名等并发改动也能对齐），类型兜底防止非数组把渲染打崩
+    state.script.tags = Array.isArray(back) ? back : jparse(back, tags);
     renderScriptTags();
     await loadScripts();
   } catch (e) { toast(e.message, 'err'); }
@@ -2523,7 +2530,7 @@ function setRunning(running) {
   btn.classList.toggle('running', running);
   $('#run-label').textContent = running ? '■ 终止' : '▶ 运行';
   $('#dock-terminate').hidden = !running;
-  $('#q-run-status').className = 'quick-btn';
+  $('#q-run-status').className = 'quick-btn status-chip' + (running ? ' clickable' : '');
   const stEl = $('#q-run-status .st') || $('#q-run-status');
   const [cls, label] = running ? ['running', '运行中'] : statusMeta(statusOf(state.selectedId));
   stEl.className = `st ${cls}`;
@@ -4205,7 +4212,11 @@ function initTopbar() {
   $('#q-meta').addEventListener('click', openMetaModal);
   $('#q-reload').addEventListener('click', reloadCurrentScript);
   $('#q-delete').addEventListener('click', deleteCurrentScript);
-  $('#q-run-status').addEventListener('click', runScript);
+  // 状态标签只是显示当前状态，不再当作「运行」按钮；
+  // 只有正在运行时才可点，点它 = 终止当前实例。
+  $('#q-run-status').addEventListener('click', () => {
+    if (state.running) terminateCurrent();
+  });
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#run-popover') && !e.target.closest('.run-badge')) closeRunPopover();

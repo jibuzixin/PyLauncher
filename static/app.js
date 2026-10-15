@@ -943,7 +943,9 @@ function initEditables() {
 
 function renderScriptTags() {
   const box = $('#d-tags');
-  const tags = state.script.tags || [];
+  // tags 正常是数组；接口偶尔回字符串时兜底解析，绝不能让它把整个标签行打崩
+  const raw = state.script && state.script.tags;
+  const tags = Array.isArray(raw) ? raw : jparse(raw, []);
   box.innerHTML = '<span style="font-size:11px;color:var(--ink-4)">标签</span>';
   tags.forEach(t => {
     const el = document.createElement('span');
@@ -972,7 +974,9 @@ function renderScriptTags() {
 async function setScriptTags(tags) {
   try {
     const r = await api(`/api/scripts/${state.selectedId}`, { method: 'PUT', body: { tags } });
-    state.script.tags = r.script ? r.script.tags : tags;
+    const back = r.script ? r.script.tags : tags;
+    // 以服务端回读为准（重命名等并发改动也能对齐），类型兜底防止非数组把渲染打崩
+    state.script.tags = Array.isArray(back) ? back : jparse(back, tags);
     renderScriptTags();
     await loadScripts();
   } catch (e) { toast(e.message, 'err'); }
@@ -1389,7 +1393,7 @@ function setRunning(running) {
   btn.classList.toggle('running', running);
   $('#run-label').textContent = running ? '■ 终止' : '▶ 运行';
   $('#dock-terminate').hidden = !running;
-  $('#q-run-status').className = 'quick-btn';
+  $('#q-run-status').className = 'quick-btn status-chip' + (running ? ' clickable' : '');
   const stEl = $('#q-run-status .st') || $('#q-run-status');
   const [cls, label] = running ? ['running', '运行中'] : statusMeta(statusOf(state.selectedId));
   stEl.className = `st ${cls}`;
@@ -3071,7 +3075,11 @@ function initTopbar() {
   $('#q-meta').addEventListener('click', openMetaModal);
   $('#q-reload').addEventListener('click', reloadCurrentScript);
   $('#q-delete').addEventListener('click', deleteCurrentScript);
-  $('#q-run-status').addEventListener('click', runScript);
+  // 状态标签只是显示当前状态，不再当作「运行」按钮；
+  // 只有正在运行时才可点，点它 = 终止当前实例。
+  $('#q-run-status').addEventListener('click', () => {
+    if (state.running) terminateCurrent();
+  });
 
   document.addEventListener('click', (e) => {
     if (!e.target.closest('#run-popover') && !e.target.closest('.run-badge')) closeRunPopover();
