@@ -347,7 +347,6 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .preset-chip.on .x{color:rgba(255,255,255,.7);}
 .preset-chip.pinned{background:var(--brand-5);border-color:#e3ebfd;color:var(--brand-3);}
 .preset-chip.cover-target{border-color:var(--warning);background:#FFF7E8;color:#8A5A00;animation:pulseDot 1s infinite;}
-.preset-chip.confirm-del{background:#FFF1F1;border-color:var(--danger);color:var(--danger);}
 .more-bubble{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;
   border-radius:var(--r-pill);border:1px dashed var(--line-2);font-size:11px;color:var(--ink-3);
   font-family:"JetBrains Mono",monospace;transition:all var(--t-fast);}

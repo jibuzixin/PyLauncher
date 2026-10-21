@@ -196,7 +196,9 @@ launcher/
 ├── build.sh           # 前端构建（内联 JS/CSS 规避缓存）
 ├── tests_cron.py      # cron 校验与分/时语义回归测试（python -m unittest tests_cron）
 ├── tests_cron_builder.js # 可视化构建器时/分映射回归测试（node tests_cron_builder.js）
-├── tests_launch.py    # 启动只开一个浏览器标签页的回归测试（python -m unittest tests_launch）├── start.command      # macOS 启动脚本
+├── tests_launch.py    # 启动只开一个浏览器标签页的回归测试（python -m unittest tests_launch）
+├── tests_preset_confirm.js # 预设删除/覆盖统一二次确认的回归测试（node tests_preset_confirm.js）
+├── start.command      # macOS 启动脚本
 ├── stop.command       # macOS 停止脚本
 ├── start.bat          # Windows 启动脚本
 ├── stop.bat           # Windows 停止脚本

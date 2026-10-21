@@ -1566,22 +1566,22 @@ async function applyPreset(p) {
   toast(`已应用预设「${p.name}」`);
   api(`/api/presets/${p.id}`, { method: 'PATCH', body: { touch: true } }).catch(() => {});
 }
-function askDeletePreset(chip, p, after) {
-  if (chip.classList.contains('confirm-del')) {
-    clearTimeout(chip._delTimer);
-    api(`/api/presets/${p.id}`, { method: 'DELETE' })
-      .then(async () => {
-        toast(`已删除预设「${p.name}」`);
-        if (state.script) state.script.presets = (state.script.presets || []).filter(x => x.id !== p.id);
-        renderPresets();
-        if (after) after();
-      })
-      .catch(e => toast(e.message, 'err'));
-    return;
-  }
-  chip.classList.add('confirm-del');
-  toast('再次点击 × 确认删除该预设', 'warn');
-  chip._delTimer = setTimeout(() => chip.classList.remove('confirm-del'), 3000);
+/** 删除预设：走项目统一的破坏性操作二次确认（再点一次才真删） */
+function askDeletePreset(btn, p, after) {
+  armDelConfirm(btn, {
+    label: '删除预设',
+    hint: `确认删除预设「${p.name}」？`,
+    onConfirm: () => {
+      api(`/api/presets/${p.id}`, { method: 'DELETE' })
+        .then(async () => {
+          toast(`已删除预设「${p.name}」`);
+          if (state.script) state.script.presets = (state.script.presets || []).filter(x => x.id !== p.id);
+          renderPresets();
+          if (after) after();
+        })
+        .catch(e => toast(e.message, 'err'));
+    },
+  });
 }
 
 /* ---------- 参数表单 ---------- */
@@ -3387,7 +3387,15 @@ function openPresetManager(all) {
         const p = all.find(x => x.id === id);
         const act = btn.dataset.act;
         if (act === 'apply') { closeModal(); applyPreset(p); return; }
-        if (act === 'del') { askDeletePreset(btn, p, () => renderPresets()); all.splice(all.indexOf(p), 1); render(); return; }
+        if (act === 'del') {
+          // 第一次点击只是进入待确认状态；确认删除成功后才把这一行从列表移除
+          askDeletePreset(btn, p, () => {
+            const i = all.indexOf(p);
+            if (i >= 0) all.splice(i, 1);
+            render();
+          });
+          return;
+        }
         try {
           if (act === 'pin') {
             const r = await api(`/api/presets/${id}`, { method: 'PATCH', body: { pinned: !p.pinned } });
@@ -3417,7 +3425,6 @@ async function reloadPresets() {
 
 function openSavePreset() {
   const existing = state.script.presets || [];
-  let pending = null;
   const body = `
     <div class="mfield"><label>预设名称 <span class="req">*</span></label>
       <input type="text" id="preset-name" placeholder="如：生产环境"></div>
@@ -3429,43 +3436,60 @@ function openSavePreset() {
     body,
     foot: [
       { label: '取消' },
-      { label: '保存', primary: true, onClick: async () => {
+      { label: '保存', primary: true, onClick: (b) => {
         const name = ($('#preset-name').value || '').trim();
         if (!name) { toast('请填写预设名称', 'err'); return; }
         const dup = existing.find(p => p.name === name);
-        if (dup && pending !== name) {
-          pending = name;
-          $('#preset-name').value = '';
-          toast(`「${name}」已存在，再点一次「保存」覆盖它`, 'warn');
+        if (dup) {
+          // 同名即覆盖：覆盖会丢掉预设原有参数，属于破坏性操作，
+          // 沿用项目统一的二次确认（2.5 秒内再点一次「保存」才真的覆盖）
+          armDelConfirm(b, {
+            label: '覆盖预设',
+            hint: `确认覆盖预设「${name}」？原有参数将被当前参数替换`,
+            onConfirm: () => savePresetByName(name),
+          });
           return;
         }
-        const values = collectValues();
-        const cp = getCmdParts(state.selectedId);
-        try {
-          const r = await api(`/api/scripts/${state.selectedId}/presets`, {
-            method: 'POST',
-            body: { name, args: values, cmd_prefix: cp.prefix, cmd_suffix: cp.suffix },
-          });
-          closeModal();
-          toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
-          await reloadPresets();
-        } catch (e) { toast(e.message, 'err'); }
+        savePresetByName(name);
       } },
     ],
   });
   const ow = $('#preset-overwrite');
-  if (ow) ow.addEventListener('click', async (e) => {
+  if (ow) ow.addEventListener('click', (e) => {
     const chip = e.target.closest('.preset-chip');
     if (!chip) return;
     const name = chip.dataset.name;
-    const values = collectValues();
-    try {
-      const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
-      closeModal();
-      toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
-      await reloadPresets();
-    } catch (err) { toast(err.message, 'err'); }
+    // 覆盖已有预设同样要二次确认
+    armDelConfirm(chip, {
+      label: '覆盖预设',
+      hint: `确认覆盖预设「${name}」？原有参数将被当前参数替换`,
+      onConfirm: () => overwritePresetByChip(name),
+    });
   });
+}
+/** 新建预设，或覆盖同名预设（一并更新命令前后缀） */
+async function savePresetByName(name) {
+  const values = collectValues();
+  const cp = getCmdParts(state.selectedId);
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}/presets`, {
+      method: 'POST',
+      body: { name, args: values, cmd_prefix: cp.prefix, cmd_suffix: cp.suffix },
+    });
+    closeModal();
+    toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
+    await reloadPresets();
+  } catch (e) { toast(e.message, 'err'); }
+}
+/** 点已有预设直接覆盖：只替换参数，保留该预设原有的命令前后缀 */
+async function overwritePresetByChip(name) {
+  const values = collectValues();
+  try {
+    const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
+    closeModal();
+    toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
+    await reloadPresets();
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 /* ---------- 命令行导入 ---------- */
