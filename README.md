@@ -196,7 +196,7 @@ launcher/
 ├── build.sh           # 前端构建（内联 JS/CSS 规避缓存）
 ├── tests_cron.py      # cron 校验与分/时语义回归测试（python -m unittest tests_cron）
 ├── tests_cron_builder.js # 可视化构建器时/分映射回归测试（node tests_cron_builder.js）
-├── start.command      # macOS 启动脚本
+├── tests_launch.py    # 启动只开一个浏览器标签页的回归测试（python -m unittest tests_launch）├── start.command      # macOS 启动脚本
 ├── stop.command       # macOS 停止脚本
 ├── start.bat          # Windows 启动脚本
 ├── stop.bat           # Windows 停止脚本
@@ -221,3 +221,4 @@ launcher/
 - **依赖装不上** → 确认脚本同目录存在 `requirements.txt` 或 `pyproject.toml`；依赖文件在别处时可在编辑脚本信息中指定路径后点「安装依赖」
 - **端口被占用** → 设置环境变量 `LAUNCHER_PORT` 指定其他端口
 - **定时任务的时间和预期对不上** → cron 表达式是「分 时 日 月 周」五段：想每天 09:00 执行应写 `0 9 * * *`（不是 `9 0 * * *`）。可视化构建器里的时间选择器会按这个规则自动换算，填完请看下方「下次执行」提示核对；提示会显示具体是哪个字段不合法（例如「时字段取值范围是 0-23」）
+- **双击启动脚本弹出两个浏览器标签页** → 已修复：浏览器只由启动脚本打开一次（后端带 `--no-browser` 启动），并且要等端口真正起来才开页面；重复双击也会被识别并跳过重复打开。若你用的是旧版本脚本，请先更新 `start.command` 再启动

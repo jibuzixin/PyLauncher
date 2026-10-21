@@ -11,6 +11,7 @@ import re
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from contextlib import asynccontextmanager
@@ -1548,6 +1549,32 @@ async def index():
 
 # ---------------- 启动 ----------------
 
+def _port_listening(host: str, port: int, timeout: float = 0.5) -> bool:
+    """端口是否已经在监听。"""
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.settimeout(timeout)
+        return s.connect_ex((host, port)) == 0
+
+
+def _when_ready(host: str, port: int, on_ready, timeout: float = 30.0) -> None:
+    """等端口真正监听起来之后回调（守护线程，不阻塞进程退出）。"""
+
+    def _worker() -> None:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if _port_listening(host, port):
+                try:
+                    on_ready()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+            time.sleep(0.4)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+
 def main() -> None:
     import uvicorn
 
@@ -1567,6 +1594,13 @@ def main() -> None:
             host = sys.argv[i + 1]
     no_browser = "--no-browser" in sys.argv
 
+    # 端口已被占用：说明服务早就跑着了，直接提示后退出，
+    # 免得再起一个进程、再开一个浏览器标签页
+    if _port_listening("127.0.0.1", port):
+        print(f"· 端口 {port} 已被占用，服务应该已经在运行了。")
+        print(f"· 直接访问： http://127.0.0.1:{port}/")
+        return
+
     CURRENT_HOST = host
     CURRENT_PORT = port
     if host == "0.0.0.0":
@@ -1577,10 +1611,20 @@ def main() -> None:
         url = f"http://{host}:{port}/?t={int(time.time())}"
         print(f"· Python 脚本启动器已启动: {url}")
 
-    if not no_browser:
-        # 延迟打开浏览器，带时间戳避免复用旧页面，确保加载最新版
-        threading_timer = __import__("threading").Timer(1.2, lambda: webbrowser.open(url))
-        threading_timer.start()
+    # 记录本次启动时刻：启动脚本据此判断"服务是不是刚起来的"，
+    # 重复双击时就不再重复开浏览器标签页
+    started_mark = Path.home() / f".tool-launcher.started.{port}"
+
+    def _on_ready() -> None:
+        try:
+            started_mark.write_text(str(int(time.time())), encoding="utf-8")
+        except OSError:
+            pass
+        if not no_browser:
+            # 等服务端口真正起来再打开浏览器：启动失败时不会多开一个打不开的标签页
+            webbrowser.open(url)
+
+    _when_ready("127.0.0.1", port, _on_ready)
 
     uvicorn.run(app, host=host, port=port, log_level="warning")
 
