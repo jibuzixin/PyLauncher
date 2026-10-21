@@ -43,6 +43,11 @@ svg{flex-shrink:0;}
 [hidden]{display:none !important;}
 .spacer{flex:1;}
 
+/* 动效降级：系统开启「减少动态效果」时，关掉所有过渡与动画（设计规范要求） */
+@media (prefers-reduced-motion: reduce){
+  *,*::before,*::after{animation-duration:.01ms !important;transition-duration:.01ms !important;}
+}
+
 /* 背景光晕 */
 .hero-glow{position:fixed;top:-100px;right:-100px;width:600px;height:600px;
   background:radial-gradient(circle,rgba(20,86,240,.08),transparent 70%);
@@ -348,13 +353,13 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .preset-chips{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0;}
 .preset-chip{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;
   border-radius:var(--r-pill);border:1px solid var(--line-2);background:#fff;
-  font-size:12px;color:var(--ink-2);transition:all var(--t-fast);max-width:190px;}
+  font-size:12px;color:var(--ink-2);max-width:190px;
+  /* 过渡按规范拆开：颜色 200ms，位移 300ms 走 expo-out（同 .btn 的写法） */
+  transition:background .2s,border-color .2s,color .2s,transform .3s var(--ease);}
 .preset-chip:hover{border-color:var(--ink-3);color:var(--ink);background:var(--bg-hover);}
-.preset-chip.on{background:var(--ink);color:#fff;border-color:var(--ink);}
 .preset-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .preset-chip .x{color:var(--ink-4);font-size:13px;line-height:1;}
 .preset-chip:hover .x{color:var(--ink-3);}
-.preset-chip.on .x{color:rgba(255,255,255,.7);}
 .preset-chip.pinned{background:var(--brand-5);border-color:#e3ebfd;color:var(--brand-3);}
 .preset-chip.cover-target{border-color:var(--warning);background:#FFF7E8;color:#8A5A00;animation:pulseDot 1s infinite;}
 .more-bubble{display:inline-flex;align-items:center;gap:4px;height:28px;padding:0 10px;
@@ -394,6 +399,13 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .field textarea{padding:8px 12px;min-height:60px;resize:vertical;line-height:1.5;}
 .field input:focus,.field select:focus,.field textarea:focus{
   outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+/* 套用预设后：被改动的参数框高亮一下再淡回。
+   沿用项目自己的焦点环语言（.field input:focus 的 brand-6 描边 + 柔光），
+   规范里 brand-5 是「浅蓝底」表面色，brand-6 是「亮蓝 / 焦点」。 */
+.field.hit input[type=text],.field.hit input[type=number],.field.hit select,.field.hit textarea{
+  border-color:var(--brand-6);background:var(--brand-5);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.field.hit .switch .track{background:var(--brand-6);}
+.field.hit .switch .track::after{background:#fff;}
 .switch{display:inline-flex;align-items:center;gap:10px;cursor:pointer;}
 .switch input{display:none;}
 .switch .track{width:36px;height:20px;border-radius:999px;background:var(--line-3);
@@ -2748,7 +2760,10 @@ function renderPresets() {
 }
 function presetChip(p) {
   const chip = document.createElement('button');
-  chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '') + (state.activePresetId === p.id ? ' on' : '');
+  // chip 本身不给按压反馈，也不保留「当前应用预设」的持久选中态：
+  // 常态样式始终一致，套用预设在参数框上给反馈（见 highlightChangedFields）
+  chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '');
+  chip.dataset.id = p.id;
   chip.innerHTML = `${p.pinned ? '<span title="已固定">📌</span>' : ''}<span class="nm">${escapeHtml(p.name)}</span><span class="x" title="删除预设">×</span>`;
   chip.addEventListener('click', (e) => {
     if (e.target.classList.contains('x')) { e.stopPropagation(); askDeletePreset(chip, p, () => renderPresets()); return; }
@@ -2756,9 +2771,27 @@ function presetChip(p) {
   });
   return chip;
 }
+/** 套用预设后：把「这次真的被改动」的参数框高亮一下再淡回，
+ *  让用户一眼看到预设改了哪些参数（chip 不做按压反馈，反馈落在这里） */
+function highlightChangedFields(before, after) {
+  const hits = [];
+  for (const [dest, v] of Object.entries(after || {})) {
+    if (v === undefined) continue;
+    const oldV = before[dest];
+    if (oldV === undefined) continue;              // 表单里没有这个参数，不算改动
+    if (String(oldV) === String(v)) continue;      // 值没变，不高亮
+    const field = $(`.field[data-dest="${CSS.escape(dest)}"]`, $('#d-fields'));
+    if (field) hits.push(field);
+  }
+  if (!hits.length) return;
+  hits.forEach(f => f.classList.add('hit'));
+  setTimeout(() => hits.forEach(f => f.classList.remove('hit')), 1200);
+}
 async function applyPreset(p) {
+  const before = collectValues();
   state.activePresetId = p.id;
   fillValues(p.args || {});
+  highlightChangedFields(before, p.args || {});
   await saveArgs(p.args || {});
   // 预设同时携带自定义命令的前后缀，套用预设 = 套用「参数 + 命令补充」整套运行预期
   if (state.selectedId) {

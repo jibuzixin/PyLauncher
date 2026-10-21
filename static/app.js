@@ -1545,7 +1545,10 @@ function renderPresets() {
 }
 function presetChip(p) {
   const chip = document.createElement('button');
-  chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '') + (state.activePresetId === p.id ? ' on' : '');
+  // chip 本身不给按压反馈，也不保留「当前应用预设」的持久选中态：
+  // 常态样式始终一致，套用预设在参数框上给反馈（见 highlightChangedFields）
+  chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '');
+  chip.dataset.id = p.id;
   chip.innerHTML = `${p.pinned ? '<span title="已固定">📌</span>' : ''}<span class="nm">${escapeHtml(p.name)}</span><span class="x" title="删除预设">×</span>`;
   chip.addEventListener('click', (e) => {
     if (e.target.classList.contains('x')) { e.stopPropagation(); askDeletePreset(chip, p, () => renderPresets()); return; }
@@ -1553,9 +1556,27 @@ function presetChip(p) {
   });
   return chip;
 }
+/** 套用预设后：把「这次真的被改动」的参数框高亮一下再淡回，
+ *  让用户一眼看到预设改了哪些参数（chip 不做按压反馈，反馈落在这里） */
+function highlightChangedFields(before, after) {
+  const hits = [];
+  for (const [dest, v] of Object.entries(after || {})) {
+    if (v === undefined) continue;
+    const oldV = before[dest];
+    if (oldV === undefined) continue;              // 表单里没有这个参数，不算改动
+    if (String(oldV) === String(v)) continue;      // 值没变，不高亮
+    const field = $(`.field[data-dest="${CSS.escape(dest)}"]`, $('#d-fields'));
+    if (field) hits.push(field);
+  }
+  if (!hits.length) return;
+  hits.forEach(f => f.classList.add('hit'));
+  setTimeout(() => hits.forEach(f => f.classList.remove('hit')), 1200);
+}
 async function applyPreset(p) {
+  const before = collectValues();
   state.activePresetId = p.id;
   fillValues(p.args || {});
+  highlightChangedFields(before, p.args || {});
   await saveArgs(p.args || {});
   // 预设同时携带自定义命令的前后缀，套用预设 = 套用「参数 + 命令补充」整套运行预期
   if (state.selectedId) {
