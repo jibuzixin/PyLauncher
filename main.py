@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import shlex
 import subprocess
 import sys
@@ -687,6 +688,78 @@ def _cron_next(expr: str, base: datetime) -> datetime:
     return croniter(expr, base).get_next(datetime)
 
 
+# cron 各字段的取值范围与中文名：分 时 日 月 周
+_CRON_FIELDS: tuple[tuple[str, int, int], ...] = (
+    ("分", 0, 59),
+    ("时", 0, 23),
+    ("日", 1, 31),
+    ("月", 1, 12),
+    ("周", 0, 7),
+)
+# croniter 允许的英文别名（月份 / 星期）
+_CRON_ALIAS: dict[int, tuple[str, ...]] = {
+    3: ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"),
+    4: ("sun", "mon", "tue", "wed", "thu", "fri", "sat"),
+}
+
+
+def _cron_field_error(field: str, idx: int) -> Optional[str]:
+    """校验单个 cron 字段，返回错误文案；合法返回 None。"""
+    for raw in field.split(","):
+        p = raw.strip()
+        if not p:
+            return "存在空的取值"
+        seg = p.split("/")
+        if len(seg) > 2:
+            return f"取值 {p} 非法"
+        if len(seg) == 2 and (not seg[1].isdigit() or int(seg[1]) < 1):
+            return f"步长 {seg[1]} 非法"
+        base = seg[0]
+        if base == "*":
+            continue
+        if base.lower() in _CRON_ALIAS.get(idx, ()):
+            continue
+        if not re.fullmatch(r"\d+(-\d+)?", base):
+            return f"取值 {p} 非法"
+        lo_s, _, hi_s = base.partition("-")
+        a = int(lo_s)
+        b = int(hi_s) if hi_s else a
+        lo, hi = _CRON_FIELDS[idx][1], _CRON_FIELDS[idx][2]
+        if a > b:
+            return f"区间 {p} 的起止顺序颠倒了"
+        if a < lo or b > hi:
+            return f"取值范围是 {lo}-{hi}，当前是 {p}"
+    return None
+
+
+def _validate_cron(expr: str) -> Optional[str]:
+    """校验 5 段 cron 表达式（分 时 日 月 周），返回中文错误文案；合法返回 None。
+
+    croniter 自身的报错只说 "out of range"，用户看不出是哪一段越界，
+    这里先按字段做一遍范围检查，把问题说清楚。
+    """
+    parts = expr.split()
+    if len(parts) != 5:
+        return f"cron 需要 5 段（分 时 日 月 周），当前是 {len(parts)} 段"
+    for idx, field in enumerate(parts):
+        err = _cron_field_error(field, idx)
+        if err:
+            return f"{_CRON_FIELDS[idx][0]}字段{err}"
+    return None
+
+
+def _check_cron(expr: str) -> Optional[str]:
+    """表达式校验（字段范围 + croniter 语义），返回错误文案；合法返回 None。"""
+    err = _validate_cron(expr)
+    if err:
+        return err
+    try:
+        _cron_next(expr, datetime.now().astimezone())
+    except Exception as e:  # noqa: BLE001
+        return str(e)
+    return None
+
+
 def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
     """cron 或启停变化后：清空旧计划，并按新 cron 立即重算 next_run。
 
@@ -866,10 +939,9 @@ async def create_schedule(req: ScheduleReq):
     cron = req.cron.strip()
     if not name or not cron:
         return JSONResponse({"ok": False, "error": "名称与 cron 表达式不能为空"}, status_code=400)
-    try:
-        _cron_next(cron, datetime.now().astimezone())
-    except Exception as e:  # noqa: BLE001
-        return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
+    err = _check_cron(cron)
+    if err:
+        return JSONResponse({"ok": False, "error": f"cron 表达式无效：{err}"}, status_code=400)
     s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs, preset_id=req.preset_id)
     _refresh_schedule_plan(s["id"], cron, bool(req.enabled))
     s = db.get_schedule(s["id"])
@@ -879,11 +951,10 @@ async def create_schedule(req: ScheduleReq):
 @app.put("/api/schedules/{schedule_id}")
 async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
     if req.cron is not None:
-        try:
-            _cron_next(req.cron.strip(), datetime.now().astimezone())
-        except Exception as e:  # noqa: BLE001
-            return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)
         req.cron = req.cron.strip()
+        err = _check_cron(req.cron)
+        if err:
+            return JSONResponse({"ok": False, "error": f"cron 表达式无效：{err}"}, status_code=400)
     if req.name is not None:
         req.name = req.name.strip()
     old = db.get_schedule(schedule_id)
@@ -929,8 +1000,12 @@ async def delete_schedule_api(schedule_id: int):
 @app.post("/api/schedules/preview")
 async def preview_cron(req: CronPreviewReq):
     """根据 cron 表达式计算下次执行时间（前端实时预览用）。"""
+    expr = req.cron.strip()
+    err = _check_cron(expr)
+    if err:
+        return JSONResponse({"ok": False, "error": f"cron 表达式无效：{err}"}, status_code=400)
     try:
-        nr = _cron_next(req.cron.strip(), datetime.now().astimezone())
+        nr = _cron_next(expr, datetime.now().astimezone())
         return {"ok": True, "next": _iso(nr)}
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": f"cron 表达式无效：{e}"}, status_code=400)

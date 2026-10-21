@@ -2426,6 +2426,42 @@ const CRON_QUICK = [
 ];
 const WEEK_LABELS = ['一', '二', '三', '四', '五', '六', '日'];
 
+/** cron 各字段的取值范围：分 时 日 月 周 */
+const CRON_RANGES = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+const CRON_FIELD_NAMES = ['分', '时', '日', '月', '周'];
+/** croniter 支持的英文别名：月份 / 星期 */
+const CRON_ALIAS = {
+  3: ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'],
+  4: ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'],
+};
+
+/** 校验 5 段 cron 表达式，返回错误文案；合法则返回空串。
+ *  规则与后端 _validate_cron 一致，前端先拦一道，避免用户对着不透明的报错猜。 */
+function cronValidate(expr) {
+  const parts = String(expr || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length !== 5) return 'cron 需要 5 段：分 时 日 月 周';
+  for (let i = 0; i < 5; i++) {
+    const [lo, hi] = CRON_RANGES[i], label = CRON_FIELD_NAMES[i];
+    for (const raw of parts[i].split(',')) {
+      const p = raw.trim();
+      if (!p) return `${label}字段存在空取值`;
+      const seg = p.split('/');
+      if (seg.length > 2) return `${label}字段取值 ${p} 非法`;
+      if (seg.length === 2 && (!/^\d+$/.test(seg[1]) || Number(seg[1]) < 1))
+        return `${label}字段步长 ${seg[1]} 非法`;
+      const base = seg[0];
+      if (base === '*') continue;
+      if ((CRON_ALIAS[i] || []).includes(base.toLowerCase())) continue;
+      const m = base.match(/^(\d+)(?:-(\d+))?$/);
+      if (!m) return `${label}字段取值 ${p} 非法`;
+      const a = Number(m[1]), b = m[2] === undefined ? a : Number(m[2]);
+      if (a > b) return `${label}字段区间 ${p} 的起止顺序颠倒了`;
+      if (a < lo || b > hi) return `${label}字段取值范围是 ${lo}-${hi}，当前是 ${p}`;
+    }
+  }
+  return '';
+}
+
 async function fetchSchedules() {
   return api('/api/schedules');
 }
@@ -2587,8 +2623,7 @@ function scheduleCard(s, animate = true) {
     get: () => s.cron,
     validate: (v) => {
       if (!v) return 'cron 不能为空';
-      if (v.split(/\s+/).length !== 5) return 'cron 需要 5 段：分 时 日 月 周';
-      return null;
+      return cronValidate(v) || null;
     },
     transform: (v) => v.trim(),
     save: async (v) => { await api(`/api/schedules/${s.id}`, { method: 'PUT', body: { cron: v } }); toast('执行时间已更新'); },
@@ -2793,10 +2828,11 @@ async function openScheduleModal(sched) {
   });
   $$('#modal-body [data-cron]').forEach(b => b.addEventListener('click', () => {
     $('#sc-cron').value = b.dataset.cron;
+    markPreviewPending();
     previewCron();
     syncBuilderFromCron();
   }));
-  $('#sc-cron').addEventListener('input', previewCron);
+  $('#sc-cron').addEventListener('input', () => { markPreviewPending(); previewCron(); });
   $('#sc-freq').addEventListener('change', () => { renderBuilderOpts(); buildCronFromBuilder(); });
   $('#sc-builder-opts').addEventListener('input', () => buildCronFromBuilder());
   $('#sc-builder-opts').addEventListener('change', () => buildCronFromBuilder());
@@ -2873,16 +2909,32 @@ function collectSchedFields() {
   return values;
 }
 
+let previewSeq = 0;
+
+/** 表达式刚改动、预览还在路上时，先把提示标成「计算中」，
+ *  免得提示还停留在上一条表达式的时间上，看着像是算错了。 */
+function markPreviewPending() {
+  const el = $('#sc-preview');
+  if (!el) return;
+  el.className = 'hint';
+  el.textContent = '正在计算下次执行时间…';
+}
+
 const previewCron = debounce(async () => {
   const el = $('#sc-preview');
   if (!el) return;
   const cron = ($('#sc-cron').value || '').trim();
   if (!cron) { el.className = 'hint'; el.textContent = '分 时 日 月 周'; return; }
+  const seq = ++previewSeq;
+  const localErr = cronValidate(cron);
+  if (localErr) { el.className = 'hint err'; el.textContent = `cron 表达式无效：${localErr}`; return; }
   try {
     const r = await api('/api/schedules/preview', { method: 'POST', body: { cron } });
+    if (seq !== previewSeq) return;  // 已有更新的请求在飞：丢弃过期结果，避免显示上一条表达式的时间
     el.className = 'hint ok';
     el.textContent = `下次执行：${fmtFull(r.next)}（${relTime(r.next)}）`;
   } catch (e) {
+    if (seq !== previewSeq) return;
     el.className = 'hint err';
     el.textContent = e.message;
   }
@@ -2895,6 +2947,8 @@ async function submitSchedule() {
   const maxRaw = parseInt($('#sc-max-runs').value, 10);
   if (!name) { toast('请填写任务名称', 'err'); return; }
   if (!cron) { toast('请填写 cron 表达式', 'err'); return; }
+  const cronErr = cronValidate(cron);
+  if (cronErr) { toast(`cron 表达式无效：${cronErr}`, 'err'); return; }
   if (isNaN(maxRaw) || maxRaw < -1 || maxRaw === 0) { toast('执行次数上限需为不小于 1 的整数或 -1', 'err'); return; }
   const presetSel = $('#sc-preset');
   const presetId = presetSel && presetSel.value ? Number(presetSel.value) : null;
@@ -2939,14 +2993,23 @@ function renderBuilderOpts() {
     buildCronFromBuilder();
   }));
 }
+/** <input type="time"> 的值是 "HH:MM"，而 cron 的顺序是「分 时 日 月 周」。
+ *  这里只做一次转换，输出 {mm, hh}，避免把时/分写反。 */
+function timeToCronFields(hhmm) {
+  const t = String(hhmm || '').split(':');
+  const h = String(t[0] ?? '').trim(), m = String(t[1] ?? '').trim();
+  const H = /^\d{1,2}$/.test(h) ? Math.min(23, Math.max(0, parseInt(h, 10))) : 9;
+  const M = /^\d{1,2}$/.test(m) ? Math.min(59, Math.max(0, parseInt(m, 10))) : 0;
+  return { mm: String(M).padStart(2, '0'), hh: String(H).padStart(2, '0') };
+}
+
 function buildCronFromBuilder() {
   const freq = $('#sc-freq').value;
   let cron = '';
   if (freq === 'minute') cron = `*/${$('#sc-n').value || 5} * * * *`;
   else if (freq === 'hour') cron = `${$('#sc-mh').value || 0} */${$('#sc-nh').value || 2} * * *`;
   else {
-    const t = ($('#sc-time').value || '09:00').split(':');
-    const mm = String(t[0] || 0).padStart(2, '0'), hh = String(t[1] || 9).padStart(2, '0');
+    const { mm, hh } = timeToCronFields($('#sc-time').value || '09:00');
     if (freq === 'daily') cron = `${mm} ${hh} * * *`;
     else if (freq === 'monthly') cron = `${mm} ${hh} ${$('#sc-md').value || 1} * *`;
     else {
@@ -2957,6 +3020,7 @@ function buildCronFromBuilder() {
     }
   }
   $('#sc-cron').value = cron;
+  markPreviewPending();
   previewCron();
 }
 function syncBuilderFromCron() {
@@ -2970,7 +3034,7 @@ function syncBuilderFromCron() {
     setFreq('hour'); $('#sc-mh').value = parseInt(mm, 10) || 0; $('#sc-nh').value = hh.slice(2); return;
   }
   const timeVal = `${String(parseInt(hh, 10) || 0).padStart(2, '0')}:${String(parseInt(mm, 10) || 0).padStart(2, '0')}`;
-  if (/^\d+$/.test(dom) && dom !== '1') {
+  if (/^\d+$/.test(dom)) {
     setFreq('monthly'); $('#sc-time').value = timeVal; $('#sc-md').value = parseInt(dom, 10); return;
   }
   if (dow !== '*') {

@@ -194,6 +194,8 @@ launcher/
 ├── assets/            # README 资源（logo / 截图）
 ├── examples/          # 演示脚本（可删除）
 ├── build.sh           # 前端构建（内联 JS/CSS 规避缓存）
+├── tests_cron.py      # cron 校验与分/时语义回归测试（python -m unittest tests_cron）
+├── tests_cron_builder.js # 可视化构建器时/分映射回归测试（node tests_cron_builder.js）
 ├── start.command      # macOS 启动脚本
 ├── stop.command       # macOS 停止脚本
 ├── start.bat          # Windows 启动脚本
@@ -218,3 +220,4 @@ launcher/
 - **脚本导入失败（422）** → 确认路径为绝对路径、文件存在、脚本使用 argparse 且包含至少一个 `add_argument`
 - **依赖装不上** → 确认脚本同目录存在 `requirements.txt` 或 `pyproject.toml`；依赖文件在别处时可在编辑脚本信息中指定路径后点「安装依赖」
 - **端口被占用** → 设置环境变量 `LAUNCHER_PORT` 指定其他端口
+- **定时任务的时间和预期对不上** → cron 表达式是「分 时 日 月 周」五段：想每天 09:00 执行应写 `0 9 * * *`（不是 `9 0 * * *`）。可视化构建器里的时间选择器会按这个规则自动换算，填完请看下方「下次执行」提示核对；提示会显示具体是哪个字段不合法（例如「时字段取值范围是 0-23」）
