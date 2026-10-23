@@ -34,13 +34,15 @@ check('删除预设的提示语与其它删除操作一致（问句 + 预设名�
 check('保存时同名覆盖走 armDelConfirm', openSavePreset.includes('armDelConfirm('));
 check('点已有预设覆盖走 armDelConfirm', openSavePreset.includes('armDelConfirm(chip'));
 check('覆盖提示文案统一', openSavePreset.includes("label: '覆盖预设'")
-  && /确认覆盖预设「\$\{name\}」？原有参数将被当前参数替换/.test(src));
+  && /确认覆盖预设「\$\{name\}」？原有参数与命令前后缀将被当前设置替换/.test(src));
 check('覆盖不再清空预设名称输入框（旧逻辑）', !openSavePreset.includes("$('#preset-name').value = ''"));
 check('覆盖不再用自造的 pending 变量', !/let pending = null/.test(openSavePreset));
 
 /* ---- 覆盖的两条路径各自落库，且语义不互相干扰 ---- */
 check('保存路径带上命令前后缀', savePresetByName.includes('cmd_prefix: cp.prefix'));
-check('点 chip 覆盖只换参数、保留原前后缀', !overwritePresetByChip.includes('cmd_prefix'));
+check('点 chip 覆盖也带上命令前后缀（预设 = 参数 + 前后缀一整套）',
+  overwritePresetByChip.includes('cmd_prefix: cp.prefix')
+  && overwritePresetByChip.includes('cmd_suffix: cp.suffix'));
 
 /* ---- 预设管理弹窗：确认后才从列表移除 ---- */
 check('管理弹窗删除也走 askDeletePreset', openPresetManager.includes('askDeletePreset(btn, p'));

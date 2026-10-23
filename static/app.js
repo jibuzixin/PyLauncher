@@ -639,6 +639,7 @@ function initDock() {
   bindLineCopy(document);
   $('#opt-autoscroll').addEventListener('change', savePrefs);
   setupTabContextMenu();
+  setupDockTabScroll();
   setupDockResize();
   syncDockEff();
   setupCopyFloat();
@@ -937,6 +938,20 @@ async function copyAllOutput(container, label) {
   if (!text) { toast('当前没有可复制的输出', 'warn'); return; }
   const ok = await copyText(text);
   toast(ok ? `已复制${label || '全部输出'}` : '复制失败', ok ? 'ok' : 'err');
+}
+
+/** 控制台标签栏横向滚动：
+ *  标签栏隐藏了系统滚动条（macOS 上默认那条又粗又占地方），
+ *  所以补上「竖向滚轮 → 横向滚动」，鼠标用户也能把多余的标签划出来。 */
+function setupDockTabScroll() {
+  const box = $('#dock-tabs');
+  if (!box) return;
+  box.addEventListener('wheel', (e) => {
+    if (e.deltaX) return;                                  // 触控板本来就在横向滚
+    if (box.scrollWidth <= box.clientWidth + 1) return;     // 装得下就不接管滚动
+    e.preventDefault();
+    box.scrollLeft += e.deltaY;
+  }, { passive: false });
 }
 
 /** 控制台标签页右键菜单：关闭该标签 / 关闭其它 / 关闭全部 */
@@ -1578,13 +1593,18 @@ async function applyPreset(p) {
   fillValues(p.args || {});
   highlightChangedFields(before, p.args || {});
   await saveArgs(p.args || {});
-  // 预设同时携带自定义命令的前后缀，套用预设 = 套用「参数 + 命令补充」整套运行预期
-  if (state.selectedId) {
-    saveCmdParts(state.selectedId, { prefix: p.cmd_prefix || '', suffix: p.cmd_suffix || '' });
+  // 预设 = 一整套运行预期：参数 + 命令前后缀一起带回来。
+  // 预设里没存前后缀（老预设 / 本来就没自定义命令）时保持当前设置不动，
+  // 免得套用一个旧预设就把用户正在用的自定义命令清掉。
+  const cp = (p.cmd_prefix || '').trim();
+  const cs = (p.cmd_suffix || '').trim();
+  const hasCmd = !!(cp || cs);
+  if (hasCmd && state.selectedId) {
+    saveCmdParts(state.selectedId, { prefix: cp, suffix: cs });
   }
   renderPresets();
   refreshCmd();
-  toast(`已应用预设「${p.name}」`);
+  toast(hasCmd ? `已应用预设「${p.name}」（含自定义命令前后缀）` : `已应用预设「${p.name}」`);
   api(`/api/presets/${p.id}`, { method: 'PATCH', body: { touch: true } }).catch(() => {});
 }
 /** 删除预设：走项目统一的破坏性操作二次确认（再点一次才真删） */
@@ -1747,6 +1767,16 @@ function saveCmdParts(id, parts) {
   if (!p.prefix && !p.suffix) localStorage.removeItem(cmdPartsKey(id));
   else localStorage.setItem(cmdPartsKey(id), JSON.stringify(p));
 }
+/** 当前脚本「正在生效」的命令补充段：优先取输入框里的最新内容
+ *  （输入 → 落盘之间有 400ms 防抖，刚敲完就存预设时不能读到旧值） */
+function currentCmdParts() {
+  const stored = getCmdParts(state.selectedId);
+  const pre = $('#cmd-prefix'), suf = $('#cmd-suffix');
+  return {
+    prefix: (pre && typeof pre.value === 'string' ? pre.value : stored.prefix).trim(),
+    suffix: (suf && typeof suf.value === 'string' ? suf.value : stored.suffix).trim(),
+  };
+}
 /** 前缀 + 参数段 + 后缀 → 最终整条命令 */
 function joinCommand(autoCmd, parts) {
   return [parts.prefix, autoCmd, parts.suffix].filter((x) => x && x.trim()).join(' ').trim();
@@ -1777,13 +1807,14 @@ async function resolveRunCommand(values) {
 async function refreshCmd() {
   if (!state.selectedId) return;
   const parts = getCmdParts(state.selectedId);
-  const autoCmd = await buildArgsSegment();
-  const finalCmd = joinCommand(autoCmd, parts);
   const prefixEl = $('#cmd-prefix'), suffixEl = $('#cmd-suffix');
-  const argsEl = $('#cmd-args'), finalEl = $('#cmd-final');
-  // 正在输入的框不覆盖光标
+  // 先把前后缀写回输入框再 await：切换脚本时输入框要立刻换成新脚本的内容，
+  // 不能等命令算完才更新（否则这中间存预设会读到上一个脚本的前后缀）
   if (prefixEl && document.activeElement !== prefixEl) prefixEl.value = parts.prefix;
   if (suffixEl && document.activeElement !== suffixEl) suffixEl.value = parts.suffix;
+  const autoCmd = await buildArgsSegment();
+  const finalCmd = joinCommand(autoCmd, parts);
+  const argsEl = $('#cmd-args'), finalEl = $('#cmd-final');
   if (argsEl) argsEl.value = autoCmd;
   if (finalEl) finalEl.textContent = finalCmd || '（命令为空，请检查参数）';
   const inline = $('#cmd-inline');
@@ -1838,13 +1869,15 @@ function initCmdStrip() {
     const p = getCmdParts(state.selectedId);
     toast((p.prefix || p.suffix) ? '前后缀已保存，运行时会用上' : '已恢复为系统生成的命令');
   });
-  // 边输入边更新「即将运行的完整命令」，并自动保存草稿
-  const onInput = debounce(() => {
+  // 边输入边更新「即将运行的完整命令」：落盘立刻做（防抖只留给命令重算），
+  // 否则刚敲完就点「保存预设」时，预设里存到的还是上一版前后缀
+  const refreshCmdSoon = debounce(() => refreshCmd(), 400);
+  const onInput = () => {
     if (state.selectedId) {
       saveCmdParts(state.selectedId, { prefix: $('#cmd-prefix').value, suffix: $('#cmd-suffix').value });
     }
-    refreshCmd();
-  }, 400);
+    refreshCmdSoon();
+  };
   $('#cmd-prefix').addEventListener('input', onInput);
   $('#cmd-suffix').addEventListener('input', onInput);
 }
@@ -2554,7 +2587,8 @@ function lastStatusClass(txt) {
 }
 
 /** 判断两批定时任务是否等价（轮询时据此决定要不要重绘） */
-const SCHED_SIG_FIELDS = ['id', 'enabled', 'cron', 'max_runs', 'run_count', 'next_run', 'last_run', 'last_status'];
+const SCHED_SIG_FIELDS = ['id', 'enabled', 'cron', 'max_runs', 'run_count', 'next_run', 'last_run', 'last_status',
+  'cmd_prefix', 'cmd_suffix'];
 
 /** 定时任务卡片状态：停用→暂停；已启用还没跑过→就绪；正在跑→运行中；跑完了看上次结果
  *  （文案与样式类对齐 style.css 里已有的 status-pill：success / failed / running /
@@ -2608,7 +2642,9 @@ function scheduleCard(s, animate = true) {
     : s.next_run
       ? `下次<br><span class="t">${escapeHtml(smartTime(s.next_run))}</span>${relTime(s.next_run) ? ` · ${escapeHtml(relTime(s.next_run))}` : ''}`
       : '下次<br><span class="t">待计算</span>';
-  const presetTxt = s.preset_name ? `预设：「${s.preset_name}」` : '参数：手动输入';
+  const hasCmd = !!(s.cmd_prefix || s.cmd_suffix);
+  const presetTxt = (s.preset_name ? `预设：「${s.preset_name}」` : '参数：手动输入')
+    + (hasCmd ? ' · 含自定义命令' : '');
   const lastTxt = `上次：${s.last_run ? smartTime(s.last_run) : '尚未执行'}`;
 
   card.dataset.id = s.id;
@@ -2789,8 +2825,11 @@ async function openScheduleModal(sched) {
     enabled: !!sched.enabled,
     presetId: sched.preset_id || null,
     args: jparse(sched.args, {}),
+    cmdPrefix: sched.cmd_prefix || '',
+    cmdSuffix: sched.cmd_suffix || '',
   } : {
     name: '', scriptId: scripts[0].id, cron: '0 9 * * *', maxRuns: -1, enabled: true, presetId: null, args: {},
+    cmdPrefix: '', cmdSuffix: '',
   };
   schedCtx.current = current;
 
@@ -2820,6 +2859,12 @@ async function openScheduleModal(sched) {
       </div></div>
     <div class="mfield"><label>参数（来自预设或手动填写）</label>
       <div id="sc-fields"></div></div>
+    <div class="mfield"><label>自定义命令前后缀</label>
+      <div class="sc-cmd-row">
+        <input type="text" class="mono" id="sc-cmd-prefix" placeholder="前缀，如 NO_COLOR=1" value="${escapeHtml(current.cmdPrefix || '')}">
+        <input type="text" class="mono" id="sc-cmd-suffix" placeholder="后缀，如 2>&1 | tee run.log" value="${escapeHtml(current.cmdSuffix || '')}">
+      </div>
+      <div class="hint">选预设会自动带出预设里保存的前后缀；绑了预设后执行时优先用预设的值，预设没存则用这里填的。</div></div>
     <div class="mfield-row">
       <div class="mfield"><label>执行次数上限</label>
         <input type="number" id="sc-max-runs" value="${current.maxRuns}" min="-1">
@@ -2856,6 +2901,10 @@ async function openScheduleModal(sched) {
     const opt = e.target.selectedOptions[0];
     const args = opt && opt.dataset.args ? jparse(opt.dataset.args, {}) : {};
     renderSchedFields(args);
+    // 选了预设：把预设里保存的命令前后缀一起带出来（执行时也是预设优先）
+    const pre = ((opt && opt.dataset.cmdPrefix) || '').trim();
+    const suf = ((opt && opt.dataset.cmdSuffix) || '').trim();
+    if (pre || suf) setSchedCmdParts(pre, suf);
   });
   $('#sc-enabled').addEventListener('change', (e) => {
     e.target.nextElementSibling.nextElementSibling.textContent = e.target.checked ? '启用' : '停用';
@@ -2871,13 +2920,14 @@ async function openScheduleModal(sched) {
   $('#sc-builder-opts').addEventListener('input', () => buildCronFromBuilder());
   $('#sc-builder-opts').addEventListener('change', () => buildCronFromBuilder());
 
-  await loadSchedScript(current.scriptId, current.args, current.presetId);
+  await loadSchedScript(current.scriptId, current.args, current.presetId,
+    isEdit ? { prefix: current.cmdPrefix, suffix: current.cmdSuffix } : null);
   renderBuilderOpts();
   syncBuilderFromCron();
   previewCron();
 }
 
-async function loadSchedScript(scriptId, presetArgs, presetId) {
+async function loadSchedScript(scriptId, presetArgs, presetId, cmdParts) {
   schedCtx.scriptId = Number(scriptId);
   schedCtx.schema = []; schedCtx.presets = [];
   try {
@@ -2888,10 +2938,24 @@ async function loadSchedScript(scriptId, presetArgs, presetId) {
   const sel = $('#sc-preset');
   if (sel) {
     sel.innerHTML = '<option value="">手动输入参数</option>'
-      + schedCtx.presets.map(p => `<option value="${p.id}" data-args='${escapeHtml(JSON.stringify(p.args || {}))}'>${escapeHtml(p.name)}</option>`).join('');
+      + schedCtx.presets.map(p => `<option value="${p.id}" data-args='${escapeHtml(JSON.stringify(p.args || {}))}' data-cmd-prefix='${escapeHtml(p.cmd_prefix || '')}' data-cmd-suffix='${escapeHtml(p.cmd_suffix || '')}'>${escapeHtml(p.name)}</option>`).join('');
     if (presetId && schedCtx.presets.some(p => p.id === presetId)) sel.value = String(presetId);
   }
+  // 命令前后缀：预设里存了就用预设的（执行时也是预设优先），
+  // 否则用任务自己存的；新建任务则默认沿用脚本页当前的自定义命令
+  const own = cmdParts || getCmdParts(scriptId);
+  const preset = schedCtx.presets.find(p => String(p.id) === String(presetId));
+  setSchedCmdParts(
+    (preset && preset.cmd_prefix) || own.prefix || '',
+    (preset && preset.cmd_suffix) || own.suffix || '',
+  );
   renderSchedFields(presetArgs || (schedCtx.current && schedCtx.current.args) || {});
+}
+/** 把命令前后缀写进定时任务弹窗的两个输入框 */
+function setSchedCmdParts(prefix, suffix) {
+  const pre = $('#sc-cmd-prefix'), suf = $('#sc-cmd-suffix');
+  if (pre) pre.value = prefix || '';
+  if (suf) suf.value = suffix || '';
 }
 function renderSchedFields(values) {
   const box = $('#sc-fields');
@@ -2987,15 +3051,17 @@ async function submitSchedule() {
   const presetSel = $('#sc-preset');
   const presetId = presetSel && presetSel.value ? Number(presetSel.value) : null;
   const args = collectSchedFields();
+  const cmdPrefix = (($('#sc-cmd-prefix') && $('#sc-cmd-prefix').value) || '').trim();
+  const cmdSuffix = (($('#sc-cmd-suffix') && $('#sc-cmd-suffix').value) || '').trim();
   const enabled = $('#sc-enabled').checked;
   const max_runs = maxRaw === -1 ? null : maxRaw;
   const isEdit = schedCtx.editingId != null;
   try {
     if (isEdit) {
-      await api(`/api/schedules/${schedCtx.editingId}`, { method: 'PUT', body: { name, cron, enabled, args, max_runs, preset_id: presetId } });
+      await api(`/api/schedules/${schedCtx.editingId}`, { method: 'PUT', body: { name, cron, enabled, args, max_runs, preset_id: presetId, cmd_prefix: cmdPrefix, cmd_suffix: cmdSuffix } });
       toast('已保存');
     } else {
-      await api('/api/schedules', { method: 'POST', body: { script_id: scriptId, name, cron, enabled, args, max_runs, preset_id: presetId } });
+      await api('/api/schedules', { method: 'POST', body: { script_id: scriptId, name, cron, enabled, args, max_runs, preset_id: presetId, cmd_prefix: cmdPrefix, cmd_suffix: cmdSuffix } });
       toast('定时任务已创建');
     }
     closeModal();
@@ -3479,7 +3545,7 @@ function openSavePreset() {
           // 沿用项目统一的二次确认（2.5 秒内再点一次「保存」才真的覆盖）
           armDelConfirm(b, {
             label: '覆盖预设',
-            hint: `确认覆盖预设「${name}」？原有参数将被当前参数替换`,
+            hint: `确认覆盖预设「${name}」？原有参数与命令前后缀将被当前设置替换`,
             onConfirm: () => savePresetByName(name),
           });
           return;
@@ -3496,15 +3562,15 @@ function openSavePreset() {
     // 覆盖已有预设同样要二次确认
     armDelConfirm(chip, {
       label: '覆盖预设',
-      hint: `确认覆盖预设「${name}」？原有参数将被当前参数替换`,
+      hint: `确认覆盖预设「${name}」？原有参数与命令前后缀将被当前设置替换`,
       onConfirm: () => overwritePresetByChip(name),
     });
   });
 }
-/** 新建预设，或覆盖同名预设（一并更新命令前后缀） */
+/** 新建预设，或覆盖同名预设（参数 + 命令前后缀一起存） */
 async function savePresetByName(name) {
   const values = collectValues();
-  const cp = getCmdParts(state.selectedId);
+  const cp = currentCmdParts();
   try {
     const r = await api(`/api/scripts/${state.selectedId}/presets`, {
       method: 'POST',
@@ -3515,11 +3581,15 @@ async function savePresetByName(name) {
     await reloadPresets();
   } catch (e) { toast(e.message, 'err'); }
 }
-/** 点已有预设直接覆盖：只替换参数，保留该预设原有的命令前后缀 */
+/** 点已有预设直接覆盖：参数与命令前后缀一起换成当前设置 */
 async function overwritePresetByChip(name) {
   const values = collectValues();
+  const cp = currentCmdParts();
   try {
-    const r = await api(`/api/scripts/${state.selectedId}/presets`, { method: 'POST', body: { name, args: values } });
+    const r = await api(`/api/scripts/${state.selectedId}/presets`, {
+      method: 'POST',
+      body: { name, args: values, cmd_prefix: cp.prefix, cmd_suffix: cp.suffix },
+    });
     closeModal();
     toast(r.overwritten ? `已覆盖预设「${name}」` : '预设已保存');
     await reloadPresets();

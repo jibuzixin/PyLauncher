@@ -92,7 +92,9 @@ CREATE TABLE IF NOT EXISTS schedules (
     last_run TEXT,
     last_status TEXT,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
+    updated_at TEXT NOT NULL,
+    cmd_prefix TEXT NOT NULL DEFAULT '',
+    cmd_suffix TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
 
@@ -124,6 +126,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE schedules ADD COLUMN run_count INTEGER NOT NULL DEFAULT 0")
     if "preset_id" not in scols:
         conn.execute("ALTER TABLE schedules ADD COLUMN preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL")
+    # schedules 表迁移：自定义命令的前缀 / 后缀（定时任务执行时一并用上）
+    if "cmd_prefix" not in scols:
+        conn.execute("ALTER TABLE schedules ADD COLUMN cmd_prefix TEXT NOT NULL DEFAULT ''")
+    if "cmd_suffix" not in scols:
+        conn.execute("ALTER TABLE schedules ADD COLUMN cmd_suffix TEXT NOT NULL DEFAULT ''")
     # scripts 表迁移：自定义虚拟环境（venv_path，空=默认脚本目录 .venv）
     scols = {r[1] for r in conn.execute("PRAGMA table_info(scripts)")}
     if "venv_path" not in scols:
@@ -356,6 +363,15 @@ def find_preset_by_name(script_id: int, name: str) -> Optional[dict]:
         return dict(row) if row else None
 
 
+def get_preset(preset_id: int) -> Optional[dict]:
+    """按 id 取单个预设（定时任务执行时读取预设最新的参数与命令前后缀）。"""
+    if not preset_id:
+        return None
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM presets WHERE id=?", (preset_id,)).fetchone()
+        return dict(row) if row else None
+
+
 def update_preset(preset_id: int, args: dict, cmd_prefix: Optional[str] = None,
                   cmd_suffix: Optional[str] = None) -> dict:
     with _lock, _conn() as conn:
@@ -549,13 +565,16 @@ def get_schedule(schedule_id: int) -> Optional[dict]:
 
 
 def add_schedule(script_id: int, name: str, cron: str, args: dict, enabled: bool = True,
-                max_runs: Optional[int] = None, preset_id: Optional[int] = None) -> dict:
+                max_runs: Optional[int] = None, preset_id: Optional[int] = None,
+                cmd_prefix: str = "", cmd_suffix: str = "") -> dict:
     now = now_iso()
     with _lock, _conn() as conn:
         cur = conn.execute(
-            "INSERT INTO schedules(script_id, name, cron, args, preset_id, enabled, max_runs, created_at, updated_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (script_id, name, cron, _dumps(args), preset_id, 1 if enabled else 0, max_runs, now, now),
+            "INSERT INTO schedules(script_id, name, cron, args, preset_id, enabled, max_runs,"
+            " cmd_prefix, cmd_suffix, created_at, updated_at) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+            (script_id, name, cron, _dumps(args), preset_id, 1 if enabled else 0, max_runs,
+             cmd_prefix or "", cmd_suffix or "", now, now),
         )
         return dict(conn.execute("SELECT * FROM schedules WHERE id=?", (cur.lastrowid,)).fetchone())
 
@@ -568,6 +587,8 @@ def update_schedule(
     enabled: Optional[bool] = None,
     max_runs=_UNSET,
     preset_id=_UNSET,
+    cmd_prefix=_UNSET,
+    cmd_suffix=_UNSET,
 ) -> dict:
     fields, vals = [], []
     if name is not None:
@@ -582,6 +603,10 @@ def update_schedule(
         fields.append("max_runs=?"); vals.append(max_runs)
     if preset_id is not _UNSET:
         fields.append("preset_id=?"); vals.append(preset_id)
+    if cmd_prefix is not _UNSET:
+        fields.append("cmd_prefix=?"); vals.append(cmd_prefix or "")
+    if cmd_suffix is not _UNSET:
+        fields.append("cmd_suffix=?"); vals.append(cmd_suffix or "")
     fields.append("updated_at=?"); vals.append(now_iso())
     vals.append(schedule_id)
     with _lock, _conn() as conn:

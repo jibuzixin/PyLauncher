@@ -207,6 +207,9 @@ class ScheduleReq(BaseModel):
     enabled: bool = True
     max_runs: Optional[int] = None
     preset_id: Optional[int] = None
+    # 自定义命令的前缀 / 后缀：定时任务执行时和参数段一起用上
+    cmd_prefix: Optional[str] = None
+    cmd_suffix: Optional[str] = None
 
 
 class ScheduleUpdateReq(BaseModel):
@@ -216,6 +219,9 @@ class ScheduleUpdateReq(BaseModel):
     enabled: Optional[bool] = None
     max_runs: Optional[int] = None
     preset_id: Optional[int] = None
+    # 自定义命令的前缀 / 后缀：定时任务执行时和参数段一起用上
+    cmd_prefix: Optional[str] = None
+    cmd_suffix: Optional[str] = None
 
 
 class CronPreviewReq(BaseModel):
@@ -809,9 +815,12 @@ def _sched_end(schedule_id: int) -> None:
 
 
 async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str],
-                    venv_path: str = "") -> None:
+                    venv_path: str = "", cmd_text: str = "") -> None:
     """定时触发的一次执行：走标准 session 流程并落库，结束后回写 last_status。"""
     async def coro(emit: Callable) -> dict:
+        # 带自定义前后缀时走「整条命令」路径，和脚本页手动运行时一致
+        if cmd_text:
+            return await _execute_command_task(exec_id, cmd_text, script_path, emit)
         return await _execute_task(exec_id, script_path, arg_list, emit, venv_path)
     status = "failed"
     try:
@@ -855,6 +864,34 @@ def _sched_finish(schedule_id: int, status: str) -> None:
     db.set_schedule_runtime(schedule_id, last_status=status)
 
 
+def _sched_resolve(sched: dict, rec: dict) -> tuple[dict, list[str], str]:
+    """定时任务这一次执行要用的「参数 + 命令」。
+
+    绑定了预设就跟随预设的最新值（参数与命令前后缀都算），
+    没绑定预设则用任务自己保存的快照（用户手动改过的任务以手动值为准）。
+    返回 (args, arg_list, cmd_text)；cmd_text 为空表示按标准方式执行（不套自定义前后缀）。
+    """
+    schema = json.loads(rec.get("args_schema") or "[]")
+    preset = db.get_preset(sched["preset_id"]) if sched.get("preset_id") else None
+    if preset:
+        args = json.loads(preset.get("args") or "{}")
+        cmd_prefix = preset.get("cmd_prefix") or sched.get("cmd_prefix") or ""
+        cmd_suffix = preset.get("cmd_suffix") or sched.get("cmd_suffix") or ""
+    else:
+        args = json.loads(sched.get("args") or "{}")
+        cmd_prefix = sched.get("cmd_prefix") or ""
+        cmd_suffix = sched.get("cmd_suffix") or ""
+    arg_list = build_arg_list(schema, args)
+    cmd_text = ""
+    if cmd_prefix or cmd_suffix:
+        auto = _build_command_text(rec["path"], arg_list, rec.get("venv_path") or "")
+        # 命令生成失败时 _build_command_text 返回的是一行「# 说明」，
+        # 这种情况下不能把它当命令去跑，交给标准执行路径做环境检查
+        if not auto.startswith("#"):
+            cmd_text = " ".join(x for x in (cmd_prefix.strip(), auto, cmd_suffix.strip()) if x and x.strip())
+    return args, arg_list, cmd_text
+
+
 async def _fire_schedule(sched: dict, base: datetime) -> None:
     """到点触发一次定时任务：创建执行记录 + 后台执行 + 更新 next_run/last_run。"""
     now = datetime.now().astimezone()
@@ -866,10 +903,8 @@ async def _fire_schedule(sched: dict, base: datetime) -> None:
     if not rec:
         db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="脚本不存在")
         return
-    schema = json.loads(rec.get("args_schema") or "[]")
-    args = json.loads(sched.get("args") or "{}")
-    arg_list = build_arg_list(schema, args)
-    exec_row = db.add_execution(rec["id"], args, None)
+    args, arg_list, cmd_text = _sched_resolve(sched, rec)
+    exec_row = db.add_execution(rec["id"], args, sched.get("preset_id"), cmd_text)
     exec_id = exec_row["id"]
     _new_session(exec_id)
 
@@ -885,7 +920,8 @@ async def _fire_schedule(sched: dict, base: datetime) -> None:
     # 标记「正在执行」：上一次没跑完时，调度器不再重复触发同一个任务
     _sched_begin(sched["id"])
     db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
-    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list, rec.get("venv_path") or ""))
+    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list,
+                                    rec.get("venv_path") or "", cmd_text))
 
 
 async def _tick_schedules() -> None:
@@ -1026,7 +1062,9 @@ async def create_schedule(req: ScheduleReq):
     err = _check_cron(cron)
     if err:
         return JSONResponse({"ok": False, "error": f"cron 表达式无效：{err}"}, status_code=400)
-    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs, preset_id=req.preset_id)
+    s = db.add_schedule(req.script_id, name, cron, req.args, req.enabled, max_runs=req.max_runs,
+                        preset_id=req.preset_id,
+                        cmd_prefix=req.cmd_prefix or "", cmd_suffix=req.cmd_suffix or "")
     _refresh_schedule_plan(s["id"], cron, bool(req.enabled))
     s = db.get_schedule(s["id"])
     return {"ok": True, "schedule": s}
@@ -1051,6 +1089,8 @@ async def update_schedule_api(schedule_id: int, req: ScheduleUpdateReq):
         enabled=req.enabled,
         max_runs=req.max_runs if "max_runs" in req.model_fields_set else db._UNSET,
         preset_id=req.preset_id if "preset_id" in req.model_fields_set else db._UNSET,
+        cmd_prefix=req.cmd_prefix if "cmd_prefix" in req.model_fields_set else db._UNSET,
+        cmd_suffix=req.cmd_suffix if "cmd_suffix" in req.model_fields_set else db._UNSET,
     )
     # 表达式或启停变化后：清空旧计划并立即重算 next_run，前端保存后即刻看到新时间
     if req.cron is not None or req.enabled is not None or req.max_runs is not None:
