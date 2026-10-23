@@ -765,8 +765,10 @@ def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
     """cron 或启停变化后：清空旧计划，并按新 cron 立即重算 next_run。
 
     这样前端保存/创建后无需等调度器 tick（最长 10 秒）即可拿到正确的下次执行时间。
+    last_status 也要清空：启用 / 改 cron 之后，旧的「已达执行上限，已自动停用」
+    之类的文案已经不适用了，留着会让前端把刚启用的任务显示成「暂停」。
     """
-    db.set_schedule_runtime(schedule_id, clear_next_run=True, last_status=None)
+    db.set_schedule_runtime(schedule_id, clear_next_run=True, clear_last_status=True)
     if enabled:
         try:
             nr = _cron_next(cron, datetime.now().astimezone())

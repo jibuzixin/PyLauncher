@@ -36,6 +36,14 @@ expect('达上限自动停用 → 暂停', {
   enabled: 0, last_run: RUN, last_status: '已达执行上限 1 次，已自动停用（最后一次：success）',
 }, '暂停', 'paused');
 
+/* ---- 重新启用后残留的「已自动停用」旧文案 → 就绪（不能显示成暂停） ---- */
+expect('重新启用后残留「已自动停用」旧文案 → 就绪', {
+  enabled: 1, last_run: RUN, last_status: '已达执行上限 1 次，已自动停用（最后一次：success）',
+}, '就绪', 'ready');
+expect('重新启用后残留「已自动停用（failed）」旧文案 → 就绪', {
+  enabled: 1, last_run: RUN, last_status: '已达执行上限 1 次，已自动停用（最后一次：failed）',
+}, '就绪', 'ready');
+
 /* ---- 已启用但没跑过 → 就绪（这是之前显示成"暂停"的那个 bug） ---- */
 expect('已启用、还没执行过 → 就绪', { enabled: 1, last_run: null, last_status: null }, '就绪', 'ready');
 expect('刚启用（后端清了 last_status）→ 就绪', { enabled: 1, last_run: RUN, last_status: null }, '就绪', 'ready');

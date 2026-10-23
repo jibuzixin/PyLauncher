@@ -3780,10 +3780,12 @@ function schedStatusPill(s) {
   const t = String((s && s.last_status) || '').toLowerCase();
   // 正在执行：后端 _fire_schedule 会把 last_status 置为 running
   if (t.includes('running') || t.includes('运行中')) return '<span class="status-pill running">运行中</span>';
-  // 达上限自动停用：状态里写着"已自动停用"，不管 enabled 此刻是什么都是暂停
-  if (t.includes('停用')) return '<span class="status-pill paused">暂停</span>';
   // 停用：不在跑就是暂停，不再显示上次的结果
   if (!s || !s.enabled) return '<span class="status-pill paused">暂停</span>';
+  // 重新启用后可能还残留着上一次的「已达执行上限，已自动停用」文案：
+  // 任务本身现在是启用的（后端启用时会清空 last_status，这里兜住没清干净的旧数据），
+  // 按「就绪」处理，不能因为旧文案显示成「暂停」
+  if (t.includes('停用')) return '<span class="status-pill ready">就绪</span>';
   // 已启用但还没执行过
   if (!s.last_run) return '<span class="status-pill ready">就绪</span>';
   if (t.includes('terminated') || t.includes('终止')) return '<span class="status-pill terminated">终止</span>';

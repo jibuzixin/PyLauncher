@@ -590,10 +590,14 @@ def set_schedule_runtime(
     run_count: Optional[int] = None,
     enabled: Optional[bool] = None,
     clear_next_run: bool = False,
+    clear_last_status: bool = False,
 ) -> None:
     sets, vals = [], []
     if clear_next_run:
         sets.append("next_run=NULL")
+    # 显式清空：last_status=None 的语义是「不修改」，要清空必须走这个开关
+    if clear_last_status:
+        sets.append("last_status=NULL")
     if next_run is not None:
         sets.append("next_run=?"); vals.append(next_run)
     if last_run is not None:
