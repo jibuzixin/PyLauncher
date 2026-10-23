@@ -2556,20 +2556,31 @@ function lastStatusClass(txt) {
 /** 判断两批定时任务是否等价（轮询时据此决定要不要重绘） */
 const SCHED_SIG_FIELDS = ['id', 'enabled', 'cron', 'max_runs', 'run_count', 'next_run', 'last_run', 'last_status'];
 
-/** 上次执行状态 → 简单状态标签（对齐 demo：只显示 成功 / 失败 / 运行中 / 终止 / 暂停） */
-function schedStatusPill(lastRun, lastStatus) {
-  if (!lastRun) return '<span class="status-pill paused">暂停</span>';
-  const cls = lastStatusClass(lastStatus);
-  const map = { 'last-ok': ['success', '成功'], 'last-fail': ['failed', '失败'], 'last-run': ['running', '运行中'], '': ['paused', '暂停'] };
-  const [c, txt] = map[cls] || map[''];
-  return `<span class="status-pill ${c}">${txt}</span>`;
+/** 定时任务卡片状态：停用→暂停；已启用还没跑过→就绪；正在跑→运行中；跑完了看上次结果
+ *  （文案与样式类对齐 style.css 里已有的 status-pill：success / failed / running /
+ *    terminated / paused，terminated 之前一直没被用上） */
+function schedStatusPill(s) {
+  const t = String((s && s.last_status) || '').toLowerCase();
+  // 正在执行：后端 _fire_schedule 会把 last_status 置为 running
+  if (t.includes('running') || t.includes('运行中')) return '<span class="status-pill running">运行中</span>';
+  // 达上限自动停用：状态里写着"已自动停用"，不管 enabled 此刻是什么都是暂停
+  if (t.includes('停用')) return '<span class="status-pill paused">暂停</span>';
+  // 停用：不在跑就是暂停，不再显示上次的结果
+  if (!s || !s.enabled) return '<span class="status-pill paused">暂停</span>';
+  // 已启用但还没执行过
+  if (!s.last_run) return '<span class="status-pill ready">就绪</span>';
+  if (t.includes('terminated') || t.includes('终止')) return '<span class="status-pill terminated">终止</span>';
+  if (t.includes('success') || t.includes('成功')) return '<span class="status-pill success">成功</span>';
+  if (t.includes('fail') || t.includes('error') || t.includes('无效') || t.includes('不存在'))
+    return '<span class="status-pill failed">失败</span>';
+  return '<span class="status-pill ready">就绪</span>';
 }
 
 /** 只刷新某一张卡片的执行状态，不整块重绘（整块重绘会重放入场动画，看着很闪） */
 function setScheduleStatusDom(id, s) {
   const card = $(`.sched-card[data-id="${id}"]`);
   const el = card ? $('.sched-status', card) : null;
-  if (el) el.innerHTML = schedStatusPill(s.last_run, s.last_status);
+  if (el) el.innerHTML = schedStatusPill(s);
 }
 /** 重新拉取并只更新这一张卡片的状态 */
 async function refreshScheduleStatusDom(id) {
@@ -2622,7 +2633,7 @@ function scheduleCard(s, animate = true) {
     <div class="sched-meta">
       <span class="preset m-ellip" title="${escapeHtml(presetTxt)}">${escapeHtml(presetTxt)}</span>
       <span class="m-last m-ellip" title="${escapeHtml(lastTxt)}">${escapeHtml(lastTxt)}</span>
-      <span class="sched-status">${schedStatusPill(s.last_run, s.last_status)}</span>
+      <span class="sched-status">${schedStatusPill(s)}</span>
     </div>
     <div class="sched-ops">
       <button class="btn btn-solid" data-op="run">▶ 立即运行</button>
