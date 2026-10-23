@@ -348,6 +348,8 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
   transition:background .2s,border-color .2s,color .2s,transform .3s var(--ease);}
 .preset-chip:hover{border-color:var(--ink-3);color:var(--ink);background:var(--bg-hover);}
 .preset-chip .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+/* 带自定义命令前后缀的预设：名字前一个低调的灰点（hover 提示里有具体内容） */
+.preset-chip .cmd-dot{width:6px;height:6px;border-radius:999px;background:var(--ink-3);flex-shrink:0;}
 .preset-chip .x{color:var(--ink-4);font-size:13px;line-height:1;}
 .preset-chip:hover .x{color:var(--ink-3);}
 .preset-chip.pinned{background:var(--brand-5);border-color:#e3ebfd;color:var(--brand-3);}

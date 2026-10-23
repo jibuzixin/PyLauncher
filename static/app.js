@@ -1564,7 +1564,12 @@ function presetChip(p) {
   // 常态样式始终一致，套用预设在参数框上给反馈（见 highlightChangedFields）
   chip.className = 'preset-chip' + (p.pinned ? ' pinned' : '');
   chip.dataset.id = p.id;
-  chip.innerHTML = `${p.pinned ? '<span title="已固定">📌</span>' : ''}<span class="nm">${escapeHtml(p.name)}</span><span class="x" title="删除预设">×</span>`;
+  // 带自定义命令前后缀的预设，名字前标一个灰点（hover 有说明）：
+  // 一眼能看出「这个预设带前缀 / 不带前缀」，不用点进去才知道
+  const cmdParts = [p.cmd_prefix && `前缀 ${p.cmd_prefix}`, p.cmd_suffix && `后缀 ${p.cmd_suffix}`].filter(Boolean);
+  const cmdMark = cmdParts.length
+    ? `<span class="cmd-dot" title="含自定义命令：${escapeHtml(cmdParts.join('　'))}"></span>` : '';
+  chip.innerHTML = `${p.pinned ? '<span title="已固定">📌</span>' : ''}${cmdMark}<span class="nm">${escapeHtml(p.name)}</span><span class="x" title="删除预设">×</span>`;
   chip.addEventListener('click', (e) => {
     if (e.target.classList.contains('x')) { e.stopPropagation(); askDeletePreset(chip, p, () => renderPresets()); return; }
     applyPreset(p);
@@ -1589,22 +1594,26 @@ function highlightChangedFields(before, after) {
 }
 async function applyPreset(p) {
   const before = collectValues();
+  const beforeCmd = currentCmdParts();
   state.activePresetId = p.id;
   fillValues(p.args || {});
   highlightChangedFields(before, p.args || {});
   await saveArgs(p.args || {});
   // 预设 = 一整套运行预期：参数 + 命令前后缀一起带回来。
-  // 预设里没存前后缀（老预设 / 本来就没自定义命令）时保持当前设置不动，
-  // 免得套用一个旧预设就把用户正在用的自定义命令清掉。
+  // 预设里没有前后缀，就是「这个预设不用自定义命令」，当前的前后缀一并清掉。
+  // （不清掉的话，这个不属于任何预设的前缀会混进下一次保存的新预设里，
+  //   等于给一个本来没有前缀的预设硬塞了一个前缀）
   const cp = (p.cmd_prefix || '').trim();
   const cs = (p.cmd_suffix || '').trim();
-  const hasCmd = !!(cp || cs);
-  if (hasCmd && state.selectedId) {
+  if (state.selectedId) {
     saveCmdParts(state.selectedId, { prefix: cp, suffix: cs });
   }
   renderPresets();
   refreshCmd();
-  toast(hasCmd ? `已应用预设「${p.name}」（含自定义命令前后缀）` : `已应用预设「${p.name}」`);
+  const had = !!(beforeCmd.prefix || beforeCmd.suffix);
+  toast(had && !(cp || cs)
+    ? `已应用预设「${p.name}」（该预设不带自定义命令，已清掉当前前后缀）`
+    : (cp || cs) ? `已应用预设「${p.name}」（含自定义命令前后缀）` : `已应用预设「${p.name}」`);
   api(`/api/presets/${p.id}`, { method: 'PATCH', body: { touch: true } }).catch(() => {});
 }
 /** 删除预设：走项目统一的破坏性操作二次确认（再点一次才真删） */

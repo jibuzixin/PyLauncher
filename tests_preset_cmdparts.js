@@ -26,6 +26,14 @@ function sandbox(names, srcCode) {
   return new Function(...keys, `return (async ${srcCode});`)(...vals);
 }
 
+/* 同步函数用这个（保持返回值不是 Promise） */
+function sandboxSync(names, srcCode) {
+  const keys = Object.keys(names);
+  const vals = keys.map(k => names[k]);
+  // eslint-disable-next-line no-new-func
+  return new Function(...keys, `return (${srcCode});`)(...vals);
+}
+
 const applyPresetSrc = extract(src, 'applyPreset');
 const currentCmdPartsSrc = extract(src, 'currentCmdParts');
 const savePresetByNameSrc = extract(src, 'savePresetByName');
@@ -34,6 +42,7 @@ const setSchedCmdPartsSrc = extract(src, 'setSchedCmdParts');
 const submitScheduleSrc = extract(src, 'submitSchedule');
 const loadSchedScriptSrc = extract(src, 'loadSchedScript');
 const setupDockTabScrollSrc = extract(src, 'setupDockTabScroll');
+const presetChipSrc = extract(src, 'presetChip');
 
 /* ---------- 套用预设：前后缀跟着一起回来 ---------- */
 
@@ -43,6 +52,7 @@ function makeApplyPreset(store) {
     $: () => null,
     state: { selectedId: 7, activePresetId: null },
     collectValues: () => ({}),
+    currentCmdParts: () => (store.parts || { prefix: '', suffix: '' }),
     fillValues: () => {},
     highlightChangedFields: () => {},
     saveArgs: async () => {},
@@ -65,13 +75,13 @@ function makeApplyPreset(store) {
       && saved[0].parts.suffix === '2>&1', JSON.stringify(saved));
   }
 
-  // 2) 预设里没有前后缀（老预设）：不能把用户当前的前后缀清掉
+  // 2) 预设里没有前后缀：当前的前后缀要一起清掉（不留残留）
   {
     const store = { parts: { prefix: 'KEEP_ME', suffix: '' } };
     const { fn, saved } = makeApplyPreset(store);
     await fn({ id: 3, name: 'B', args: { url: 'y' }, cmd_prefix: '', cmd_suffix: '' });
-    check('预设没存前后缀时保持当前设置不动（不丢用户自定义命令）', saved.length === 0);
-    check('当前的前后缀仍在', store.parts.prefix === 'KEEP_ME');
+    check('预设没有前后缀时把当前的一并清掉（预设 = 一整套运行预期）', saved.length === 1
+      && saved[0].parts.prefix === '' && saved[0].parts.suffix === '', JSON.stringify(saved));
   }
 
   // 3) 「切到别的预设再切回来」：回来时前缀要跟着回来
@@ -81,6 +91,10 @@ function makeApplyPreset(store) {
     await fn({ id: 2, name: 'B', args: {}, cmd_prefix: '', cmd_suffix: '' });   // 切到 B
     await fn({ id: 1, name: 'A', args: {}, cmd_prefix: 'PREFIX_A', cmd_suffix: '' }); // 再切回 A
     check('切换预设来回后，前后缀跟着预设一起回来', store.parts.prefix === 'PREFIX_A');
+  }
+
+  {
+    check('清掉当前前后缀时明确告诉用户', applyPresetSrc.includes('已清掉当前前后缀'));
   }
 
   /* ---------- 读取当前前后缀：优先输入框里的最新内容 ---------- */
@@ -125,6 +139,46 @@ function makeApplyPreset(store) {
       && b.cmd_prefix === 'P' && b.cmd_suffix === 'S', JSON.stringify(b));
   }
 
+  /* ---------- 完整链路：套用预设 → 保存预设，不能夹带别的前缀 ---------- */
+
+  {
+    // 用户报的坑：套用一个「没有前缀」的预设后，当前残留的前缀
+    // 会被下一次保存的新预设顺手带进去 —— 预设本身没有前缀却被加了一个
+    const store = { prefix: 'STALE_PREFIX', suffix: '' };
+    const els = {
+      '#cmd-prefix': { get value() { return store.prefix; }, set value(v) { store.prefix = v; } },
+      '#cmd-suffix': { get value() { return store.suffix; }, set value(v) { store.suffix = v; } },
+    };
+    const $ = (sel) => els[sel] || null;
+    const state = { selectedId: 7, activePresetId: null };
+    const getCmdParts = () => ({ prefix: store.prefix, suffix: store.suffix });
+    const saveCmdParts = (id, parts) => { store.prefix = parts.prefix; store.suffix = parts.suffix; };
+    let sent = null;
+    const api = async (url, opts) => { sent = opts.body; return {}; };
+    const currentCmdParts = sandboxSync({ $, getCmdParts, state }, currentCmdPartsSrc);
+    const apply = sandbox({
+      $, state, collectValues: () => ({}), currentCmdParts, fillValues: () => {}, highlightChangedFields: () => {},
+      saveArgs: async () => {}, saveCmdParts, renderPresets: () => {}, refreshCmd: () => {},
+      toast: () => {}, api: async () => ({}),
+    }, applyPresetSrc);
+    const save = sandbox({
+      $, state, collectValues: () => ({ url: 'u' }), currentCmdParts, api,
+      closeModal: () => {}, toast: () => {}, reloadPresets: async () => {},
+    }, savePresetByNameSrc);
+
+    await apply({ id: 3, name: '无前缀预设', args: {}, cmd_prefix: '', cmd_suffix: '' });
+    check('套用没有前缀的预设后，当前的前缀不再残留', store.prefix === '', `prefix=${store.prefix}`);
+    await save('新预设');
+    check('保存的新预设不会夹带别人的前缀', sent.cmd_prefix === '' && sent.cmd_suffix === '',
+      JSON.stringify(sent));
+
+    // 反过来：套用带前缀的预设，保存出来的新预设就该带着这个前缀
+    await apply({ id: 4, name: '带前缀预设', args: {}, cmd_prefix: 'PFX', cmd_suffix: 'SFX' });
+    await save('新预设2');
+    check('套用带前缀的预设后，保存的新预设带着同一个前缀',
+      sent.cmd_prefix === 'PFX' && sent.cmd_suffix === 'SFX', JSON.stringify(sent));
+  }
+
   {
     const { fn, getSent } = makeSaver(overwritePresetByChipSrc);
     await fn('我的预设');
@@ -136,6 +190,14 @@ function makeApplyPreset(store) {
   {
     check('两条覆盖提示都说明了前后缀会被一起替换',
       (src.match(/原有参数与命令前后缀将被当前设置替换/g) || []).length === 2);
+  }
+
+  /* ---------- 预设 chip 上标出「带不带自定义命令」 ---------- */
+
+  {
+    check('带自定义命令的预设，chip 上有标记',
+      presetChipSrc.includes('cmd-dot') && presetChipSrc.includes('p.cmd_prefix'));
+    check('标记有样式（低调的灰点）', css.includes('.preset-chip .cmd-dot'));
   }
 
   /* ---------- 定时任务：带着预设的参数与前后缀 ---------- */
