@@ -498,6 +498,19 @@ def mark_stale_running() -> int:
         return cur.rowcount
 
 
+def mark_stale_sched_running() -> int:
+    """服务启动时调用：上一次进程遗留的定时任务 running 状态标记为 failed。
+
+    服务重启时不可能还有定时任务在跑（进程都没了），
+    不清掉的话卡片会一直显示「运行中」。
+    """
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "UPDATE schedules SET last_status='failed' WHERE last_status='running'",
+        )
+        return cur.rowcount
+
+
 def list_running_executions() -> list[dict]:
     """所有正在运行的执行（脚本卡片徽章 / 任务列表用）。"""
     with _conn() as conn:

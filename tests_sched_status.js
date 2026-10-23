@@ -50,7 +50,12 @@ expect('刚启用（后端清了 last_status）→ 就绪', { enabled: 1, last_r
 
 /* ---- 执行中 ---- */
 expect('正在执行 → 运行中', { enabled: 1, last_run: RUN, last_status: 'running' }, '运行中', 'running');
-expect('执行中（即便刚被停用）→ 运行中', { enabled: 0, last_run: RUN, last_status: 'running' }, '运行中', 'running');
+expect('正在执行（即便刚被停用）→ 运行中', { enabled: 0, last_run: RUN, last_status: 'running' }, '运行中', 'running');
+// 次数上限的任务在执行期间：后端此时还没停用，run_count 已经到上限，
+// 状态必须是「运行中」，不能因为次数满了就显示「暂停」
+expect('执行中且次数已到上限 → 运行中（不是暂停）', {
+  enabled: 1, last_run: RUN, last_status: 'running',
+}, '运行中', 'running');
 
 /* ---- 上次结果 ---- */
 expect('上次成功 → 成功', { enabled: 1, last_run: RUN, last_status: 'success' }, '成功', 'success');

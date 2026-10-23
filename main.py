@@ -98,6 +98,13 @@ async def _lifespan(app: FastAPI):
             print(f"[startup] 清理 {n} 条遗留的 running 记录 → failed", flush=True)
     except Exception:  # noqa: BLE001
         pass
+    # 同理：定时任务卡在「运行中」也是上次进程留下的，进程都没了不可能还在跑
+    try:
+        n = db.mark_stale_sched_running()
+        if n:
+            print(f"[startup] 清理 {n} 条遗留的定时任务 running 状态 → failed", flush=True)
+    except Exception:  # noqa: BLE001
+        pass
     # 定时任务调度循环（服务生命周期内常驻）
     task = asyncio.create_task(_schedule_loop())
     try:
@@ -767,8 +774,10 @@ def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
     这样前端保存/创建后无需等调度器 tick（最长 10 秒）即可拿到正确的下次执行时间。
     last_status 也要清空：启用 / 改 cron 之后，旧的「已达执行上限，已自动停用」
     之类的文案已经不适用了，留着会让前端把刚启用的任务显示成「暂停」。
+    但正在执行中的任务不清——那会让卡片中途从「运行中」跳回「就绪」。
     """
-    db.set_schedule_runtime(schedule_id, clear_next_run=True, clear_last_status=True)
+    running = (db.get_schedule(schedule_id) or {}).get("last_status") == "running"
+    db.set_schedule_runtime(schedule_id, clear_next_run=True, clear_last_status=not running)
     if enabled:
         try:
             nr = _cron_next(cron, datetime.now().astimezone())
@@ -777,22 +786,73 @@ def _refresh_schedule_plan(schedule_id: int, cron: str, enabled: bool) -> None:
             db.set_schedule_runtime(schedule_id, last_status=f"cron 无效: {e}")
 
 
+# 正在执行中的定时任务：id → 正在跑的次数
+# 脚本跑完之前不被下一轮 cron 重复触发（执行时间可能超过一个 cron 周期）
+_SCHED_RUNNING: dict[int, int] = {}
+
+
+def _sched_running_count(schedule_id: int) -> int:
+    """该任务当前有几个执行实例在跑。"""
+    return _SCHED_RUNNING.get(schedule_id, 0)
+
+
+def _sched_begin(schedule_id: int) -> None:
+    _SCHED_RUNNING[schedule_id] = _sched_running_count(schedule_id) + 1
+
+
+def _sched_end(schedule_id: int) -> None:
+    n = _sched_running_count(schedule_id) - 1
+    if n > 0:
+        _SCHED_RUNNING[schedule_id] = n
+    else:
+        _SCHED_RUNNING.pop(schedule_id, None)
+
+
 async def _sched_run(exec_id: int, sched: dict, script_path: str, arg_list: list[str],
                     venv_path: str = "") -> None:
     """定时触发的一次执行：走标准 session 流程并落库，结束后回写 last_status。"""
     async def coro(emit: Callable) -> dict:
         return await _execute_task(exec_id, script_path, arg_list, emit, venv_path)
-    result = await _run_in_session(exec_id, coro)
-    status = result.get("status", "unknown")
-    # 已达执行上限自动停用时，保留上限提示而不覆盖为 success/failed
-    cur = db.get_schedule(sched["id"])
+    status = "failed"
+    try:
+        result = await _run_in_session(exec_id, coro) or {}
+        status = result.get("status") or "failed"
+    except asyncio.CancelledError:
+        status = "terminated"
+        raise
+    except Exception:  # noqa: BLE001
+        status = "failed"
+    finally:
+        # 无论成功、失败还是被取消，都要写下终态：
+        # 否则卡片会永远停在「运行中」
+        try:
+            _sched_finish(sched["id"], status)
+        except Exception:  # noqa: BLE001
+            try:
+                db.set_schedule_runtime(sched["id"], last_status=status)
+            except Exception:  # noqa: BLE001
+                pass
+        # 执行收尾（无论成功失败）后，这个任务才允许被下一轮 cron 再次触发
+        _sched_end(sched["id"])
+
+
+def _sched_finish(schedule_id: int, status: str) -> None:
+    """一次执行结束后的收尾：写终态；次数用满了就自动停用。
+
+    次数上限是「跑完之后」才生效的：执行期间任务仍是启用状态、状态是「运行中」，
+    跑完了才停用并写成「暂停」，这样卡片上的状态和实际进程是对得上的。
+    """
+    cur = db.get_schedule(schedule_id)
     if cur:
         max_runs = cur.get("max_runs")
         run_count = cur.get("run_count") or 0
         if max_runs is not None and run_count >= max_runs:
-            db.set_schedule_runtime(sched["id"], last_status=f"已达执行上限 {max_runs} 次，已自动停用（最后一次：{status}）")
+            # 已达执行上限自动停用时，保留上限提示而不覆盖为 success/failed
+            db.set_schedule_runtime(
+                schedule_id, enabled=False,
+                last_status=f"已达执行上限 {max_runs} 次，已自动停用（最后一次：{status}）")
             return
-    db.set_schedule_runtime(sched["id"], last_status=status)
+    db.set_schedule_runtime(schedule_id, last_status=status)
 
 
 async def _fire_schedule(sched: dict, base: datetime) -> None:
@@ -812,23 +872,44 @@ async def _fire_schedule(sched: dict, base: datetime) -> None:
     exec_row = db.add_execution(rec["id"], args, None)
     exec_id = exec_row["id"]
     _new_session(exec_id)
-    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list, rec.get("venv_path") or ""))
-    db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
 
-    # 执行次数计数：达到上限后自动停用，等用户重新启用时重置
+    # 下面几步都在任务真正开始执行之前同步做完，顺序很重要：
+    # 1) 先加执行次数——收尾时（_sched_finish）要按最新的计数判断有没有到上限
+    # 2) 再标记「正在执行」并写 running——卡片此时显示「运行中」
+    # 这里只加计数、只记 running，不停用：
+    # 停用和「已达执行上限」的终态由 _sched_run 在本次执行结束时写，
+    # 否则脚本还在跑，卡片就显示成「暂停」了。
     new_count = (sched.get("run_count") or 0) + 1
-    max_runs = sched.get("max_runs")
-    if max_runs is not None:
+    if sched.get("max_runs") is not None:
         db.set_schedule_runtime(sched["id"], run_count=new_count)
-        if new_count >= max_runs:
-            db.set_schedule_runtime(sched["id"], enabled=False)
-            db.set_schedule_runtime(sched["id"], last_status=f"已达执行上限 {max_runs} 次，已自动停用")
+    # 标记「正在执行」：上一次没跑完时，调度器不再重复触发同一个任务
+    _sched_begin(sched["id"])
+    db.set_schedule_runtime(sched["id"], next_run=_iso(nr), last_run=_iso(now), last_status="running")
+    asyncio.create_task(_sched_run(exec_id, sched, rec["path"], arg_list, rec.get("venv_path") or ""))
 
 
 async def _tick_schedules() -> None:
     now = datetime.now().astimezone()
     for sched in db.list_schedules(only_enabled=True):
         try:
+            # 上一次还在跑：不重复触发（任务执行时间可能超过一个 cron 周期）
+            if _sched_running_count(sched["id"]) > 0:
+                continue
+            # 次数已经用完：停用，不再触发。
+            # 正常情况下执行结束时就停好了（_sched_finish），
+            # 这里兜底「服务重启打断了执行」等异常情况——否则任务会一直启用着反复触发。
+            max_runs = sched.get("max_runs")
+            if max_runs is not None and (sched.get("run_count") or 0) >= max_runs:
+                db.set_schedule_runtime(sched["id"], enabled=False)
+                if (sched.get("last_status") or "") == "running":
+                    # 上次执行被服务重启打断，从没跑到终态：按失败收尾，别一直显示「运行中」
+                    db.set_schedule_runtime(sched["id"], last_status="failed")
+                continue
+            # 兜底：状态卡在「运行中」但进程已经不在了（执行被外部打断），
+            # 收尾成失败，别让卡片永远停在「运行中」
+            if (sched.get("last_status") or "") == "running":
+                db.set_schedule_runtime(sched["id"], last_status="failed")
+                continue
             next_run = _parse_iso(sched.get("next_run"))
             if next_run is None:
                 # 首次启用 / 表达式变更：计算下次执行时间
