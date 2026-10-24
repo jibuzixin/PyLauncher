@@ -806,8 +806,15 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .q-items{list-style:none;margin:0 0 10px;padding:0;border:1px solid var(--line-2);border-radius:8px;
   overflow-y:auto;max-height:220px;background:#fff;}
 .q-items-empty{font-size:11px;color:var(--ink-4);padding:16px;text-align:center;list-style:none;}
-/* 开始时间：纯文本输入 + 快捷键（比原生日期控件跟整体更协调） */
-.q-form input.mono{font-family:"JetBrains Mono",ui-monospace,SF Mono,Menlo,monospace;}
+/* 开始时间：日期 + 时间两个原生选择器（能直接点选），样式跟其它输入框对齐 */
+.q-dt{display:flex;gap:8px;}
+.q-dt input{flex:1 1 0;min-width:0;height:36px;padding:0 10px;border:1px solid var(--line-2);
+  border-radius:8px;font-size:13px;background:#fff;color:var(--ink);
+  font-family:"JetBrains Mono",ui-monospace,SF Mono,Menlo,monospace;}
+.q-dt input:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.q-dt input::-webkit-calendar-picker-indicator{opacity:.32;cursor:pointer;
+  transition:opacity var(--t-fast);filter:grayscale(1);}
+.q-dt input::-webkit-calendar-picker-indicator:hover{opacity:.9;}
 .q-quick{display:flex;gap:6px;margin-top:6px;}
 .q-quick button{height:24px;padding:0 9px;border-radius:6px;border:1px solid var(--line-2);background:#fff;
   font-size:11px;color:var(--ink-3);transition:all var(--t-fast);}
@@ -4774,18 +4781,27 @@ function bindQueueCard(card) {
 
 /* ---------- 队列的新建 / 编辑弹窗 ---------- */
 
-/** ISO → "2026-10-30 16:23"（输入框里用的本地时间） */
+/** ISO → "2026-10-30 16:23"（本地时间，给用户看 / 当默认名字用） */
 function toLocalInput(iso) {
   const d = iso ? new Date(iso) : new Date();
   if (isNaN(d)) return '';
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
-/** "2026-10-30 16:23" → Date（按本地时间解析，Safari 也能吃） */
-function parseLocalInput(str) {
-  const m = String(str || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
-  if (!m) return null;
-  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), 0, 0);
+/** ISO → {date: '2026-10-30', time: '16:23'}（日期 / 时间两个选择器分别用） */
+function splitLocalInput(iso) {
+  const s = toLocalInput(iso);
+  if (!s) return { date: '', time: '' };
+  const [d, t] = s.split(' ');
+  return { date: d, time: t };
+}
+/** "2026-10-30" + "16:23" → Date（按本地时间解析，Safari 也能吃） */
+function parseLocalInput(dateStr, timeStr) {
+  const dm = String(dateStr || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  const tm = String(timeStr || '').trim().match(/^(\d{1,2}):(\d{2})$/);
+  if (!dm || !tm) return null;
+  const d = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]),
+                     Number(tm[1]), Number(tm[2]), 0, 0);
   return isNaN(d) ? null : d;
 }
 /** "2026-10-30 16:23" 这种写法给用户看 / 当默认名字用 */
@@ -4815,8 +4831,8 @@ async function openQueueModal(queue) {
   }));
 
   const startDefault = isEdit
-    ? toLocalInput(queue.start_at)
-    : toLocalInput(new Date(Date.now() + 60000).toISOString());
+    ? splitLocalInput(queue.start_at)
+    : splitLocalInput(new Date(Date.now() + 60000).toISOString());
   const scriptOpts = scripts.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
   const body = `
     <div class="q-form">
@@ -4824,7 +4840,10 @@ async function openQueueModal(queue) {
         <div class="mfield"><label>队列名称</label>
           <input type="text" id="q-name" placeholder="不填就用开始时间" value="${escapeHtml(isEdit ? queue.name : '')}"></div>
         <div class="mfield"><label>开始执行时间 <span class="req">*</span></label>
-          <input type="text" id="q-start" class="mono" placeholder="2026-10-30 16:23" value="${escapeHtml(startDefault)}">
+          <div class="q-dt">
+            <input type="date" id="q-date" value="${escapeHtml(startDefault.date)}" title="选择日期">
+            <input type="time" id="q-time" value="${escapeHtml(startDefault.time)}" title="选择时间">
+          </div>
           <div class="q-quick" id="q-quick">
             <button type="button" data-q="now">现在</button>
             <button type="button" data-q="5m">5 分钟后</button>
@@ -5031,6 +5050,11 @@ async function openQueueModal(queue) {
   });
 
   // 开始时间快捷键
+  const setStart = (d) => {
+    const s = splitLocalInput(d.toISOString());
+    $('#q-date').value = s.date;
+    $('#q-time').value = s.time;
+  };
   $$('#q-quick button').forEach(b => b.addEventListener('click', () => {
     const kind = b.dataset.q;
     const now = new Date();
@@ -5038,7 +5062,7 @@ async function openQueueModal(queue) {
     if (kind === 'now') d = now;
     else if (kind === '5m') d = new Date(now.getTime() + 5 * 60000);
     else d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 8, 0, 0, 0);
-    $('#q-start').value = fmtLocal(d);
+    setStart(d);
   }));
 
   $$('#q-err .q-choice').forEach(ch => ch.addEventListener('click', () => {
@@ -5050,11 +5074,12 @@ async function openQueueModal(queue) {
 
 async function submitQueue() {
   if (!queueCtx) return;
-  const startRaw = ($('#q-start') && $('#q-start').value) || '';
-  const startDate = parseLocalInput(startRaw);
+  const dateStr = ($('#q-date') && $('#q-date').value) || '';
+  const timeStr = ($('#q-time') && $('#q-time').value) || '';
+  const startDate = parseLocalInput(dateStr, timeStr);
   const nameInput = (($('#q-name') && $('#q-name').value) || '').trim();
   const interval = parseInt(($('#q-interval') && $('#q-interval').value) || '5', 10);
-  if (!startDate) { toast('开始时间要写成「2026-10-30 16:23」这样', 'err'); return; }
+  if (!startDate) { toast('请选好开始执行的日期和时间', 'err'); return; }
   if (isNaN(interval) || interval < 0) { toast('任务间隔需要是不小于 0 的整数', 'err'); return; }
   // 名字没填就用开始时间
   const name = nameInput || fmtLocal(startDate);

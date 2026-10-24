@@ -188,15 +188,19 @@ def walk():
         check("新建队列弹窗打开", s.js("!!document.querySelector('#q-name')"))
         check("弹窗里按脚本 + 预设选择",
               s.js("!!document.querySelector('#q-script')") and s.js("!!document.querySelector('#q-preset')"))
-        check("开始时间是自绘的文本框（不是原生日期控件）",
-              s.js("document.querySelector('#q-start').type") == "text")
+        check("开始时间是日期 + 时间两个选择器（能直接点选）",
+              s.js("document.querySelector('#q-date').type") == "date"
+              and s.js("document.querySelector('#q-time').type") == "time")
         check("开始时间有快捷键", s.js("document.querySelectorAll('#q-quick button').length") == 3)
         # 快捷键：5 分钟后
         s.js("document.querySelector('#q-quick button[data-q=\"5m\"]').click()")
         time.sleep(0.3)
-        quick_val = s.js("document.querySelector('#q-start').value || ''")
-        check("点「5 分钟后」能填好开始时间",
-              bool(re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$", quick_val or "")), quick_val)
+        quick_date = s.js("document.querySelector('#q-date').value || ''")
+        quick_time = s.js("document.querySelector('#q-time').value || ''")
+        check("点「5 分钟后」能填好日期和时间",
+              bool(re.match(r"^\d{4}-\d{2}-\d{2}$", quick_date or ""))
+              and bool(re.match(r"^\d{2}:\d{2}$", quick_time or "")),
+              f"{quick_date} {quick_time}")
         s.shot(f"{OUT}/1_modal.png")
 
         # 脚本 → 预设联动 + 命令预览
@@ -329,8 +333,9 @@ def walk():
             document.querySelector('#q-name').value = '实跑验证';
             const d = new Date(Date.now() + 3000);
             const p = n => String(n).padStart(2, '0');
-            document.querySelector('#q-start').value =
-                `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+            document.querySelector('#q-date').value =
+                `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`;
+            document.querySelector('#q-time').value = `${p(d.getHours())}:${p(d.getMinutes())}`;
             document.querySelector('#q-interval').value = '1';
             const sel = document.querySelector('#q-script');
             const bad = Array.from(sel.options).find(o => o.textContent.includes('bad.py'));

@@ -69,29 +69,37 @@ check('成功/失败/跳过都算完成', done({
 check('没有任务 → 0 个完成', done({ items: [] }) === 0);
 check('缺 items 字段也不炸', done({}) === 0);
 
-/* ---- 时间输入：ISO ↔ "2026-10-30 16:23" ---- */
+/* ---- 时间输入：日期 + 时间两个选择器 ---- */
 const tsandbox = {};
 new Function('exports',
   extract(src, 'toLocalInput') + '\n' +
+  extract(src, 'splitLocalInput') + '\n' +
   extract(src, 'parseLocalInput') + '\n' +
   extract(src, 'fmtLocal') + '\n' +
   'exports.toLocalInput = toLocalInput;\n' +
+  'exports.splitLocalInput = splitLocalInput;\n' +
   'exports.parseLocalInput = parseLocalInput;\n' +
   'exports.fmtLocal = fmtLocal;')(tsandbox);
 const toLocalInput = tsandbox.toLocalInput;
+const splitLocalInput = tsandbox.splitLocalInput;
 const parseLocalInput = tsandbox.parseLocalInput;
 const local = toLocalInput('2026-10-24T06:05:00+08:00');
-check('ISO → 输入框文本形如 YYYY-MM-DD HH:mm', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(local), local);
+check('ISO → 文本形如 YYYY-MM-DD HH:mm', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(local), local);
 check('是本地时间（这里应当是 06:05）', local.endsWith('06:05'), local);
 check('空值回退到现在（不炸）', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(toLocalInput('')));
 check('非法日期返回空串', toLocalInput('not-a-date') === '');
-check('文本能解析回本地时间', (() => {
-  const d = parseLocalInput('2026-10-24 06:05');
+const sp = splitLocalInput('2026-10-24T06:05:00+08:00');
+check('拆成日期 / 时间两个值', sp.date === '2026-10-24' && sp.time === '06:05', JSON.stringify(sp));
+check('日期 + 时间能拼回本地时间', (() => {
+  const d = parseLocalInput('2026-10-24', '06:05');
   return d && d.getFullYear() === 2026 && d.getMonth() === 9 && d.getDate() === 24
     && d.getHours() === 6 && d.getMinutes() === 5;
 })());
-check('解析非法文本返回 null', parseLocalInput('明天') === null);
+check('缺日期或时间返回 null',
+  parseLocalInput('', '06:05') === null && parseLocalInput('2026-10-24', '') === null);
 check('名字没填时用开始时间', src.includes('const name = nameInput || fmtLocal(startDate);'));
+check('弹窗用日期 + 时间两个选择器', src.includes('type="date" id="q-date"') && src.includes('type="time" id="q-time"'));
+check('提交时读的是日期和时间两个值', src.includes("const dateStr = ($('#q-date') && $('#q-date').value) || ''"));
 
 /* ---- 源码级断言：接口 ---- */
 check('拉取队列列表用 GET /api/queues', src.includes("api('/api/queues')"));
@@ -171,7 +179,7 @@ for (const cls of ['.queue-grid', '.queue-card', '.queue-head', '.queue-title', 
   '.queue-progress', '.queue-bar', '.queue-items', '.queue-item', '.qi-no', '.qi-name',
   '.qi-preset', '.qi-main', '.qi-ops', '.qi-btn', '.queue-empty', '.queue-ops',
   '.q-items', '.q-item', '.q-picker', '.q-pick', '.q-cmd', '.q-block',
-  '.q-choice', '.q-choice-body', '.q-quick', '.q-clear']) {
+  '.q-choice', '.q-choice-body', '.q-quick', '.q-clear', '.q-dt']) {
   check(`样式表里有 ${cls}`, css.includes(cls));
 }
 check('队列页标题是「运行队列」', tpl.includes('<h1>运行队列</h1>'));
