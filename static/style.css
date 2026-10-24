@@ -730,14 +730,21 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .queue-bar i{display:block;height:100%;background:var(--ink-3);border-radius:999px;
   transition:width var(--t-fast);}
 .queue-items{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
-.queue-item,.q-item{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;
+.queue-item,.q-item{display:flex;align-items:center;gap:10px;padding:9px 10px;font-size:12px;
   border-bottom:1px solid var(--line);background:#fff;}
 .queue-item:last-child,.q-item:last-child{border-bottom:none;}
 .queue-item.running{background:var(--bg-sub);}
 .qi-no{width:18px;height:18px;border-radius:5px;background:var(--bg-sub);color:var(--ink-4);
   font-size:10px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
   font-family:"JetBrains Mono",monospace;}
-.qi-name{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+/* 任务行：脚本名 + 预设名（两个维度） */
+.qi-main{display:flex;align-items:baseline;gap:8px;min-width:0;flex:1 1 auto;}
+.qi-name{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;
+  font-weight:500;}
+.qi-preset{color:var(--ink-4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:0 1 auto;min-width:0;}
+.qi-preset::before{content:'预设 · ';color:var(--ink-4);opacity:.75;}
+.qi-preset.no-preset::before{content:none;}
 .qi-script{color:var(--ink-4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   flex:0 1 auto;min-width:0;}
 .queue-item .status-pill,.q-item .status-pill{flex-shrink:0;padding:0 7px;font-size:10px;height:auto;line-height:16px;}
@@ -745,23 +752,56 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .qi-btn{width:22px;height:22px;border-radius:5px;border:1px solid transparent;background:transparent;
   color:var(--ink-4);font-size:12px;line-height:1;display:inline-flex;align-items:center;
   justify-content:center;cursor:pointer;
-  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);}
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast),transform var(--t-fast);}
 .qi-btn:hover:not(:disabled){background:var(--bg-hover);color:var(--ink);}
+.qi-btn:active:not(:disabled){transform:scale(.9);}
 .qi-btn:disabled{opacity:.35;cursor:default;}
 .qi-btn-x:hover:not(:disabled){background:rgba(253,76,76,.1);color:var(--danger);}
 .queue-empty{font-size:11px;color:var(--ink-4);padding:12px;text-align:center;
   border:1px dashed var(--line-2);border-radius:8px;}
 .queue-ops{display:flex;gap:8px;}
 .queue-ops .btn{flex:1;height:32px;font-size:12px;padding:0 8px;}
-/* 队列弹窗里的任务清单 */
-.q-items{list-style:none;margin:0 0 8px;padding:0;border:1px solid var(--line-2);border-radius:8px;
-  overflow-y:auto;max-height:220px;}
-.q-items-empty{font-size:11px;color:var(--ink-4);padding:14px;text-align:center;list-style:none;}
-.q-add{display:flex;gap:8px;align-items:center;}
-.q-add select{flex:1;height:34px;padding:0 10px;border:1px solid var(--line-2);border-radius:8px;
-  background:#fff;font-size:12px;color:var(--ink);}
-.q-add select:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
-.q-add .btn{height:34px;font-size:12px;padding:0 12px;flex-shrink:0;}
+
+/* 重排时的滑动动效：条目从旧位置滑到新位置，落位时轻轻高亮一下 */
+.queue-item.moving,.q-item.moving{background:var(--bg-sub);}
+.queue-item.moving{transition:transform .3s cubic-bezier(.22,.9,.26,1),background .3s ease;}
+.q-item.moving{transition:transform .3s cubic-bezier(.22,.9,.26,1),background .3s ease;}
+.qi-enter{animation:qiEnter .3s cubic-bezier(.22,.9,.26,1);}
+@keyframes qiEnter{from{opacity:0;transform:translateY(-6px) scale(.98);}to{opacity:1;transform:none;}}
+
+/* ---------- 队列弹窗 ---------- */
+.q-form{display:flex;flex-direction:column;gap:4px;}
+.q-block{margin-top:6px;border:1px solid var(--line);border-radius:10px;padding:12px 12px 10px;
+  background:var(--bg-sub);}
+.q-block-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px;}
+.q-block-title{font-size:12px;font-weight:600;color:var(--ink);}
+.q-block-hint{font-size:11px;color:var(--ink-4);}
+.q-items{list-style:none;margin:0 0 10px;padding:0;border:1px solid var(--line-2);border-radius:8px;
+  overflow-y:auto;max-height:220px;background:#fff;}
+.q-items-empty{font-size:11px;color:var(--ink-4);padding:16px;text-align:center;list-style:none;}
+/* 添加任务：脚本 → 预设 两级选择 */
+.q-picker{border:1px solid var(--line-2);border-radius:8px;background:#fff;padding:10px;}
+.q-picker-row{display:flex;gap:8px;align-items:flex-end;}
+.q-pick{display:flex;flex-direction:column;gap:4px;flex:1 1 0;min-width:0;}
+.q-pick>span{font-size:11px;color:var(--ink-3);font-weight:500;}
+.q-pick select{height:34px;padding:0 10px;border:1px solid var(--line-2);border-radius:8px;
+  background:#fff;font-size:12px;color:var(--ink);width:100%;}
+.q-pick select:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.q-picker-row .btn{height:34px;font-size:12px;padding:0 14px;flex-shrink:0;}
+/* 命令预览：选好脚本 + 预设就能看到实际会跑什么 */
+.q-cmd{display:none;margin-top:8px;padding:8px 10px;border-radius:6px;background:var(--bg-sub);
+  border:1px solid var(--line);font-size:11px;color:var(--ink-3);line-height:1.6;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"JetBrains Mono",monospace;}
+.q-cmd.on{display:block;}
+/* 分段选择（任务出错时怎么办） */
+.seg{display:flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:#fff;}
+.seg-item{flex:1 1 0;display:flex;align-items:center;justify-content:center;gap:6px;
+  height:36px;padding:0 8px;font-size:12px;color:var(--ink-2);cursor:pointer;
+  transition:background var(--t-fast),color var(--t-fast);}
+.seg-item+.seg-item{border-left:1px solid var(--line-2);}
+.seg-item input{accent-color:var(--ink);}
+.seg-item:hover{background:var(--bg-hover);}
+.seg-item.on{background:var(--ink);color:#fff;}
 
 /* ---------- 弹窗 ---------- */
 .modal-mask{position:fixed;inset:0;background:rgba(24,30,37,.4);backdrop-filter:blur(4px);

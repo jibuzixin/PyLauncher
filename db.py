@@ -116,7 +116,11 @@ CREATE TABLE IF NOT EXISTS queues (
 CREATE TABLE IF NOT EXISTS queue_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
-    schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,
+    preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL,  -- 绑预设就跟着预设走
+    args TEXT NOT NULL DEFAULT '{}',          -- 没绑预设时的参数快照
+    cmd_prefix TEXT NOT NULL DEFAULT '',      -- 没绑预设时的命令前缀快照
+    cmd_suffix TEXT NOT NULL DEFAULT '',      -- 没绑预设时的命令后缀快照
     position INTEGER NOT NULL DEFAULT 0,       -- 先进先出：位置小的先跑
     status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / success / failed / skipped
     error TEXT,
@@ -191,6 +195,36 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
+    # queue_items 表迁移：队列任务从「定时任务」改成「脚本 + 预设」两个维度。
+    # 老数据（schedule_id）按定时任务自己的 script_id / preset_id / 参数快照平移过来，
+    # 原来绑了预设的继续跟着预设走，没绑的保留自己的参数与命令前后缀。
+    qcols = {r[1] for r in conn.execute("PRAGMA table_info(queue_items)")}
+    if "schedule_id" in qcols and "script_id" not in qcols:
+        conn.execute("ALTER TABLE queue_items RENAME TO queue_items_old")
+        conn.execute(
+            "CREATE TABLE queue_items ("
+            " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            " queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,"
+            " script_id INTEGER NOT NULL REFERENCES scripts(id) ON DELETE CASCADE,"
+            " preset_id INTEGER REFERENCES presets(id) ON DELETE SET NULL,"
+            " args TEXT NOT NULL DEFAULT '{}',"
+            " cmd_prefix TEXT NOT NULL DEFAULT '',"
+            " cmd_suffix TEXT NOT NULL DEFAULT '',"
+            " position INTEGER NOT NULL DEFAULT 0,"
+            " status TEXT NOT NULL DEFAULT 'pending',"
+            " error TEXT, exec_id INTEGER, started_at TEXT, finished_at TEXT,"
+            " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
+        conn.execute(
+            "INSERT INTO queue_items"
+            " (id, queue_id, script_id, preset_id, args, cmd_prefix, cmd_suffix,"
+            "  position, status, error, exec_id, started_at, finished_at, created_at, updated_at)"
+            " SELECT qi.id, qi.queue_id, s.script_id, s.preset_id, s.args, s.cmd_prefix, s.cmd_suffix,"
+            "        qi.position, qi.status, qi.error, qi.exec_id, qi.started_at, qi.finished_at,"
+            "        qi.created_at, qi.updated_at"
+            " FROM queue_items_old qi LEFT JOIN schedules s ON qi.schedule_id = s.id")
+        conn.execute("DROP TABLE queue_items_old")
+        # 老表上的同名索引会随 DROP 一起消失，所以重建表之后要重新建索引
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_queue_items_queue ON queue_items(queue_id, position)")
 
 
 def now_iso() -> str:
@@ -429,6 +463,15 @@ def list_presets(script_id: int) -> list[dict]:
             "SELECT * FROM presets WHERE script_id=? "
             "ORDER BY pinned DESC, sort_order ASC, created_at DESC",
             (script_id,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_all_presets() -> list[dict]:
+    """所有预设（带 script_id），给「脚本 → 预设」两级选择用。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM presets ORDER BY script_id ASC, pinned DESC, sort_order ASC, created_at DESC"
         ).fetchall()
         return [dict(r) for r in rows]
 
@@ -784,8 +827,9 @@ def restart_queue(queue_id: int) -> None:
 
 # ---------- queue_items ----------
 
-def add_queue_item(queue_id: int, schedule_id: int) -> dict:
-    """加入队尾（先进先出）。"""
+def add_queue_item(queue_id: int, script_id: int, preset_id: Optional[int] = None,
+                   args: Optional[dict] = None, cmd_prefix: str = "", cmd_suffix: str = "") -> dict:
+    """加入队尾（先进先出）。绑了预设就跟着预设走，没绑的存一份参数快照。"""
     now = now_iso()
     with _lock, _conn() as conn:
         row = conn.execute("SELECT COALESCE(MAX(position), -1) FROM queue_items WHERE queue_id=?",
@@ -793,9 +837,11 @@ def add_queue_item(queue_id: int, schedule_id: int) -> dict:
         # 注意：0 是合法位置，不能用 `or` 判断空值（0 会被当成空）
         pos = (row[0] if row[0] is not None else -1) + 1
         cur = conn.execute(
-            "INSERT INTO queue_items(queue_id, schedule_id, position, status, created_at, updated_at)"
-            " VALUES(?,?,?,'pending',?,?)",
-            (queue_id, schedule_id, pos, now, now))
+            "INSERT INTO queue_items(queue_id, script_id, preset_id, args, cmd_prefix, cmd_suffix,"
+            " position, status, created_at, updated_at)"
+            " VALUES(?,?,?,?,?,?,?,'pending',?,?)",
+            (queue_id, script_id, preset_id, _dumps(args or {}), cmd_prefix or "", cmd_suffix or "",
+             pos, now, now))
         return dict(conn.execute("SELECT * FROM queue_items WHERE id=?", (cur.lastrowid,)).fetchone())
 
 
@@ -806,47 +852,59 @@ def get_queue_item(item_id: int) -> Optional[dict]:
 
 
 def list_queue_items(queue_id: int) -> list[dict]:
-    """队列里的任务（按执行顺序），带上定时任务名与脚本名。"""
+    """队列里的任务（按执行顺序），带上脚本名与预设名。"""
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT qi.*, s.name AS schedule_name, s.cron AS schedule_cron,"
-            " sc.name AS script_name, sc.path AS script_path"
+            "SELECT qi.*, sc.name AS script_name, sc.path AS script_path,"
+            " p.name AS preset_name"
             " FROM queue_items qi"
-            " LEFT JOIN schedules s ON qi.schedule_id = s.id"
-            " LEFT JOIN scripts sc ON s.script_id = sc.id"
+            " LEFT JOIN scripts sc ON qi.script_id = sc.id"
+            " LEFT JOIN presets p ON qi.preset_id = p.id"
             " WHERE qi.queue_id=? ORDER BY qi.position ASC, qi.id ASC", (queue_id,)
         ).fetchall()
         return [dict(r) for r in rows]
 
 
-def set_queue_items(queue_id: int, schedule_ids: list[int]) -> list[dict]:
-    """按给定的定时任务顺序重建队列的任务清单。
+def set_queue_items(queue_id: int, plan: list[dict]) -> list[dict]:
+    """按前端给的清单重建队列的任务清单。
 
-    已经在队列里的任务保留原来的执行状态（不会因为调顺序就重置），
-    新加的排在后面，不在列表里的移除掉。
+    plan 里每一项是 {item_id?, script_id, preset_id?, args?, cmd_prefix?, cmd_suffix?}：
+      · 带 item_id 的沿用原来的任务（执行状态不会被重置）
+      · 没带 item_id 的按「脚本 + 预设」新建
+      · 清单里没有的任务移除掉
     """
     now = now_iso()
     with _lock, _conn() as conn:
         existing = {}
         for r in conn.execute("SELECT * FROM queue_items WHERE queue_id=?", (queue_id,)).fetchall():
-            existing.setdefault(r["schedule_id"], dict(r))
+            existing[r["id"]] = dict(r)
+        by_pair = {}
+        for it in existing.values():
+            by_pair.setdefault((it["script_id"], it.get("preset_id")), it)
         keep: set[int] = set()
-        seen: set[int] = set()
         pos = 0
-        for sid in schedule_ids:
-            sid = int(sid)
-            if sid in seen:
-                continue          # 同一个任务在一个队列里只出现一次
-            seen.add(sid)
-            it = existing.get(sid)
-            if it:
-                conn.execute("UPDATE queue_items SET position=?, updated_at=? WHERE id=?",
-                             (pos, now, it["id"]))
+        for entry in plan or []:
+            item_id = entry.get("item_id")
+            it = existing.get(int(item_id)) if item_id else None
+            if it is None:
+                # 没带 id 就按「脚本 + 预设」找一条同款任务复用（避免重复添加）
+                it = by_pair.get((int(entry["script_id"]), entry.get("preset_id")))
+            if it is not None:
+                conn.execute(
+                    "UPDATE queue_items SET position=?, script_id=?, preset_id=?, args=?,"
+                    " cmd_prefix=?, cmd_suffix=?, updated_at=? WHERE id=?",
+                    (pos, int(entry["script_id"]), entry.get("preset_id"),
+                     _dumps(entry.get("args") or {}), entry.get("cmd_prefix") or "",
+                     entry.get("cmd_suffix") or "", now, it["id"]))
                 keep.add(it["id"])
             else:
                 cur = conn.execute(
-                    "INSERT INTO queue_items(queue_id, schedule_id, position, status, created_at, updated_at)"
-                    " VALUES(?,?,?,'pending',?,?)", (queue_id, sid, pos, now, now))
+                    "INSERT INTO queue_items(queue_id, script_id, preset_id, args, cmd_prefix,"
+                    " cmd_suffix, position, status, created_at, updated_at)"
+                    " VALUES(?,?,?,?,?,?,?,'pending',?,?)",
+                    (queue_id, int(entry["script_id"]), entry.get("preset_id"),
+                     _dumps(entry.get("args") or {}), entry.get("cmd_prefix") or "",
+                     entry.get("cmd_suffix") or "", pos, now, now))
                 keep.add(cur.lastrowid)
             pos += 1
         for r in conn.execute("SELECT id FROM queue_items WHERE queue_id=?", (queue_id,)).fetchall():

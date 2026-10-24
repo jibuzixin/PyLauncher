@@ -238,12 +238,12 @@ class CronPreviewReq(BaseModel):
 
 
 class QueueReq(BaseModel):
-    """新建运行队列：名字 + 开始时间 + 间隔 + 出错策略 + 队列里的定时任务。"""
+    """新建运行队列：名字 + 开始时间 + 间隔 + 出错策略 + 队列里的任务（脚本 + 预设）。"""
     name: str
     start_at: str
     interval_seconds: int = 5
     stop_on_error: bool = False
-    schedule_ids: list[int] = []
+    items: list["QueueItemReq"] = []
 
 
 class QueueUpdateReq(BaseModel):
@@ -254,7 +254,17 @@ class QueueUpdateReq(BaseModel):
 
 
 class QueueItemReq(BaseModel):
-    schedule_id: int
+    """队列里的一个任务 = 脚本 + 预设（两个维度）。
+
+    绑了预设就跟着预设走（参数与命令前后缀都取预设的）；
+    没绑预设就用这里带上来的参数 / 前后缀快照。
+    """
+    item_id: Optional[int] = None       # 已在队列里的任务：带上 id 才能保住原来的执行状态
+    script_id: int
+    preset_id: Optional[int] = None
+    args: Optional[dict] = None
+    cmd_prefix: str = ""
+    cmd_suffix: str = ""
 
 
 class QueueMoveReq(BaseModel):
@@ -265,8 +275,9 @@ class QueueRestartReq(BaseModel):
     start_at: Optional[str] = None
 
 
-class QueueReorderReq(BaseModel):
-    schedule_ids: list[int] = []
+class QueueItemsReq(BaseModel):
+    """整份任务清单（前端编辑后一次性提交，顺序即执行顺序）。"""
+    items: list[QueueItemReq] = []
 
 
 class MetaReq(BaseModel):
@@ -933,6 +944,34 @@ def _sched_resolve(sched: dict, rec: dict) -> tuple[dict, list[str], str]:
     return args, arg_list, cmd_text
 
 
+def _queue_resolve(item: dict, rec: dict) -> tuple[dict, list[str], str]:
+    """队列里这一个任务执行时要用的「参数 + 命令」。
+
+    绑了预设就跟随预设的最新值（参数与命令前后缀都算），
+    没绑预设就用加入队列时存的快照。
+    返回 (args, arg_list, cmd_text)；cmd_text 为空表示按标准方式执行（不套自定义前后缀）。
+    """
+    schema = json.loads(rec.get("args_schema") or "[]")
+    preset = db.get_preset(item.get("preset_id")) if item.get("preset_id") else None
+    if preset:
+        args = json.loads(preset.get("args") or "{}")
+        cmd_prefix = preset.get("cmd_prefix") or ""
+        cmd_suffix = preset.get("cmd_suffix") or ""
+    else:
+        args = json.loads(item.get("args") or "{}")
+        cmd_prefix = item.get("cmd_prefix") or ""
+        cmd_suffix = item.get("cmd_suffix") or ""
+    arg_list = build_arg_list(schema, args)
+    cmd_text = ""
+    if cmd_prefix or cmd_suffix:
+        auto = _build_command_text(rec["path"], arg_list, rec.get("venv_path") or "")
+        # 命令生成失败时 _build_command_text 返回的是一行「# 说明」，
+        # 这种情况下不能把它当命令去跑，交给标准执行路径做环境检查
+        if not auto.startswith("#"):
+            cmd_text = " ".join(x for x in (cmd_prefix.strip(), auto, cmd_suffix.strip()) if x and x.strip())
+    return args, arg_list, cmd_text
+
+
 async def _fire_schedule(sched: dict, base: datetime) -> None:
     """到点触发一次定时任务：创建执行记录 + 后台执行 + 更新 next_run/last_run。"""
     now = datetime.now().astimezone()
@@ -1041,14 +1080,13 @@ async def _queue_run_item(queue: dict, item: dict) -> None:
     err = ""
     exec_id = None
     try:
-        sched = db.get_schedule(item["schedule_id"])
-        rec = db.get_script(sched["script_id"]) if sched else None
-        if not sched or not rec:
-            err = "定时任务或脚本已不存在"
+        rec = db.get_script(item["script_id"])
+        if not rec:
+            err = "脚本已不存在"
         else:
-            # 参数与命令前后缀沿用该定时任务自己的设置（绑了预设就跟预设走）
-            args, arg_list, cmd_text = _sched_resolve(sched, rec)
-            exec_row = db.add_execution(rec["id"], args, sched.get("preset_id"), cmd_text)
+            # 参数与命令前后缀：绑了预设就跟预设走，没绑就用队列里存的快照
+            args, arg_list, cmd_text = _queue_resolve(item, rec)
+            exec_row = db.add_execution(rec["id"], args, item.get("preset_id"), cmd_text)
             exec_id = exec_row["id"]
             _new_session(exec_id)
 
@@ -1307,9 +1345,7 @@ async def create_queue(req: QueueReq):
     if not req.start_at:
         return JSONResponse({"ok": False, "error": "请设置队列的开始执行时间"}, status_code=400)
     q = db.add_queue(name, req.start_at, req.interval_seconds, req.stop_on_error)
-    for sid in req.schedule_ids or []:
-        if db.get_schedule(sid):
-            db.add_queue_item(q["id"], sid)
+    db.set_queue_items(q["id"], [it.model_dump() for it in (req.items or [])])
     return {"ok": True, "queue": _queue_detail(q["id"])}
 
 
@@ -1336,22 +1372,22 @@ async def delete_queue_api(queue_id: int):
 
 @app.post("/api/queues/{queue_id}/items")
 async def add_queue_item_api(queue_id: int, req: QueueItemReq):
-    """把一个定时任务加入队尾。"""
+    """把「脚本 + 预设」加到队尾。"""
     if not db.get_queue(queue_id):
         return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
-    if not db.get_schedule(req.schedule_id):
-        return JSONResponse({"ok": False, "error": "定时任务不存在"}, status_code=404)
-    db.add_queue_item(queue_id, req.schedule_id)
+    if not db.get_script(req.script_id):
+        return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
+    db.add_queue_item(queue_id, req.script_id, req.preset_id,
+                      req.args, req.cmd_prefix, req.cmd_suffix)
     return {"ok": True, "queue": _queue_detail(queue_id)}
 
 
-@app.post("/api/queues/{queue_id}/items/reorder")
-async def reorder_queue_items_api(queue_id: int, req: QueueReorderReq):
-    """按给定的定时任务顺序重建队列清单（前端拖动/上下移动后一次性提交）。"""
+@app.put("/api/queues/{queue_id}/items")
+async def set_queue_items_api(queue_id: int, req: QueueItemsReq):
+    """整份任务清单一次性提交（前端编辑后保存，顺序即执行顺序）。"""
     if not db.get_queue(queue_id):
         return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
-    ids = [s for s in (req.schedule_ids or []) if db.get_schedule(s)]
-    db.set_queue_items(queue_id, ids)
+    db.set_queue_items(queue_id, [it.model_dump() for it in (req.items or [])])
     return {"ok": True, "queue": _queue_detail(queue_id)}
 
 
@@ -1583,6 +1619,40 @@ async def move_script(script_id: int, req: MoveReq):
 async def save_auto_args(script_id: int, req: SaveArgsReq):
     db.save_auto_args(script_id, req.args)
     return {"ok": True}
+
+
+@app.get("/api/presets")
+async def list_all_presets_api():
+    """所有预设（带 script_id），给「脚本 → 预设」两级选择用。"""
+    out = []
+    for p in db.list_all_presets():
+        p["args"] = json.loads(p.get("args") or "{}")
+        out.append(p)
+    return out
+
+
+class CmdPreviewReq(BaseModel):
+    """预览某个「脚本 + 预设」组合实际会跑什么命令。"""
+    script_id: int
+    preset_id: Optional[int] = None
+
+
+@app.post("/api/preview-cmd")
+async def preview_cmd(req: CmdPreviewReq):
+    rec = db.get_script(req.script_id)
+    if not rec:
+        return JSONResponse({"ok": False, "error": "脚本不存在"}, status_code=404)
+    item = {"script_id": req.script_id, "preset_id": req.preset_id,
+            "args": "{}", "cmd_prefix": "", "cmd_suffix": ""}
+    args, arg_list, cmd_text = _queue_resolve(item, rec)
+    auto = _build_command_text(rec["path"], arg_list, rec.get("venv_path") or "")
+    if cmd_text:
+        command = cmd_text
+    elif auto.startswith("#"):
+        command = auto          # 生成不了命令时把说明原样返回
+    else:
+        command = auto
+    return {"ok": True, "command": command, "args": args}
 
 
 @app.post("/api/scripts/{script_id}/presets")

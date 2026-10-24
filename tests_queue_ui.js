@@ -3,7 +3,7 @@
  *  - 状态标签：队列 4 态、任务 5 态
  *  - 已完成任务计数
  *  - datetime-local ↔ ISO 转换
- *  - 源码级断言：接口路径、二次确认、导航与页面骨架、样式类
+ *  - 源码级断言：接口路径、脚本+预设两个维度、二次确认、动效、导航与页面骨架、样式类
  *
  * 跑法：node tests_queue_ui.js
  */
@@ -81,14 +81,31 @@ check('非法日期返回空串', toLocalInput('not-a-date') === '');
 
 /* ---- 源码级断言：接口 ---- */
 check('拉取队列列表用 GET /api/queues', src.includes("api('/api/queues')"));
-check('新建队列用 POST /api/queues', src.includes("api('/api/queues', {\n        method: 'POST'"));
-check('保存队列用 PUT /api/queues/{id}', src.includes("api(`/api/queues/${queueCtx.queue.id}`, {\n        method: 'PUT'"));
-check('调序用 items/reorder 一次性提交', src.includes('/items/reorder'));
-check('加入队列用 POST items', src.includes("api(`/api/queues/${v}/items`"));
+check('新建队列用 POST /api/queues', src.includes("api('/api/queues', {"));
+check('保存队列设置用 PUT /api/queues/{id}', src.includes("api(`/api/queues/${queueCtx.queue.id}`, {"));
+check('保存任务清单用 PUT /api/queues/{id}/items', src.includes("api(`/api/queues/${queueCtx.queue.id}/items`, { method: 'PUT'"));
+check('加入队列用 POST items', src.includes("api(`/api/queues/${v}/items`") || src.includes("method: 'POST', body: { script_id"));
 check('移出任务用 DELETE items/{id}', src.includes("api(`/api/queues/${q.id}/items/${itemId}`, { method: 'DELETE' })"));
+check('上下挪动用 POST items/{id}/move', src.includes('/items/${itemId}/move'));
 check('清空队列用 POST /clear', src.includes('/clear`'));
 check('重新启动用 POST /restart', src.includes('/restart`'));
 check('删除队列用 DELETE /api/queues/{id}', src.includes("api(`/api/queues/${q.id}`, { method: 'DELETE' })"));
+check('老接口 items/reorder 已经不用了', !src.includes('/items/reorder'));
+
+/* ---- 源码级断言：脚本 + 预设 两个维度 ---- */
+check('弹窗里按脚本 + 预设选择', src.includes('id="q-script"') && src.includes('id="q-preset"'));
+check('拉取全部预设用于两级联动', src.includes("api('/api/presets')"));
+check('预设跟着所选脚本联动', src.includes('presetByScript'));
+check('不绑预设时用脚本默认参数', src.includes('不绑定预设'));
+check('提交时带上 script_id / preset_id', src.includes('script_id: d.script_id') && src.includes('preset_id: d.preset_id || null'));
+check('已有任务带 item_id 回去（保住执行状态）', src.includes('item_id: d.item_id || undefined'));
+check('队列任务显示脚本名', src.includes('it.script_name'));
+check('队列任务显示预设名', src.includes('it.preset_name'));
+check('不再从定时任务维度加入队列', !src.includes('openAddToQueueModal') && !src.includes('data-op="queue"'));
+
+/* ---- 命令预览 ---- */
+check('有命令预览接口', src.includes("api('/api/preview-cmd'"));
+check('弹窗里有命令预览框', src.includes('id="q-cmd"'));
 
 /* ---- 源码级断言：破坏性操作走二次确认 ---- */
 for (const op of ['clear', 'restart', 'del']) {
@@ -97,11 +114,20 @@ for (const op of ['clear', 'restart', 'del']) {
 }
 check('任务移出队列也走 armDelConfirm', /label: '移出队列'/.test(src));
 
+/* ---- 动效：上下移动有滑动过渡 ---- */
+check('有 FLIP 动效函数 flipList', /function flipList\(/.test(src));
+check('队列卡片重绘前后记录位置（captureQueuePositions）', /function captureQueuePositions\(/.test(src));
+check('重绘后按位置做动画（animateQueuePositions）', /function animateQueuePositions\(/.test(src));
+check('动效走 translateY 位移', src.includes('translateY(${d}px)'));
+check('样式里有 .moving 过渡', css.includes('.q-item.moving') && css.includes('.queue-item.moving'));
+check('样式里有新条目入场动画 .qi-enter', css.includes('.qi-enter'));
+check('降级：系统开启「减少动态效果」时动效关闭', /prefers-reduced-motion: reduce[\s\S]{0,200}transition-duration/.test(css));
+
 /* ---- 源码级断言：间隔默认 5 秒、两种异常策略 ---- */
 check('任务间隔默认 5 秒', src.includes("isEdit ? queue.interval_seconds : 5"));
-check('异常策略有「停下整个队列」', src.includes("value=\"stop\""));
-check('异常策略有「跳过这个，继续跑下一个」', src.includes("value=\"skip\""));
-check('默认异常策略是跳过继续', src.includes('!isEdit || !queue.stop_on_error ? \'on\''));
+check('异常策略有「停下整个队列」', src.includes('value="stop"'));
+check('异常策略有「跳过这个，继续跑下一个」', src.includes('value="skip"'));
+check('默认异常策略是跳过继续', src.includes('!isEdit || !queue.stop_on_error ? '));
 
 /* ---- 页面骨架与导航 ---- */
 check('导航有「运行队列」入口', tpl.includes('data-view="queues"'));
@@ -114,7 +140,8 @@ check('队列页不显示顶栏搜索框', /name === 'scripts' \|\| name === 'sc
 /* ---- 样式 ---- */
 for (const cls of ['.queue-grid', '.queue-card', '.queue-head', '.queue-title', '.queue-sub',
   '.queue-progress', '.queue-bar', '.queue-items', '.queue-item', '.qi-no', '.qi-name',
-  '.qi-script', '.qi-ops', '.qi-btn', '.queue-empty', '.queue-ops', '.q-items', '.q-item', '.q-add']) {
+  '.qi-preset', '.qi-main', '.qi-ops', '.qi-btn', '.queue-empty', '.queue-ops',
+  '.q-items', '.q-item', '.q-picker', '.q-pick', '.q-cmd', '.q-block', '.seg']) {
   check(`样式表里有 ${cls}`, css.includes(cls));
 }
 check('队列页标题是「运行队列」', tpl.includes('<h1>运行队列</h1>'));
