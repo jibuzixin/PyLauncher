@@ -723,7 +723,16 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .queue-head-left{min-width:0;}
 .queue-title{font-size:13px;font-weight:600;color:var(--ink);word-break:break-all;line-height:1.4;}
 .queue-sub{font-size:11px;color:var(--ink-4);margin-top:3px;line-height:1.6;}
-.queue-head-right{flex-shrink:0;}
+.queue-head-right{flex-shrink:0;display:flex;align-items:center;gap:10px;}
+/* 卡片上的启用开关（跟定时任务卡片同一个 .sw） */
+.queue-card .sw{position:relative;display:inline-flex;cursor:pointer;flex-shrink:0;}
+.queue-card .sw input{display:none;}
+.queue-card .sw .track{width:32px;height:18px;border-radius:999px;background:var(--line-3);position:relative;
+  transition:all var(--t-fast);}
+.queue-card .sw .track::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;
+  border-radius:999px;background:#fff;transition:all var(--t-fast);box-shadow:0 1px 3px rgba(0,0,0,.2);}
+.queue-card .sw input:checked + .track{background:var(--ink);}
+.queue-card .sw input:checked + .track::after{left:16px;}
 .queue-progress{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--ink-4);}
 .queue-count{font-family:"JetBrains Mono",monospace;flex-shrink:0;}
 .queue-bar{flex:1;height:4px;border-radius:999px;background:var(--bg-sub);overflow:hidden;}
@@ -745,6 +754,7 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
   flex:0 1 auto;min-width:0;}
 .qi-preset::before{content:'预设 · ';color:var(--ink-4);opacity:.75;}
 .qi-preset.no-preset::before{content:none;}
+.qi-pill{display:inline-flex;align-items:center;flex-shrink:0;}
 .qi-script{color:var(--ink-4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
   flex:0 1 auto;min-width:0;}
 .queue-item .status-pill,.q-item .status-pill{flex-shrink:0;padding:0 7px;font-size:10px;height:auto;line-height:16px;}
@@ -759,6 +769,9 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .qi-btn-x:hover:not(:disabled){background:rgba(253,76,76,.1);color:var(--danger);}
 .queue-empty{font-size:11px;color:var(--ink-4);padding:12px;text-align:center;
   border:1px dashed var(--line-2);border-radius:8px;}
+/* 空清单：整块用虚线框，内部那一行不再单独描边 */
+.queue-items.empty{border-style:dashed;border-color:var(--line-2);background:transparent;}
+.queue-items.empty .queue-empty{border:none;padding:14px;text-align:center;font-size:11px;color:var(--ink-4);}
 .queue-ops{display:flex;gap:8px;}
 .queue-ops .btn{flex:1;height:32px;font-size:12px;padding:0 8px;}
 
@@ -773,12 +786,33 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .q-form{display:flex;flex-direction:column;gap:4px;}
 .q-block{margin-top:6px;border:1px solid var(--line);border-radius:10px;padding:12px 12px 10px;
   background:var(--bg-sub);}
-.q-block-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px;}
+.q-block-head{display:flex;align-items:center;justify-content:space-between;gap:10px;}
 .q-block-title{font-size:12px;font-weight:600;color:var(--ink);}
-.q-block-hint{font-size:11px;color:var(--ink-4);}
+.q-block-hint{font-size:11px;color:var(--ink-4);margin:2px 0 8px;}
+/* 清空按钮：放在编辑框里（卡片上不放） */
+.q-clear{font-size:11px;color:var(--ink-4);padding:2px 8px;border-radius:5px;border:1px solid transparent;
+  transition:all var(--t-fast);}
+.q-clear:hover{color:var(--danger);background:rgba(253,76,76,.08);border-color:rgba(253,76,76,.2);}
 .q-items{list-style:none;margin:0 0 10px;padding:0;border:1px solid var(--line-2);border-radius:8px;
   overflow-y:auto;max-height:220px;background:#fff;}
 .q-items-empty{font-size:11px;color:var(--ink-4);padding:16px;text-align:center;list-style:none;}
+/* 开始时间：纯文本输入 + 快捷键（比原生日期控件跟整体更协调） */
+.q-form input.mono{font-family:"JetBrains Mono",ui-monospace,SF Mono,Menlo,monospace;}
+.q-quick{display:flex;gap:6px;margin-top:6px;}
+.q-quick button{height:24px;padding:0 9px;border-radius:6px;border:1px solid var(--line-2);background:#fff;
+  font-size:11px;color:var(--ink-3);transition:all var(--t-fast);}
+.q-quick button:hover{border-color:var(--ink-4);color:var(--ink);}
+/* 任务出错时：两行说明式选项，比单行单选更清楚 */
+.q-choices{display:flex;flex-direction:column;gap:6px;}
+.q-choice{display:flex;align-items:flex-start;gap:8px;padding:8px 10px;border:1px solid var(--line-2);
+  border-radius:8px;cursor:pointer;transition:all var(--t-fast);background:#fff;}
+.q-choice:hover{border-color:var(--ink-4);}
+.q-choice input{accent-color:var(--ink);margin-top:2px;}
+.q-choice-body{display:flex;flex-direction:column;gap:1px;line-height:1.35;}
+.q-choice-body b{font-size:12px;font-weight:500;color:var(--ink-2);}
+.q-choice-body i{font-style:normal;font-size:11px;color:var(--ink-4);}
+.q-choice.on{border-color:var(--ink);background:var(--bg-sub);}
+.q-choice.on b{color:var(--ink);font-weight:600;}
 /* 添加任务：脚本 → 预设 两级选择 */
 .q-picker{border:1px solid var(--line-2);border-radius:8px;background:#fff;padding:10px;}
 .q-picker-row{display:flex;gap:8px;align-items:flex-end;}
@@ -793,15 +827,6 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
   border:1px solid var(--line);font-size:11px;color:var(--ink-3);line-height:1.6;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:"JetBrains Mono",monospace;}
 .q-cmd.on{display:block;}
-/* 分段选择（任务出错时怎么办） */
-.seg{display:flex;border:1px solid var(--line-2);border-radius:8px;overflow:hidden;background:#fff;}
-.seg-item{flex:1 1 0;display:flex;align-items:center;justify-content:center;gap:6px;
-  height:36px;padding:0 8px;font-size:12px;color:var(--ink-2);cursor:pointer;
-  transition:background var(--t-fast),color var(--t-fast);}
-.seg-item+.seg-item{border-left:1px solid var(--line-2);}
-.seg-item input{accent-color:var(--ink);}
-.seg-item:hover{background:var(--bg-hover);}
-.seg-item.on{background:var(--ink);color:#fff;}
 
 /* ---------- 弹窗 ---------- */
 .modal-mask{position:fixed;inset:0;background:rgba(24,30,37,.4);backdrop-filter:blur(4px);

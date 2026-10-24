@@ -251,6 +251,7 @@ class QueueUpdateReq(BaseModel):
     start_at: Optional[str] = None
     interval_seconds: Optional[int] = None
     stop_on_error: Optional[bool] = None
+    enabled: Optional[bool] = None       # 开关：关掉后不再开跑新的任务（正在跑的不打断）
 
 
 class QueueItemReq(BaseModel):
@@ -1108,19 +1109,30 @@ async def _queue_run_item(queue: dict, item: dict) -> None:
         err = str(e) or e.__class__.__name__
     finally:
         try:
-            db.set_queue_item_status(item["id"], status, error=err or None, exec_id=exec_id,
-                                     finished=True)
-            failed = status not in ("success",)
-            stop = failed and bool(queue.get("stop_on_error"))
-            if stop:
-                # 出错就停下：剩下的任务标成「已跳过」，队列收尾
-                db.skip_pending_queue_items(queue_id)
-                db.set_queue_status(queue_id, "stopped", finished=True)
+            cur = db.get_queue_item(item["id"]) or {}
+            if cur.get("rerun"):
+                # 重新启动时这个任务正在跑：不打断它，跑完回到待执行，整条队重头再来一遍
+                db.reset_queue_item_to_pending(item["id"])
+                db.set_queue_status(queue_id, "pending", clear_next_ready=True)
             else:
-                # 继续下一个：等够间隔再开跑
-                gap = max(0, int(queue.get("interval_seconds") or 0))
-                ready = datetime.now().astimezone() + timedelta(seconds=gap)
-                db.set_queue_status(queue_id, "running", next_ready_at=_iso(ready))
+                db.set_queue_item_status(item["id"], status, error=err or None, exec_id=exec_id,
+                                         finished=True)
+                q_now = db.get_queue(queue_id) or {}
+                if not q_now.get("enabled"):
+                    # 队列被关了：不再往下跑，停在「已关闭」等用户重新打开
+                    db.set_queue_status(queue_id, "paused", clear_next_ready=True)
+                else:
+                    failed = status not in ("success",)
+                    stop = failed and bool(queue.get("stop_on_error"))
+                    if stop:
+                        # 出错就停下：剩下的任务标成「已跳过」，队列收尾
+                        db.skip_pending_queue_items(queue_id)
+                        db.set_queue_status(queue_id, "stopped", finished=True)
+                    else:
+                        # 继续下一个：等够间隔再开跑
+                        gap = max(0, int(queue.get("interval_seconds") or 0))
+                        ready = datetime.now().astimezone() + timedelta(seconds=gap)
+                        db.set_queue_status(queue_id, "running", next_ready_at=_iso(ready))
         except Exception as e:  # noqa: BLE001
             print(f"[queue {queue_id}] 收尾失败: {e}", file=sys.stderr)
         _queue_end(queue_id)
@@ -1131,6 +1143,15 @@ async def _tick_queues() -> None:
     now = datetime.now().astimezone()
     for q in db.list_queues():
         try:
+            if not q.get("enabled"):
+                # 已关闭：不再开跑新的任务（正在跑的那个跑完就停下）
+                if q["status"] in ("pending", "running"):
+                    db.set_queue_status(q["id"], "paused", clear_next_ready=True)
+                continue
+            if q["status"] == "paused":
+                # 重新打开：已经开跑过的接着往下走，还没开始的照原定开始时间
+                db.set_queue_status(q["id"], "running" if q.get("started_at") else "pending")
+                q = db.get_queue(q["id"]) or q
             if q["status"] == "pending":
                 start_at = _parse_iso(q.get("start_at"))
                 if start_at is None or start_at > now:
@@ -1360,7 +1381,15 @@ async def update_queue_api(queue_id: int, req: QueueUpdateReq):
         start_at=req.start_at if req.start_at is not None else None,
         interval_seconds=req.interval_seconds,
         stop_on_error=req.stop_on_error,
+        enabled=req.enabled,
     )
+    # 开关立刻生效：关掉就停下（正在跑的跑完为止），打开就接着往下走
+    if req.enabled is not None:
+        if not req.enabled:
+            if q.get("status") in ("pending", "running"):
+                db.set_queue_status(queue_id, "paused", clear_next_ready=True)
+        elif q.get("status") == "paused":
+            db.set_queue_status(queue_id, "running" if q.get("started_at") else "pending")
     return {"ok": True, "queue": _queue_detail(queue_id)}
 
 

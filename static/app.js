@@ -3083,13 +3083,15 @@ async function submitSchedule() {
 
 /* ---------- 运行队列 ----------
    队列 = 一串「脚本 + 预设」按先进先出的顺序串行执行：
-   到了开始时间就开跑，前一个跑完（成不成都算）才轮到下一个；
-   前一个失败不影响后一个，除非队列设了「出错就停下」。 */
+   到了开始时间就开跑，前一个跑完（成不都算）才轮到下一个；
+   前一个失败不影响后一个，除非队列设了「出错就停下」。
+   开关关掉 → 不再开跑新任务（正在跑的不打断），打开 → 接着往下走。 */
 const QUEUE_STATUS_META = {
   pending: { cls: 'ready', label: '等待开始' },
   running: { cls: 'running', label: '运行中' },
   done: { cls: 'success', label: '已完成' },
   stopped: { cls: 'terminated', label: '已中止' },
+  paused: { cls: 'paused', label: '已关闭' },
 };
 function queueStatusPill(q) {
   const m = QUEUE_STATUS_META[(q && q.status)] || QUEUE_STATUS_META.pending;
@@ -3168,13 +3170,15 @@ function animateQueuePositions(wrap, before) {
   });
 }
 
+/* ---------- 队列卡片 ---------- */
+
 async function renderQueues(silent = false) {
   const wrap = $('#queue-grid');
   if (!wrap) return;
   let list = [];
   try { list = await api('/api/queues'); } catch (e) { if (!silent) toast(e.message, 'err'); return; }
   // 指纹：队列本身的设置 + 每个任务的状态，任一变化才重绘（避免轮询时闪烁）
-  const sig = signature(list, ['id', 'name', 'status', 'start_at', 'interval_seconds', 'stop_on_error'])
+  const sig = signature(list, ['id', 'name', 'status', 'start_at', 'interval_seconds', 'stop_on_error', 'enabled'])
     + '|' + list.map(q => (q.items || []).map(i => `${i.id}:${i.status}`).join(',')).join(';');
   if (silent && sig === state.queueSig) return;
   state.queueSig = sig;
@@ -3182,116 +3186,204 @@ async function renderQueues(silent = false) {
   const running = list.filter(q => q.status === 'running').length;
   const badge = $('#queue-badge');
   if (badge) { badge.hidden = running === 0; badge.textContent = running; }
-  const before = captureQueuePositions(wrap);
+
   if (!list.length) {
     wrap.innerHTML = `<div class="empty">还没有运行队列。<div class="empty-act">
       <button class="btn btn-solid" onclick="document.getElementById('btn-new-queue').click()">新建队列</button></div></div>`;
     return;
   }
-  wrap.innerHTML = '';
-  for (const q of list) wrap.appendChild(queueCard(q));
+  const before = captureQueuePositions(wrap);
+  // 就地更新：已有的卡片只改内容，不整块重建（不然每次都会闪一下）
+  const existing = new Map();
+  wrap.querySelectorAll('.queue-card').forEach(c => existing.set(c.dataset.id, c));
+  const emptyEl = wrap.querySelector('.empty');
+  if (emptyEl) emptyEl.remove();
+  const seen = new Set();
+  list.forEach((q, idx) => {
+    const key = String(q.id);
+    seen.add(key);
+    let card = existing.get(key);
+    if (!card) card = queueCard(q);
+    else updateQueueCard(card, q);
+    // 只在位置不对时才挪动节点：搬动节点等于重建，会闪一下
+    const cur = wrap.children[idx];
+    if (cur !== card) wrap.insertBefore(card, cur || null);
+  });
+  existing.forEach((card, key) => { if (!seen.has(key)) card.remove(); });
   animateQueuePositions(wrap, before);
+}
+
+/** 队列任务行（脚本 + 预设两个维度） */
+function queueRowHtml(it, idx, total) {
+  return `
+    <span class="qi-no">${idx + 1}</span>
+    <span class="qi-main">
+      <span class="qi-name" title="${escapeHtml(it.script_name || '')}">${escapeHtml(it.script_name || '（脚本已删除）')}</span>
+      <span class="qi-preset${it.preset_id ? '' : ' no-preset'}" title="${escapeHtml(it.preset_name || '')}">${it.preset_id ? escapeHtml(it.preset_name || '（预设已删除）') : '默认参数'}</span>
+    </span>
+    <span class="qi-pill">${queueItemPill(it)}</span>
+    <span class="qi-ops">
+      <button class="qi-btn" data-op="up" title="往前挪一位" ${idx === 0 ? 'disabled' : ''}>↑</button>
+      <button class="qi-btn" data-op="down" title="往后挪一位" ${idx === total - 1 ? 'disabled' : ''}>↓</button>
+      <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
+    </span>`;
+}
+
+/** 只改变化的部分：按钮不重建，事件监听器才留得住（整行换 innerHTML 会把监听器一起换掉） */
+function updateQueueRow(li, it, idx, total) {
+  $('.qi-no', li).textContent = String(idx + 1);
+  const name = $('.qi-name', li);
+  name.textContent = it.script_name || '（脚本已删除）';
+  name.title = it.script_name || '';
+  const pre = $('.qi-preset', li);
+  pre.textContent = it.preset_id ? (it.preset_name || '（预设已删除）') : '默认参数';
+  pre.title = it.preset_name || '';
+  pre.classList.toggle('no-preset', !it.preset_id);
+  $('.qi-pill', li).innerHTML = queueItemPill(it);
+  const up = $('.qi-btn[data-op=up]', li);
+  const down = $('.qi-btn[data-op=down]', li);
+  if (up) up.disabled = idx === 0;
+  if (down) down.disabled = idx === total - 1;
+  li.classList.toggle('running', it.status === 'running');
 }
 
 function queueCard(q) {
   const card = document.createElement('div');
   card.className = 'queue-card';
   card.dataset.id = q.id;
+  card._q = q;
   const items = q.items || [];
   const total = items.length;
   const done = queueDoneCount(q);
-  const rows = items.map((it, idx) => `
-    <li class="queue-item${it.status === 'running' ? ' running' : ''}" data-item="${it.id}">
-      <span class="qi-no">${idx + 1}</span>
-      <span class="qi-main">
-        <span class="qi-name" title="${escapeHtml(it.script_name || '')}">${escapeHtml(it.script_name || '（脚本已删除）')}</span>
-        <span class="qi-preset${it.preset_id ? '' : ' no-preset'}" title="${escapeHtml(it.preset_name || '')}">${it.preset_id ? escapeHtml(it.preset_name || '（预设已删除）') : '默认参数'}</span>
-      </span>
-      ${queueItemPill(it)}
-      <span class="qi-ops">
-        <button class="qi-btn" data-op="up" title="往前挪一位" ${idx === 0 ? 'disabled' : ''}>↑</button>
-        <button class="qi-btn" data-op="down" title="往后挪一位" ${idx === total - 1 ? 'disabled' : ''}>↓</button>
-        <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
-      </span>
-    </li>`).join('');
   const errTip = items.filter(i => i.status === 'failed' && i.error).map(i => i.error).join('；');
   card.innerHTML = `
     <div class="queue-head">
       <div class="queue-head-left">
         <div class="queue-title" title="${escapeHtml(q.name)}">${escapeHtml(q.name)}</div>
-        <div class="queue-sub">开始：${escapeHtml(smartTime(q.start_at))} · 间隔 ${q.interval_seconds}s ·
-          ${q.stop_on_error ? '出错就停下' : '出错跳过继续'}</div>
+        <div class="queue-sub"></div>
       </div>
-      <div class="queue-head-right">${queueStatusPill(q)}</div>
+      <div class="queue-head-right">
+        <span class="queue-pill"></span>
+        <label class="sw" title="启用 / 停用（关掉后不再开跑新任务，正在跑的不打断）">
+          <input type="checkbox" ${q.enabled ? 'checked' : ''}><span class="track"></span>
+        </label>
+      </div>
     </div>
     <div class="queue-progress">
       <span class="queue-count">任务 ${done} / ${total}</span>
       <span class="queue-bar"><i style="width:${total ? Math.round(done / total * 100) : 0}%"></i></span>
     </div>
-    ${total ? `<ul class="queue-items" title="${escapeHtml(errTip)}">${rows}</ul>`
-      : '<div class="queue-empty">队列里还没有任务</div>'}
+    <ul class="queue-items" title="${escapeHtml(errTip)}"></ul>
     <div class="queue-ops">
-      <button class="btn btn-ghost" data-op="edit">编辑</button>
-      <button class="btn btn-ghost" data-op="clear">清空</button>
+      <button class="btn btn-solid" data-op="edit">编辑</button>
       <button class="btn btn-ghost" data-op="restart">重新启动</button>
       <button class="btn btn-danger" data-op="del">删除</button>
     </div>`;
+  updateQueueCard(card, q);
+  bindQueueCard(card);
+  return card;
+}
 
-  // 队列内的任务：上下挪 / 移出
-  $$('.queue-item', card).forEach(li => {
-    $$('.qi-btn', li).forEach(b => b.addEventListener('click', async (e) => {
-      e.stopPropagation();
-      const op = b.dataset.op;
-      const itemId = Number(li.dataset.item);
-      if (op === 'del') {
-        // 移出任务同样是破坏性操作，走二次确认
-        const nm = ($('.qi-name', li) || {}).textContent || '这个任务';
-        armDelConfirm(b, {
-          label: '移出队列',
-          hint: `确认把「${nm.trim()}」移出队列「${q.name}」？`,
-          onConfirm: async () => {
-            try {
-              await api(`/api/queues/${q.id}/items/${itemId}`, { method: 'DELETE' });
-              toast('已移出队列');
-              await renderQueues();
-            } catch (err) { toast(err.message, 'err'); }
-          },
-        });
-        return;
+/** 就地刷新卡片内容（不重建 DOM） */
+function updateQueueCard(card, q) {
+  card._q = q;
+  const items = q.items || [];
+  const total = items.length;
+  const done = queueDoneCount(q);
+  $('.queue-title', card).textContent = q.name;
+  $('.queue-sub', card).innerHTML = `开始：${escapeHtml(smartTime(q.start_at))} · 间隔 ${q.interval_seconds}s ·
+          ${q.stop_on_error ? '出错就停下' : '出错跳过继续'}`;
+  $('.queue-pill', card).innerHTML = queueStatusPill(q);
+  $('.queue-count', card).textContent = `任务 ${done} / ${total}`;
+  $('.queue-bar i', card).style.width = `${total ? Math.round(done / total * 100) : 0}%`;
+  const sw = $('.sw input', card);
+  if (sw && sw.checked !== !!q.enabled) sw.checked = !!q.enabled;
+
+  // 任务清单：按 id 复用已有的行，只改内容与顺序
+  const ul = $('.queue-items', card);
+  const rows = new Map();
+  ul.querySelectorAll('.queue-item').forEach(li => rows.set(li.dataset.item, li));
+  if (!total) {
+    ul.innerHTML = '<li class="queue-empty">队列里还没有任务</li>';
+    ul.classList.add('empty');
+  } else {
+    ul.classList.remove('empty');
+    const errTip = items.filter(i => i.status === 'failed' && i.error).map(i => i.error).join('；');
+    ul.title = errTip;
+    items.forEach((it, idx) => {
+      let li = rows.get(String(it.id));
+      if (!li) {
+        li = document.createElement('li');
+        li.className = 'queue-item';
+        li.dataset.item = it.id;
+        li.innerHTML = queueRowHtml(it, idx, total);
+        bindQueueRow(li, card);
+      } else {
+        updateQueueRow(li, it, idx, total);
+        rows.delete(String(it.id));
       }
-      try {
-        await api(`/api/queues/${q.id}/items/${itemId}/move`, { method: 'POST', body: { direction: op } });
-        await renderQueues();
-      } catch (err) { toast(err.message, 'err'); }
-    }));
-  });
+      ul.appendChild(li);
+    });
+    rows.forEach(li => li.remove());
+  }
+}
 
-  // 队列级操作
-  $$('.queue-ops .btn', card).forEach(b => b.addEventListener('click', async () => {
+/** 队列里的任务：上下挪 / 移出 */
+function bindQueueRow(li, card) {
+  $$('.qi-btn', li).forEach(b => b.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const q = card._q || {};
     const op = b.dataset.op;
-    if (op === 'edit') { openQueueModal(q); return; }
-    if (op === 'clear') {
+    const itemId = Number(li.dataset.item);
+    if (op === 'del') {
+      // 移出任务同样是破坏性操作，走二次确认
+      const nm = ($('.qi-name', li) || {}).textContent || '这个任务';
       armDelConfirm(b, {
-        label: '清空队列',
-        hint: `确认清空队列「${q.name}」里的所有任务？`,
+        label: '移出队列',
+        hint: `确认把「${nm.trim()}」移出队列「${q.name || ''}」？`,
         onConfirm: async () => {
           try {
-            await api(`/api/queues/${q.id}/clear`, { method: 'POST', body: {} });
-            toast('已清空队列');
+            await api(`/api/queues/${q.id}/items/${itemId}`, { method: 'DELETE' });
+            toast('已移出队列');
             await renderQueues();
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (err) { toast(err.message, 'err'); }
         },
       });
       return;
     }
+    try {
+      await api(`/api/queues/${q.id}/items/${itemId}/move`, { method: 'POST', body: { direction: op } });
+      await renderQueues();
+    } catch (err) { toast(err.message, 'err'); }
+  }));
+}
+
+function bindQueueCard(card) {
+  // 启用 / 停用：关掉只停后面的任务，不打断正在跑的
+  const sw = $('.sw input', card);
+  if (sw) sw.addEventListener('change', async (e) => {
+    const q = card._q || {};
+    try {
+      await api(`/api/queues/${q.id}`, { method: 'PUT', body: { enabled: e.target.checked } });
+      toast(e.target.checked
+        ? `已打开队列「${q.name}」，接着往下执行`
+        : `已关闭队列「${q.name}」，后面的任务不再执行（正在跑的跑完为止）`);
+      await renderQueues();
+    } catch (err) { toast(err.message, 'err'); e.target.checked = !e.target.checked; }
+  });
+
+  $$('.queue-ops .btn', card).forEach(b => b.addEventListener('click', async () => {
+    const q = card._q || {};
+    const op = b.dataset.op;
+    if (op === 'edit') { openQueueModal(q); return; }
     if (op === 'restart') {
       armDelConfirm(b, {
         label: '重新启动队列',
-        hint: `确认重新启动队列「${q.name}」？所有任务会回到待执行`,
+        hint: `确认重新启动队列「${q.name}」？所有任务回到待执行，从头按顺序再跑一遍（正在跑的不打断）`,
         onConfirm: async () => {
           try {
             await api(`/api/queues/${q.id}/restart`, { method: 'POST', body: {} });
-            toast('队列已重新启动');
+            toast('队列已重新启动，将从头按顺序执行');
             await renderQueues();
           } catch (e) { toast(e.message, 'err'); }
         },
@@ -3312,17 +3404,28 @@ function queueCard(q) {
       });
     }
   }));
-  return card;
 }
 
 /* ---------- 队列的新建 / 编辑弹窗 ---------- */
 
-/** datetime-local 的值 → 后端要的 ISO 字符串 */
+/** ISO → "2026-10-30 16:23"（输入框里用的本地时间） */
 function toLocalInput(iso) {
   const d = iso ? new Date(iso) : new Date();
   if (isNaN(d)) return '';
   const p = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+/** "2026-10-30 16:23" → Date（按本地时间解析，Safari 也能吃） */
+function parseLocalInput(str) {
+  const m = String(str || '').trim().match(/^(\d{4})-(\d{1,2})-(\d{1,2})[ T](\d{1,2}):(\d{2})/);
+  if (!m) return null;
+  const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), Number(m[4]), Number(m[5]), 0, 0);
+  return isNaN(d) ? null : d;
+}
+/** "2026-10-30 16:23" 这种写法给用户看 / 当默认名字用 */
+function fmtLocal(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
 let queueCtx = null;
@@ -3345,36 +3448,44 @@ async function openQueueModal(queue) {
     preset_name: it.preset_id ? (it.preset_name || '（预设已删除）') : '默认参数',
   }));
 
+  const startDefault = isEdit
+    ? toLocalInput(queue.start_at)
+    : toLocalInput(new Date(Date.now() + 60000).toISOString());
   const scriptOpts = scripts.map(s => `<option value="${s.id}">${escapeHtml(s.name)}</option>`).join('');
   const body = `
     <div class="q-form">
       <div class="mfield-row">
-        <div class="mfield"><label>队列名称 <span class="req">*</span></label>
-          <input type="text" id="q-name" placeholder="如：夜间批处理" value="${escapeHtml(isEdit ? queue.name : '')}"></div>
+        <div class="mfield"><label>队列名称</label>
+          <input type="text" id="q-name" placeholder="不填就用开始时间" value="${escapeHtml(isEdit ? queue.name : '')}"></div>
         <div class="mfield"><label>开始执行时间 <span class="req">*</span></label>
-          <input type="datetime-local" id="q-start" value="${toLocalInput(isEdit ? queue.start_at : new Date(Date.now() + 60000).toISOString())}">
-          <div class="hint">到了这个时间队列自动开跑</div></div>
+          <input type="text" id="q-start" class="mono" placeholder="2026-10-30 16:23" value="${escapeHtml(startDefault)}">
+          <div class="q-quick" id="q-quick">
+            <button type="button" data-q="now">现在</button>
+            <button type="button" data-q="5m">5 分钟后</button>
+            <button type="button" data-q="tomorrow">明天 08:00</button>
+          </div></div>
       </div>
       <div class="mfield-row">
         <div class="mfield"><label>任务间隔（秒）</label>
           <input type="number" id="q-interval" min="0" value="${isEdit ? queue.interval_seconds : 5}">
           <div class="hint">上一个任务跑完后，等这么久再跑下一个</div></div>
         <div class="mfield"><label>任务出错时</label>
-          <div class="seg" id="q-err">
-            <label class="seg-item ${isEdit && queue.stop_on_error ? 'on' : ''}">
+          <div class="q-choices" id="q-err">
+            <label class="q-choice${isEdit && queue.stop_on_error ? ' on' : ''}">
               <input type="radio" name="qerr" value="stop" ${isEdit && queue.stop_on_error ? 'checked' : ''}>
-              <span>停下整个队列</span></label>
-            <label class="seg-item ${!isEdit || !queue.stop_on_error ? 'on' : ''}">
+              <span class="q-choice-body"><b>停下整个队列</b><i>某个任务失败后，后面的不再执行</i></span></label>
+            <label class="q-choice${!isEdit || !queue.stop_on_error ? ' on' : ''}">
               <input type="radio" name="qerr" value="skip" ${!isEdit || !queue.stop_on_error ? 'checked' : ''}>
-              <span>跳过继续下一个</span></label>
+              <span class="q-choice-body"><b>跳过继续下一个</b><i>失败也继续，队列接着往下跑</i></span></label>
           </div></div>
       </div>
 
       <div class="q-block">
         <div class="q-block-head">
           <span class="q-block-title">队列任务</span>
-          <span class="q-block-hint">按顺序执行（先进先出）· 用 ↑ ↓ 调整先后</span>
+          <button class="q-clear" id="q-clear" ${draft.length ? '' : 'hidden'}>清空</button>
         </div>
+        <div class="q-block-hint">按顺序执行（先进先出）· 用 ↑ ↓ 调整先后</div>
         <ul class="q-items" id="q-items"></ul>
         <div class="q-picker">
           <div class="q-picker-row">
@@ -3405,33 +3516,71 @@ async function openQueueModal(queue) {
     presetByScript.get(p.script_id).push(p);
   });
 
+  /* ---- 任务清单：按 key 复用已有的行，只改内容与顺序（不整块重建，避免闪一下） ---- */
   const draw = () => {
     const box = $('#q-items');
     if (!box) return;
+    const empty = box.querySelector('.q-items-empty');
+    if (empty) empty.remove();
     if (!draft.length) {
       box.innerHTML = '<li class="q-items-empty">还没有任务，从下面选一个脚本加进来</li>';
+      const clr = $('#q-clear');
+      if (clr) clr.hidden = true;
       return;
     }
-    box.innerHTML = draft.map((d, i) => `
-      <li class="q-item" data-key="${d.key}">
-        <span class="qi-no">${i + 1}</span>
-        <span class="qi-main">
-          <span class="qi-name">${escapeHtml(d.script_name)}</span>
-          <span class="qi-preset${d.preset_id ? '' : ' no-preset'}">${escapeHtml(d.preset_name)}</span>
-        </span>
-        <span class="qi-ops">
-          <button class="qi-btn" data-op="up" title="往前挪一位" ${i === 0 ? 'disabled' : ''}>↑</button>
-          <button class="qi-btn" data-op="down" title="往后挪一位" ${i === draft.length - 1 ? 'disabled' : ''}>↓</button>
-          <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
-        </span>
-      </li>`).join('');
-    $$('#q-items .qi-btn').forEach(b => b.addEventListener('click', (e) => {
+    const rows = new Map();
+    box.querySelectorAll('.q-item').forEach(li => rows.set(li.dataset.key, li));
+    draft.forEach((d, i) => {
+      let li = rows.get(d.key);
+      if (!li) {
+        li = document.createElement('li');
+        li.className = 'q-item';
+        li.dataset.key = d.key;
+        li.innerHTML = draftRowHtml(d, i, draft.length);
+        bindDraftRow(li);
+      } else {
+        updateDraftRow(li, d, i, draft.length);
+        rows.delete(d.key);
+      }
+      box.appendChild(li);
+    });
+    rows.forEach(li => li.remove());
+    const clr = $('#q-clear');
+    if (clr) clr.hidden = false;
+  };
+
+  const draftRowHtml = (d, i, total) => `
+    <span class="qi-no">${i + 1}</span>
+    <span class="qi-main">
+      <span class="qi-name">${escapeHtml(d.script_name)}</span>
+      <span class="qi-preset${d.preset_id ? '' : ' no-preset'}">${escapeHtml(d.preset_name)}</span>
+    </span>
+    <span class="qi-ops">
+      <button class="qi-btn" data-op="up" title="往前挪一位" ${i === 0 ? 'disabled' : ''}>↑</button>
+      <button class="qi-btn" data-op="down" title="往后挪一位" ${i === total - 1 ? 'disabled' : ''}>↓</button>
+      <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
+    </span>`;
+
+  /** 只改变化的部分（整行换 innerHTML 会把按钮的监听器一起换掉） */
+  const updateDraftRow = (li, d, i, total) => {
+    $('.qi-no', li).textContent = String(i + 1);
+    $('.qi-name', li).textContent = d.script_name;
+    const pre = $('.qi-preset', li);
+    pre.textContent = d.preset_name;
+    pre.classList.toggle('no-preset', !d.preset_id);
+    const up = $('.qi-btn[data-op=up]', li);
+    const down = $('.qi-btn[data-op=down]', li);
+    if (up) up.disabled = i === 0;
+    if (down) down.disabled = i === total - 1;
+  };
+
+  const bindDraftRow = (li) => {
+    $$('.qi-btn', li).forEach(b => b.addEventListener('click', (e) => {
       e.preventDefault();
-      const li = b.closest('.q-item');
       const op = b.dataset.op;
       const idx = draft.findIndex(d => d.key === li.dataset.key);
       if (idx < 0) return;
-      if (op === 'del') { draft.splice(idx, 1); }
+      if (op === 'del') draft.splice(idx, 1);
       else if (op === 'up' && idx > 0) { const t = draft[idx - 1]; draft[idx - 1] = draft[idx]; draft[idx] = t; }
       else if (op === 'down' && idx < draft.length - 1) { const t = draft[idx + 1]; draft[idx + 1] = draft[idx]; draft[idx] = t; }
       else return;
@@ -3465,9 +3614,8 @@ async function openQueueModal(queue) {
       box.classList.add('on');
     } catch { box.textContent = ''; box.classList.remove('on'); }
   };
-  const onScriptChange = () => { fillPresets(); };
   const scriptSel = $('#q-script');
-  if (scriptSel) scriptSel.addEventListener('change', onScriptChange);
+  if (scriptSel) scriptSel.addEventListener('change', fillPresets);
   const presetSel = $('#q-preset');
   if (presetSel) presetSel.addEventListener('change', previewCmd);
 
@@ -3488,14 +3636,47 @@ async function openQueueModal(queue) {
       script_name: sc ? sc.name : '脚本',
       preset_name: ps ? ps.name : '默认参数',
     });
+    // 新条目淡入，其余行原地不动（不重建列表）
     flipList($('#q-items'), 'data-key', () => draw());
     sSel.value = '';
     fillPresets();
-    toast(`已把「${sc ? sc.name : '脚本'}」加入队列`);
   });
 
-  $$('#q-err .seg-item').forEach(seg => seg.addEventListener('click', () => {
-    $$('#q-err .seg-item').forEach(c => c.classList.toggle('on', c === seg));
+  // 清空（放在编辑框里）：清掉清单；已有队列同时把服务端的队列也清掉
+  const clearBtn = $('#q-clear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    armDelConfirm(clearBtn, {
+      label: '清空队列',
+      hint: `确认清空队列「${(queue && queue.name) || '这个队列'}」里的所有任务？`,
+      onConfirm: async () => {
+        draft.length = 0;
+        draw();
+        if (queue && queue.id) {
+          try {
+            await api(`/api/queues/${queue.id}/clear`, { method: 'POST', body: {} });
+            toast('已清空队列');
+            await renderQueues();
+          } catch (e) { toast(e.message, 'err'); }
+        } else {
+          toast('已清空清单');
+        }
+      },
+    });
+  });
+
+  // 开始时间快捷键
+  $$('#q-quick button').forEach(b => b.addEventListener('click', () => {
+    const kind = b.dataset.q;
+    const now = new Date();
+    let d;
+    if (kind === 'now') d = now;
+    else if (kind === '5m') d = new Date(now.getTime() + 5 * 60000);
+    else d = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 8, 0, 0, 0);
+    $('#q-start').value = fmtLocal(d);
+  }));
+
+  $$('#q-err .q-choice').forEach(ch => ch.addEventListener('click', () => {
+    $$('#q-err .q-choice').forEach(c => c.classList.toggle('on', c === ch));
   }));
 
   queueCtx = { queue, draft };
@@ -3503,19 +3684,21 @@ async function openQueueModal(queue) {
 
 async function submitQueue() {
   if (!queueCtx) return;
-  const name = (($('#q-name') && $('#q-name').value) || '').trim();
   const startRaw = ($('#q-start') && $('#q-start').value) || '';
+  const startDate = parseLocalInput(startRaw);
+  const nameInput = (($('#q-name') && $('#q-name').value) || '').trim();
   const interval = parseInt(($('#q-interval') && $('#q-interval').value) || '5', 10);
-  if (!name) { toast('请填写队列名称', 'err'); return; }
-  if (!startRaw) { toast('请选择开始执行时间', 'err'); return; }
+  if (!startDate) { toast('开始时间要写成「2026-10-30 16:23」这样', 'err'); return; }
   if (isNaN(interval) || interval < 0) { toast('任务间隔需要是不小于 0 的整数', 'err'); return; }
+  // 名字没填就用开始时间
+  const name = nameInput || fmtLocal(startDate);
   const stopOnError = !!($('#q-err input[value=stop]') && $('#q-err input[value=stop]').checked);
   const items = queueCtx.draft.map(d => ({
     item_id: d.item_id || undefined,
     script_id: d.script_id,
     preset_id: d.preset_id || null,
   }));
-  const startAt = new Date(startRaw).toISOString();
+  const startAt = startDate.toISOString();
   try {
     if (queueCtx.queue) {
       await api(`/api/queues/${queueCtx.queue.id}`, {

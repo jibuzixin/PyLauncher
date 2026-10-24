@@ -105,7 +105,8 @@ CREATE TABLE IF NOT EXISTS queues (
     start_at TEXT NOT NULL,                    -- 队列的开始执行时间
     interval_seconds INTEGER NOT NULL DEFAULT 5,-- 两个任务之间的间隔
     stop_on_error INTEGER NOT NULL DEFAULT 0,  -- 1=出错就停下；0=跳过继续下一个
-    status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / done / stopped
+    enabled INTEGER NOT NULL DEFAULT 1,        -- 0=已关闭：不再开跑新的任务（不影响正在跑的）
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / paused / done / stopped
     next_ready_at TEXT,                        -- 上一个任务跑完后，最早可以开始下一个的时刻
     started_at TEXT,
     finished_at TEXT,
@@ -123,6 +124,7 @@ CREATE TABLE IF NOT EXISTS queue_items (
     cmd_suffix TEXT NOT NULL DEFAULT '',      -- 没绑预设时的命令后缀快照
     position INTEGER NOT NULL DEFAULT 0,       -- 先进先出：位置小的先跑
     status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / success / failed / skipped
+    rerun INTEGER NOT NULL DEFAULT 0,          -- 1=重新启动时正在跑：跑完回到待执行，重头再来
     error TEXT,
     exec_id INTEGER,
     started_at TEXT,
@@ -192,6 +194,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE presets ADD COLUMN cmd_prefix TEXT NOT NULL DEFAULT ''")
     if "cmd_suffix" not in pcols:
         conn.execute("ALTER TABLE presets ADD COLUMN cmd_suffix TEXT NOT NULL DEFAULT ''")
+    # queues 表迁移：启用开关（0=已关闭，不再开跑新任务）
+    qcols = {r[1] for r in conn.execute("PRAGMA table_info(queues)")}
+    if "enabled" not in qcols:
+        conn.execute("ALTER TABLE queues ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1")
     # v0.0.4：文件夹功能废弃，脚本全部移回根目录并清空文件夹表
     conn.execute("UPDATE scripts SET folder_id=NULL WHERE folder_id IS NOT NULL")
     conn.execute("DELETE FROM folders")
@@ -212,6 +218,7 @@ def _migrate(conn: sqlite3.Connection) -> None:
             " cmd_suffix TEXT NOT NULL DEFAULT '',"
             " position INTEGER NOT NULL DEFAULT 0,"
             " status TEXT NOT NULL DEFAULT 'pending',"
+            " rerun INTEGER NOT NULL DEFAULT 0,"
             " error TEXT, exec_id INTEGER, started_at TEXT, finished_at TEXT,"
             " created_at TEXT NOT NULL, updated_at TEXT NOT NULL)")
         conn.execute(
@@ -225,6 +232,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("DROP TABLE queue_items_old")
         # 老表上的同名索引会随 DROP 一起消失，所以重建表之后要重新建索引
         conn.execute("CREATE INDEX IF NOT EXISTS idx_queue_items_queue ON queue_items(queue_id, position)")
+    # queue_items 表迁移：重新启动时正在跑的任务，跑完要回到待执行（重头再来一遍）
+    qicols = {r[1] for r in conn.execute("PRAGMA table_info(queue_items)")}
+    if "rerun" not in qicols:
+        conn.execute("ALTER TABLE queue_items ADD COLUMN rerun INTEGER NOT NULL DEFAULT 0")
 
 
 def now_iso() -> str:
@@ -765,7 +776,8 @@ def list_queues() -> list[dict]:
 
 def update_queue(queue_id: int, name: Optional[str] = None, start_at: Optional[str] = None,
                  interval_seconds: Optional[int] = None,
-                 stop_on_error: Optional[bool] = None) -> dict:
+                 stop_on_error: Optional[bool] = None,
+                 enabled: Optional[bool] = None) -> dict:
     fields, vals = [], []
     if name is not None:
         fields.append("name=?"); vals.append(name)
@@ -775,6 +787,8 @@ def update_queue(queue_id: int, name: Optional[str] = None, start_at: Optional[s
         fields.append("interval_seconds=?"); vals.append(max(0, int(interval_seconds)))
     if stop_on_error is not None:
         fields.append("stop_on_error=?"); vals.append(1 if stop_on_error else 0)
+    if enabled is not None:
+        fields.append("enabled=?"); vals.append(1 if enabled else 0)
     fields.append("updated_at=?"); vals.append(now_iso())
     vals.append(queue_id)
     with _lock, _conn() as conn:
@@ -815,14 +829,32 @@ def clear_queue_items(queue_id: int) -> None:
 
 
 def restart_queue(queue_id: int) -> None:
-    """重新启动：所有任务回到「待执行」，队列回到「等待开始」，按原开始时间再跑一遍。"""
+    """重新启动：从头开始，按原来的开始时间再跑一遍。
+
+    · 还没在跑的任务 → 回到「待执行」
+    · 正在跑的那个 → 不打断它，跑完之后回到「待执行」（这样整条队从头再来一遍）
+    · 队列本身 → 回到「等待开始」，并重新打开（关了的话重新启动当然是要跑的）
+    """
     now = now_iso()
     with _lock, _conn() as conn:
         conn.execute(
-            "UPDATE queue_items SET status='pending', error=NULL, exec_id=NULL,"
-            " started_at=NULL, finished_at=NULL, updated_at=? WHERE queue_id=?", (now, queue_id))
+            "UPDATE queue_items SET status='pending', error=NULL, exec_id=NULL, rerun=0,"
+            " started_at=NULL, finished_at=NULL, updated_at=? WHERE queue_id=? AND status!='running'",
+            (now, queue_id))
+        conn.execute(
+            "UPDATE queue_items SET rerun=1, updated_at=? WHERE queue_id=? AND status='running'",
+            (now, queue_id))
         conn.execute("UPDATE queues SET status='pending', next_ready_at=NULL, started_at=NULL,"
-                     " finished_at=NULL, updated_at=? WHERE id=?", (now, queue_id))
+                     " finished_at=NULL, enabled=1, updated_at=? WHERE id=?", (now, queue_id))
+
+
+def reset_queue_item_to_pending(item_id: int) -> None:
+    """重新启动时正在跑的任务跑完了：回到待执行，等着重头再来一遍。"""
+    now = now_iso()
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE queue_items SET status='pending', error=NULL, exec_id=NULL, rerun=0,"
+            " started_at=NULL, finished_at=NULL, updated_at=? WHERE id=?", (now, item_id))
 
 
 # ---------- queue_items ----------

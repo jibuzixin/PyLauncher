@@ -69,15 +69,29 @@ check('成功/失败/跳过都算完成', done({
 check('没有任务 → 0 个完成', done({ items: [] }) === 0);
 check('缺 items 字段也不炸', done({}) === 0);
 
-/* ---- datetime-local ↔ ISO ---- */
+/* ---- 时间输入：ISO ↔ "2026-10-30 16:23" ---- */
 const tsandbox = {};
-new Function('exports', extract(src, 'toLocalInput') + '\nexports.toLocalInput = toLocalInput;')(tsandbox);
+new Function('exports',
+  extract(src, 'toLocalInput') + '\n' +
+  extract(src, 'parseLocalInput') + '\n' +
+  extract(src, 'fmtLocal') + '\n' +
+  'exports.toLocalInput = toLocalInput;\n' +
+  'exports.parseLocalInput = parseLocalInput;\n' +
+  'exports.fmtLocal = fmtLocal;')(tsandbox);
 const toLocalInput = tsandbox.toLocalInput;
+const parseLocalInput = tsandbox.parseLocalInput;
 const local = toLocalInput('2026-10-24T06:05:00+08:00');
-check('ISO → datetime-local 形如 YYYY-MM-DDTHH:mm', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(local), local);
-check('datetime-local 是本地时间（这里应当是 06:05）', local.endsWith('T06:05'), local);
-check('空值回退到现在（不炸）', /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(toLocalInput('')));
+check('ISO → 输入框文本形如 YYYY-MM-DD HH:mm', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(local), local);
+check('是本地时间（这里应当是 06:05）', local.endsWith('06:05'), local);
+check('空值回退到现在（不炸）', /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/.test(toLocalInput('')));
 check('非法日期返回空串', toLocalInput('not-a-date') === '');
+check('文本能解析回本地时间', (() => {
+  const d = parseLocalInput('2026-10-24 06:05');
+  return d && d.getFullYear() === 2026 && d.getMonth() === 9 && d.getDate() === 24
+    && d.getHours() === 6 && d.getMinutes() === 5;
+})());
+check('解析非法文本返回 null', parseLocalInput('明天') === null);
+check('名字没填时用开始时间', src.includes('const name = nameInput || fmtLocal(startDate);'));
 
 /* ---- 源码级断言：接口 ---- */
 check('拉取队列列表用 GET /api/queues', src.includes("api('/api/queues')"));
@@ -108,17 +122,31 @@ check('有命令预览接口', src.includes("api('/api/preview-cmd'"));
 check('弹窗里有命令预览框', src.includes('id="q-cmd"'));
 
 /* ---- 源码级断言：破坏性操作走二次确认 ---- */
-for (const op of ['clear', 'restart', 'del']) {
+for (const op of ['restart', 'del']) {
   const re = new RegExp(`data-op="${op}"[\\s\\S]{0,2500}?armDelConfirm`);
-  check(`${op} 走 armDelConfirm 二次确认`, re.test(src));
+  check(`卡片上的 ${op} 走 armDelConfirm 二次确认`, re.test(src));
 }
 check('任务移出队列也走 armDelConfirm', /label: '移出队列'/.test(src));
+check('清空按钮挪进编辑框（#q-clear）', src.includes('id="q-clear"'));
+check('清空按钮走二次确认', /label: '清空队列'/.test(src));
+check('卡片上不再有清空按钮', !/data-op="clear"/.test(src));
+
+/* ---- 源码级断言：开关、重新启动、编辑按钮 ---- */
+check('队列状态有「已关闭」（paused）', /paused: \{ cls: 'paused', label: '已关闭' \}/.test(src));
+check('卡片上有启用开关', src.includes('class="sw"') && /title="启用 \/ 停用/.test(src));
+check('开关调用 PUT /api/queues/{id} 的 enabled', /body: \{ enabled: e\.target\.checked \}/.test(src));
+check('开关关闭的提示说明不影响正在跑的', src.includes('正在跑的跑完为止'));
+check('重新启动单独一个逻辑', /op === 'restart'/.test(src) && src.includes('/restart'));
+check('编辑按钮是黑色实心', /btn btn-solid" data-op="edit"/.test(src));
 
 /* ---- 动效：上下移动有滑动过渡 ---- */
 check('有 FLIP 动效函数 flipList', /function flipList\(/.test(src));
 check('队列卡片重绘前后记录位置（captureQueuePositions）', /function captureQueuePositions\(/.test(src));
 check('重绘后按位置做动画（animateQueuePositions）', /function animateQueuePositions\(/.test(src));
 check('动效走 translateY 位移', src.includes('translateY(${d}px)'));
+check('就地更新不整块重建（避免闪一下）',
+  /updateQueueCard\(card, q\)/.test(src) && !/wrap\.innerHTML = '';\s*\n\s*for \(const q of list\)/.test(src));
+check('任务清单按 id 复用已有的行', /rows\.set\(li\.dataset\.item, li\)/.test(src));
 check('样式里有 .moving 过渡', css.includes('.q-item.moving') && css.includes('.queue-item.moving'));
 check('样式里有新条目入场动画 .qi-enter', css.includes('.qi-enter'));
 check('降级：系统开启「减少动态效果」时动效关闭', /prefers-reduced-motion: reduce[\s\S]{0,200}transition-duration/.test(css));
@@ -126,7 +154,8 @@ check('降级：系统开启「减少动态效果」时动效关闭', /prefers-r
 /* ---- 源码级断言：间隔默认 5 秒、两种异常策略 ---- */
 check('任务间隔默认 5 秒', src.includes("isEdit ? queue.interval_seconds : 5"));
 check('异常策略有「停下整个队列」', src.includes('value="stop"'));
-check('异常策略有「跳过这个，继续跑下一个」', src.includes('value="skip"'));
+check('异常策略有「跳过继续下一个」', src.includes('value="skip"'));
+check('异常策略用说明式选项（.q-choice）', src.includes('class="q-choice') && src.includes('q-choice-body'));
 check('默认异常策略是跳过继续', src.includes('!isEdit || !queue.stop_on_error ? '));
 
 /* ---- 页面骨架与导航 ---- */
@@ -141,7 +170,8 @@ check('队列页不显示顶栏搜索框', /name === 'scripts' \|\| name === 'sc
 for (const cls of ['.queue-grid', '.queue-card', '.queue-head', '.queue-title', '.queue-sub',
   '.queue-progress', '.queue-bar', '.queue-items', '.queue-item', '.qi-no', '.qi-name',
   '.qi-preset', '.qi-main', '.qi-ops', '.qi-btn', '.queue-empty', '.queue-ops',
-  '.q-items', '.q-item', '.q-picker', '.q-pick', '.q-cmd', '.q-block', '.seg']) {
+  '.q-items', '.q-item', '.q-picker', '.q-pick', '.q-cmd', '.q-block',
+  '.q-choice', '.q-choice-body', '.q-quick', '.q-clear']) {
   check(`样式表里有 ${cls}`, css.includes(cls));
 }
 check('队列页标题是「运行队列」', tpl.includes('<h1>运行队列</h1>'));

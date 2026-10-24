@@ -182,6 +182,41 @@ def run_tests(pairs, tmp):
     r10 = not left
     print(f"  {'PASS' if r10 else 'FAIL'}  删除队列")
     ok = ok and r10
+
+    # ---- 场景四：开关（关掉不再开跑，打开接着执行） ----
+    start_at3 = (datetime.now().astimezone() + timedelta(seconds=2)).isoformat(timespec="seconds")
+    q3 = api("/api/queues", {
+        "name": "开关测试", "start_at": start_at3, "interval_seconds": 1,
+        "stop_on_error": False, "items": items,
+    })["queue"]
+    api(f"/api/queues/{q3['id']}", {"enabled": False}, "PUT")
+    after = api(f"/api/queues/{q3['id']}")
+    r11 = after["enabled"] == 0 and after["status"] == "paused"
+    print(f"  {'PASS' if r11 else 'FAIL'}  关掉队列：状态变成已关闭（paused）")
+    ok = ok and r11
+    time.sleep(4)                      # 过了开始时间也不该跑
+    after = api(f"/api/queues/{q3['id']}")
+    r12 = all(i["status"] == "pending" for i in after["items"])
+    print(f"  {'PASS' if r12 else 'FAIL'}  关着的时候过了开始时间也不执行")
+    ok = ok and r12
+    api(f"/api/queues/{q3['id']}", {"enabled": True}, "PUT")
+    after = api(f"/api/queues/{q3['id']}")
+    r13 = after["enabled"] == 1 and after["status"] in ("pending", "running")
+    print(f"  {'PASS' if r13 else 'FAIL'}  打开队列：可以继续执行")
+    ok = ok and r13
+    done3 = wait_queue_done(q3["id"], timeout=60)
+    r14 = done3["status"] == "done"
+    print(f"  {'PASS' if r14 else 'FAIL'}  打开后队列正常跑完")
+    ok = ok and r14
+
+    # ---- 场景五：重新启动 = 从头再来一遍 ----
+    api(f"/api/queues/{q3['id']}/restart", {})
+    after = api(f"/api/queues/{q3['id']}")
+    r15 = (after["status"] == "pending" and after["enabled"] == 1
+           and all(i["status"] == "pending" for i in after["items"]))
+    print(f"  {'PASS' if r15 else 'FAIL'}  重新启动：所有任务回到待执行，队列回到等待开始")
+    ok = ok and r15
+    api(f"/api/queues/{q3['id']}", None, "DELETE")
     return ok
 
 

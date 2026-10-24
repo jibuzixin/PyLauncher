@@ -18,6 +18,7 @@ import asyncio
 import base64
 import json
 import os
+import re
 import shutil
 import signal
 import sqlite3
@@ -187,6 +188,15 @@ def walk():
         check("新建队列弹窗打开", s.js("!!document.querySelector('#q-name')"))
         check("弹窗里按脚本 + 预设选择",
               s.js("!!document.querySelector('#q-script')") and s.js("!!document.querySelector('#q-preset')"))
+        check("开始时间是自绘的文本框（不是原生日期控件）",
+              s.js("document.querySelector('#q-start').type") == "text")
+        check("开始时间有快捷键", s.js("document.querySelectorAll('#q-quick button').length") == 3)
+        # 快捷键：5 分钟后
+        s.js("document.querySelector('#q-quick button[data-q=\"5m\"]').click()")
+        time.sleep(0.3)
+        quick_val = s.js("document.querySelector('#q-start').value || ''")
+        check("点「5 分钟后」能填好开始时间",
+              bool(re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$", quick_val or "")), quick_val)
         s.shot(f"{OUT}/1_modal.png")
 
         # 脚本 → 预设联动 + 命令预览
@@ -257,12 +267,14 @@ def walk():
         check("卡片任务数正确", "任务 0 / 2" in card)
         s.shot(f"{OUT}/3_card.png")
 
-        # 卡片上再调一次顺序（也有动效）
+        # 卡片上再调一次顺序（也有动效），并检查卡片本身没有被重建（不闪）
         s.js("""(() => {
             window.__cardMoves = 0;
             new MutationObserver(() => {
                 if (document.querySelector('.queue-card .queue-item.moving')) window.__cardMoves++;
             }).observe(document.querySelector('#queue-grid'), {subtree:true, attributes:true, attributeFilter:['class']});
+            // 给卡片打个标记：重建就说明会闪一下
+            document.querySelector('.queue-card').__keep = 'yes';
             return true;
         })()""")
         c_before = s.js("JSON.stringify(Array.from(document.querySelectorAll('.queue-card .queue-item .qi-name')).map(e=>e.textContent))")
@@ -271,7 +283,44 @@ def walk():
         c_after = s.js("JSON.stringify(Array.from(document.querySelectorAll('.queue-card .queue-item .qi-name')).map(e=>e.textContent))")
         check("卡片上 ↑ 能挪动顺序", c_before != c_after)
         check("卡片上移动也有滑动动效", (s.js("window.__cardMoves") or 0) > 0)
+        check("排序后卡片没有整块重建（不闪）", s.js("document.querySelector('.queue-card').__keep") == "yes")
         s.shot(f"{OUT}/4_card_moved.png")
+
+        # 启用 / 停用开关
+        s.js("""(() => {
+            const sw = document.querySelector('.queue-card .sw input');
+            sw.checked = false;
+            sw.dispatchEvent(new Event('change', {bubbles:true}));
+            return true;
+        })()""")
+        time.sleep(1.2)
+        check("关掉后卡片显示「已关闭」", "已关闭" in s.text("#queue-grid"))
+        check("关掉后开关处于关闭态", s.js("document.querySelector('.queue-card .sw input').checked") is False)
+        s.shot(f"{OUT}/5_disabled.png")
+        s.js("""(() => {
+            const sw = document.querySelector('.queue-card .sw input');
+            sw.checked = true;
+            sw.dispatchEvent(new Event('change', {bubbles:true}));
+            return true;
+        })()""")
+        time.sleep(1.2)
+        check("打开后不再显示「已关闭」", "已关闭" not in s.text("#queue-grid"))
+
+        # 编辑框里的清空按钮
+        s.js("document.querySelector('.queue-card .queue-ops .btn[data-op=edit]').click()")
+        time.sleep(1.0)
+        check("编辑框里有清空按钮", s.js("!!document.querySelector('#q-clear')") and not s.js("document.querySelector('#q-clear').hidden"))
+        s.js("document.querySelector('#q-clear').click()")
+        time.sleep(0.5)
+        s.js("document.querySelector('#q-clear').click()")
+        time.sleep(1.2)
+        check("清空后编辑框里的任务清空了", s.js("document.querySelectorAll('#q-items .q-item').length") == 0)
+        s.shot(f"{OUT}/6_cleared.png")
+        s.js("""(() => {
+            const b = Array.from(document.querySelectorAll('.modal button')).find(b => b.textContent.trim() === '取消');
+            b.click(); return true;
+        })()""")
+        time.sleep(0.6)
 
         # 队列实跑：马上开始，第一个任务失败不影响第二个
         s.js("document.querySelector('#btn-new-queue').click()")
@@ -281,7 +330,7 @@ def walk():
             const d = new Date(Date.now() + 3000);
             const p = n => String(n).padStart(2, '0');
             document.querySelector('#q-start').value =
-                `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+                `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
             document.querySelector('#q-interval').value = '1';
             const sel = document.querySelector('#q-script');
             const bad = Array.from(sel.options).find(o => o.textContent.includes('bad.py'));
