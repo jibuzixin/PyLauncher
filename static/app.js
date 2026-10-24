@@ -345,6 +345,8 @@ const state = {
   schedSig: null,
   schedAnimated: false,
   schedKw: '',
+  queues: [],
+  queueSig: null,
   restoring: {},
   restoredOnce: null,
   closedTabs: new Set(),
@@ -2415,8 +2417,9 @@ async function refreshRunning() {
     updatePageBadge();
     hideOffline();
     refreshDetailStatus();
-    // 定时任务页可见时同步刷新
+    // 定时任务页 / 队列页可见时同步刷新
     if (state.view === 'schedules') renderSchedules(true);
+    if (state.view === 'queues') renderQueues(true);
   } catch { markOffline(); }
 }
 
@@ -2684,6 +2687,7 @@ function scheduleCard(s, animate = true) {
     </div>
     <div class="sched-ops">
       <button class="btn btn-solid" data-op="run">▶ 立即运行</button>
+      <button class="btn btn-ghost" data-op="queue" title="把这个任务加入运行队列">加入队列</button>
       <button class="btn btn-ghost" data-op="edit">编辑</button>
       <button class="btn btn-danger" data-op="del">删除</button>
     </div>`;
@@ -2729,6 +2733,7 @@ function scheduleCard(s, animate = true) {
   });
 
   $('[data-op=run]', card).addEventListener('click', (e) => { e.stopPropagation(); runScheduleNow(s); });
+  $('[data-op=queue]', card).addEventListener('click', (e) => { e.stopPropagation(); openAddToQueueModal(s.id, s.name); });
   $('[data-op=edit]', card).addEventListener('click', (e) => { e.stopPropagation(); openScheduleModal(s); });
   $('[data-op=del]', card).addEventListener('click', (e) => {
     e.stopPropagation();
@@ -3076,6 +3081,353 @@ async function submitSchedule() {
     closeModal();
     await renderSchedules();
   } catch (e) { toast(e.message, 'err'); }
+}
+
+/* ---------- 运行队列 ----------
+   队列 = 一串定时任务按先进先出的顺序串行执行：
+   到了开始时间就开跑，前一个跑完（成不成都算）才轮到下一个；
+   前一个失败不影响后一个，除非队列设了「出错就停下」。 */
+const QUEUE_STATUS_META = {
+  pending: { cls: 'ready', label: '等待开始' },
+  running: { cls: 'running', label: '运行中' },
+  done: { cls: 'success', label: '已完成' },
+  stopped: { cls: 'terminated', label: '已中止' },
+};
+function queueStatusPill(q) {
+  const m = QUEUE_STATUS_META[(q && q.status)] || QUEUE_STATUS_META.pending;
+  return `<span class="status-pill ${m.cls}">${m.label}</span>`;
+}
+function queueItemPill(it) {
+  if (it.status === 'success') return '<span class="status-pill success">成功</span>';
+  if (it.status === 'failed') return '<span class="status-pill failed">失败</span>';
+  if (it.status === 'running') return '<span class="status-pill running">运行中</span>';
+  if (it.status === 'skipped') return '<span class="status-pill paused">已跳过</span>';
+  return '<span class="status-pill ready">待执行</span>';
+}
+/** 队列里已完成（含失败/跳过）的任务数 */
+function queueDoneCount(q) {
+  return (q.items || []).filter(i => i.status === 'success' || i.status === 'failed' || i.status === 'skipped').length;
+}
+
+async function renderQueues(silent = false) {
+  const wrap = $('#queue-grid');
+  if (!wrap) return;
+  let list = [];
+  try { list = await api('/api/queues'); } catch (e) { if (!silent) toast(e.message, 'err'); return; }
+  // 指纹：队列本身的设置 + 每个任务的状态，任一变化才重绘（避免轮询时闪烁）
+  const sig = signature(list, ['id', 'name', 'status', 'start_at', 'interval_seconds', 'stop_on_error'])
+    + '|' + list.map(q => (q.items || []).map(i => `${i.id}:${i.status}`).join(',')).join(';');
+  if (silent && sig === state.queueSig) return;
+  state.queueSig = sig;
+  state.queues = list;
+  const running = list.filter(q => q.status === 'running').length;
+  const badge = $('#queue-badge');
+  if (badge) { badge.hidden = running === 0; badge.textContent = running; }
+  if (!list.length) {
+    wrap.innerHTML = `<div class="empty">还没有运行队列。<div class="empty-act">
+      <button class="btn btn-solid" onclick="document.getElementById('btn-new-queue').click()">新建队列</button></div></div>`;
+    return;
+  }
+  wrap.innerHTML = '';
+  for (const q of list) wrap.appendChild(queueCard(q));
+}
+
+function queueCard(q) {
+  const card = document.createElement('div');
+  card.className = 'queue-card';
+  card.dataset.id = q.id;
+  const items = q.items || [];
+  const total = items.length;
+  const done = queueDoneCount(q);
+  const rows = items.map((it, idx) => `
+    <li class="queue-item${it.status === 'running' ? ' running' : ''}" data-item="${it.id}">
+      <span class="qi-no">${idx + 1}</span>
+      <span class="qi-name" title="${escapeHtml(it.schedule_name || '')}">${escapeHtml(it.schedule_name || '（定时任务已删除）')}</span>
+      <span class="qi-script" title="${escapeHtml(it.script_name || '')}">${escapeHtml(it.script_name || '')}</span>
+      ${queueItemPill(it)}
+      <span class="qi-ops">
+        <button class="qi-btn" data-op="up" title="往前挪一位" ${idx === 0 ? 'disabled' : ''}>↑</button>
+        <button class="qi-btn" data-op="down" title="往后挪一位" ${idx === total - 1 ? 'disabled' : ''}>↓</button>
+        <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
+      </span>
+    </li>`).join('');
+  const errTip = items.filter(i => i.status === 'failed' && i.error).map(i => i.error).join('；');
+  card.innerHTML = `
+    <div class="queue-head">
+      <div class="queue-head-left">
+        <div class="queue-title" title="${escapeHtml(q.name)}">${escapeHtml(q.name)}</div>
+        <div class="queue-sub">开始：${escapeHtml(smartTime(q.start_at))} · 间隔 ${q.interval_seconds}s ·
+          ${q.stop_on_error ? '出错就停下' : '出错跳过继续'}</div>
+      </div>
+      <div class="queue-head-right">${queueStatusPill(q)}</div>
+    </div>
+    <div class="queue-progress">
+      <span class="queue-count">任务 ${done} / ${total}</span>
+      <span class="queue-bar"><i style="width:${total ? Math.round(done / total * 100) : 0}%"></i></span>
+    </div>
+    ${total ? `<ul class="queue-items" title="${escapeHtml(errTip)}">${rows}</ul>`
+      : '<div class="queue-empty">队列里还没有定时任务</div>'}
+    <div class="queue-ops">
+      <button class="btn btn-ghost" data-op="edit">编辑</button>
+      <button class="btn btn-ghost" data-op="clear">清空</button>
+      <button class="btn btn-ghost" data-op="restart">重新启动</button>
+      <button class="btn btn-danger" data-op="del">删除</button>
+    </div>`;
+
+  // 队列内的任务：上下挪 / 移出
+  $$('.queue-item', card).forEach(li => {
+    $$('.qi-btn', li).forEach(b => b.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      const op = b.dataset.op;
+      const itemId = Number(li.dataset.item);
+      if (op === 'del') {
+        // 移出任务同样是破坏性操作，走二次确认
+        const nm = ($('.qi-name', li) || {}).textContent || '这个任务';
+        armDelConfirm(b, {
+          label: '移出队列',
+          hint: `确认把「${nm.trim()}」移出队列「${q.name}」？`,
+          onConfirm: async () => {
+            try {
+              await api(`/api/queues/${q.id}/items/${itemId}`, { method: 'DELETE' });
+              toast('已移出队列');
+              await renderQueues();
+            } catch (err) { toast(err.message, 'err'); }
+          },
+        });
+        return;
+      }
+      try {
+        await api(`/api/queues/${q.id}/items/${itemId}/move`, { method: 'POST', body: { direction: op } });
+        await renderQueues();
+      } catch (err) { toast(err.message, 'err'); }
+    }));
+  });
+
+  // 队列级操作
+  $$('.queue-ops .btn', card).forEach(b => b.addEventListener('click', async () => {
+    const op = b.dataset.op;
+    if (op === 'edit') { openQueueModal(q); return; }
+    if (op === 'clear') {
+      armDelConfirm(b, {
+        label: '清空队列',
+        hint: `确认清空队列「${q.name}」里的所有任务？`,
+        onConfirm: async () => {
+          try {
+            await api(`/api/queues/${q.id}/clear`, { method: 'POST', body: {} });
+            toast('已清空队列');
+            await renderQueues();
+          } catch (e) { toast(e.message, 'err'); }
+        },
+      });
+      return;
+    }
+    if (op === 'restart') {
+      armDelConfirm(b, {
+        label: '重新启动队列',
+        hint: `确认重新启动队列「${q.name}」？所有任务会回到待执行`,
+        onConfirm: async () => {
+          try {
+            await api(`/api/queues/${q.id}/restart`, { method: 'POST', body: {} });
+            toast('队列已重新启动');
+            await renderQueues();
+          } catch (e) { toast(e.message, 'err'); }
+        },
+      });
+      return;
+    }
+    if (op === 'del') {
+      armDelConfirm(b, {
+        label: '删除队列',
+        hint: `确认删除队列「${q.name}」？`,
+        onConfirm: async () => {
+          try {
+            await api(`/api/queues/${q.id}`, { method: 'DELETE' });
+            toast('已删除队列');
+            await renderQueues();
+          } catch (e) { toast(e.message, 'err'); }
+        },
+      });
+    }
+  }));
+  return card;
+}
+
+/* ---------- 队列的新建 / 编辑弹窗 ---------- */
+
+/** datetime-local 的值 → 后端要的 ISO 字符串 */
+function toLocalInput(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  if (isNaN(d)) return '';
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+async function openQueueModal(queue, presetScheduleIds = []) {
+  const isEdit = !!queue;
+  let scheds = [];
+  try { scheds = await api('/api/schedules'); } catch { /* 保持空 */ }
+  const items = (queue && queue.items) || [];
+  // 草稿：队列里的定时任务（用 schedule_id 做键，和后端一致）
+  let draft = items.map(it => ({
+    schedule_id: it.schedule_id,
+    name: it.schedule_name || '（定时任务已删除）',
+    script: it.script_name || '',
+  }));
+  for (const sid of presetScheduleIds) {
+    if (!draft.some(d => d.schedule_id === sid)) {
+      const s = scheds.find(x => x.id === Number(sid));
+      if (s) draft.push({ schedule_id: Number(sid), name: s.name, script: s.script_name || '' });
+    }
+  }
+  const defaultStart = isEdit ? toLocalInput(queue.start_at) : toLocalInput(new Date(Date.now() + 60000).toISOString());
+  const body = `
+    <div class="mfield"><label>队列名称 <span class="req">*</span></label>
+      <input type="text" id="q-name" placeholder="如：夜间批处理" value="${escapeHtml(isEdit ? queue.name : '')}"></div>
+    <div class="mfield-row">
+      <div class="mfield"><label>开始执行时间 <span class="req">*</span></label>
+        <input type="datetime-local" id="q-start" value="${defaultStart}">
+        <div class="hint">到了这个时间队列自动开跑</div></div>
+      <div class="mfield"><label>任务间隔（秒）</label>
+        <input type="number" id="q-interval" min="0" value="${isEdit ? queue.interval_seconds : 5}">
+        <div class="hint">上一个任务跑完后，等这么久再跑下一个</div></div>
+    </div>
+    <div class="mfield"><label>任务出错时</label>
+      <div class="radio-cards" id="q-err">
+        <label class="radio-card ${isEdit && queue.stop_on_error ? 'on' : ''}"><input type="radio" name="qerr" value="stop" ${isEdit && queue.stop_on_error ? 'checked' : ''}>停下整个队列</label>
+        <label class="radio-card ${!isEdit || !queue.stop_on_error ? 'on' : ''}"><input type="radio" name="qerr" value="skip" ${!isEdit || !queue.stop_on_error ? 'checked' : ''}>跳过这个，继续跑下一个</label>
+      </div>
+    </div>
+    <div class="mfield"><label>队列里的定时任务</label>
+      <ul class="q-items" id="q-items"></ul>
+      <div class="q-add">
+        <select id="q-add-sel"><option value="">选择要加入的定时任务…</option>
+          ${scheds.map(s => `<option value="${s.id}">${escapeHtml(s.name)}${s.script_name ? ' · ' + escapeHtml(s.script_name) : ''}</option>`).join('')}
+        </select>
+        <button class="btn btn-ghost" id="q-add-btn">加入队列</button>
+      </div>
+      <div class="hint">按列表顺序执行（先进先出），用 ↑ ↓ 调整先后。</div></div>`;
+
+  openModal({
+    title: isEdit ? '编辑队列' : '新建队列',
+    wide: true,
+    body,
+    foot: [
+      { label: '取消' },
+      { label: isEdit ? '保存' : '创建', primary: true, onClick: submitQueue },
+    ],
+  });
+
+  const draw = () => {
+    const box = $('#q-items');
+    if (!box) return;
+    if (!draft.length) {
+      box.innerHTML = '<li class="q-items-empty">还没有任务，从下面选一个加进来</li>';
+      return;
+    }
+    box.innerHTML = draft.map((d, i) => `
+      <li class="q-item" data-i="${i}">
+        <span class="qi-no">${i + 1}</span>
+        <span class="qi-name">${escapeHtml(d.name)}</span>
+        <span class="qi-script">${escapeHtml(d.script || '')}</span>
+        <span class="qi-ops">
+          <button class="qi-btn" data-op="up" title="往前挪一位" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="qi-btn" data-op="down" title="往后挪一位" ${i === draft.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="qi-btn qi-btn-x" data-op="del" title="移出队列">×</button>
+        </span>
+      </li>`).join('');
+    $$('#q-items .qi-btn').forEach(b => b.addEventListener('click', (e) => {
+      e.preventDefault();
+      const li = b.closest('.q-item');
+      const i = Number(li.dataset.i);
+      const op = b.dataset.op;
+      if (op === 'del') draft.splice(i, 1);
+      else if (op === 'up' && i > 0) { const t = draft[i - 1]; draft[i - 1] = draft[i]; draft[i] = t; }
+      else if (op === 'down' && i < draft.length - 1) { const t = draft[i + 1]; draft[i + 1] = draft[i]; draft[i] = t; }
+      draw();
+    }));
+  };
+  draw();
+
+  $('#q-add-btn').addEventListener('click', () => {
+    const sel = $('#q-add-sel');
+    const sid = Number(sel.value);
+    if (!sid) { toast('先选一个定时任务', 'warn'); return; }
+    if (draft.some(d => d.schedule_id === sid)) { toast('这个任务已经在队列里了', 'warn'); return; }
+    const s = scheds.find(x => x.id === sid);
+    draft.push({ schedule_id: sid, name: s ? s.name : '定时任务', script: s ? (s.script_name || '') : '' });
+    sel.value = '';
+    draw();
+  });
+
+  $$('#q-err .radio-card').forEach(card => card.addEventListener('click', () => {
+    $$('#q-err .radio-card').forEach(c => c.classList.toggle('on', c === card));
+  }));
+
+  queueCtx = { queue, draft };
+}
+
+let queueCtx = null;
+
+async function submitQueue() {
+  if (!queueCtx) return;
+  const name = ($('#q-name') && $('#q-name').value || '').trim();
+  const startRaw = ($('#q-start') && $('#q-start').value) || '';
+  const interval = parseInt(($('#q-interval') && $('#q-interval').value) || '5', 10);
+  if (!name) { toast('请填写队列名称', 'err'); return; }
+  if (!startRaw) { toast('请选择开始执行时间', 'err'); return; }
+  if (isNaN(interval) || interval < 0) { toast('任务间隔需要是不小于 0 的整数', 'err'); return; }
+  const stopOnError = !!($('#q-err input[value=stop]') && $('#q-err input[value=stop]').checked);
+  const scheduleIds = queueCtx.draft.map(d => d.schedule_id);
+  const startAt = new Date(startRaw).toISOString();
+  try {
+    if (queueCtx.queue) {
+      await api(`/api/queues/${queueCtx.queue.id}`, {
+        method: 'PUT',
+        body: { name, start_at: startAt, interval_seconds: interval, stop_on_error: stopOnError },
+      });
+      await api(`/api/queues/${queueCtx.queue.id}/items/reorder`, { method: 'POST', body: { schedule_ids: scheduleIds } });
+      toast('队列已保存');
+    } else {
+      await api('/api/queues', {
+        method: 'POST',
+        body: { name, start_at: startAt, interval_seconds: interval, stop_on_error: stopOnError, schedule_ids: scheduleIds },
+      });
+      toast('队列已创建');
+    }
+    queueCtx = null;
+    closeModal();
+    await renderQueues();
+  } catch (e) { toast(e.message, 'err'); }
+}
+
+/** 从定时任务卡片「加入队列」：选一个已有队列，或直接新建一个 */
+async function openAddToQueueModal(scheduleId, scheduleName) {
+  let queues = [];
+  try { queues = await api('/api/queues'); } catch { /* 保持空 */ }
+  const body = `
+    <div class="mfield"><label>把「${escapeHtml(scheduleName || '这个任务')}」加入</label>
+      <select id="aq-sel">
+        ${queues.map(q => `<option value="${q.id}">${escapeHtml(q.name)}（${(q.items || []).length} 个任务）</option>`).join('')}
+        <option value="__new__">＋ 新建一个队列</option>
+      </select>
+      <div class="hint">${queues.length ? '加入后会排在队尾。' : '还没有队列，选「新建一个队列」即可。'}</div></div>`;
+  openModal({
+    title: '加入运行队列',
+    body,
+    foot: [
+      { label: '取消' },
+      { label: '加入', primary: true, onClick: async () => {
+        const v = $('#aq-sel').value;
+        if (v === '__new__') { closeModal(); openQueueModal(null, [scheduleId]); return; }
+        try {
+          await api(`/api/queues/${v}/items`, { method: 'POST', body: { schedule_id: Number(scheduleId) } });
+          toast('已加入队列');
+          closeModal();
+          await renderQueues();
+        } catch (e) { toast(e.message, 'err'); }
+      } },
+    ],
+  });
 }
 
 /* ---------- 可视化 cron 构建 ---------- */
@@ -3688,6 +4040,7 @@ function switchView(name) {
   if (name !== 'scripts') closeDrawer();
   if (name === 'history') { refreshHistory(); }
   if (name === 'schedules') { state.schedAnimated = false; renderSchedules(); }
+  if (name === 'queues') { renderQueues(); }
   if (name === 'settings') { syncSettingsView(); fillSettingsAbout(); loadRunEnv(); }
   closeRunPopover();
   if (DEBUG) debugReport('view:' + name);
@@ -3715,6 +4068,7 @@ function initTopbar() {
 
   $('#btn-add').addEventListener('click', () => openImportModal('file'));
   $('#btn-new-sched').addEventListener('click', () => openScheduleModal(null));
+  $('#btn-new-queue').addEventListener('click', () => openQueueModal(null));
   // 搜索框在顶栏复用，这里只放计数旁的「清空」
   $('#btn-sched-search-clear').addEventListener('click', () => {
     state.schedKw = '';

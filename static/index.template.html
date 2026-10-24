@@ -43,6 +43,7 @@
     <button class="nav-btn on" data-view="scripts">脚本</button>
     <button class="nav-btn" data-view="history">执行记录</button>
     <button class="nav-btn" data-view="schedules">定时任务 <span class="badge" id="sched-badge" hidden>0</span></button>
+    <button class="nav-btn" data-view="queues">运行队列 <span class="badge" id="queue-badge" hidden>0</span></button>
     <button class="nav-btn" data-view="settings">设置</button>
   </div>
 </header>
@@ -139,6 +140,18 @@
         <button class="quick-btn" id="btn-sched-search-clear" hidden title="清空顶栏搜索">清空</button>
       </div>
       <div class="sched-grid" id="sched-grid"></div>
+    </section>
+
+    <!-- ============ 运行队列 ============ -->
+    <section class="view view-page" id="view-queues">
+      <div class="page-head-row">
+        <div>
+          <div class="kicker">QUEUES</div><h1>运行队列</h1>
+          <div class="sub">把若干定时任务排成一条队：到了开始时间就按顺序一个接一个跑，前一个跑完（成不成都算）才轮到下一个。</div>
+        </div>
+        <button class="btn btn-solid" id="btn-new-queue">+ 新建队列</button>
+      </div>
+      <div class="queue-grid" id="queue-grid"></div>
     </section>
 
     <!-- ============ 设置 ============ -->

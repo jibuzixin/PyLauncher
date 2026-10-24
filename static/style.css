@@ -130,7 +130,16 @@ svg{flex-shrink:0;}
 .nav-btn .badge{font-family:"JetBrains Mono",monospace;font-size:10px;font-weight:500;
   background:var(--danger);color:#fff;border-radius:999px;padding:1px 6px;}
 /* 顶栏搜索框现在同时服务脚本与定时任务两个 tab，只缩窄、不轻易隐藏 */
-@media(max-width:1180px){ .hdr-search{width:170px;} }
+/* 导航多了一个「运行队列」，窄面板下顶栏要按优先级依次收紧：
+   ① 收内边距与按钮间距 → ② 收搜索框 → ③ 让出品牌名与局域网开关
+   （顺序即重要性：5 个导航按钮任何时候都不能被挤出视口） */
+@media(max-width:1180px){
+  .hdr{padding:0 28px;}
+  .hdr-search{width:170px;}
+  .nav-btn{padding:0 11px;}
+  .hdr-nav{gap:2px;}
+}
+@media(max-width:1080px){ .brand-name,.lan-toggle{display:none;} }
 @media(max-width:860px){ .hdr-search{display:none;} }
 @media(max-width:980px){ .lan-toggle,.hide-md{display:none;} }
 @media(max-width:768px){ .nav-btn{padding:0 10px;font-size:12px;} .brand-name{display:none;} }
@@ -702,6 +711,57 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .sched-meta .last-run{color:var(--info);}
 .sched-ops{display:flex;gap:8px;}
 .sched-ops .btn{flex:1;height:32px;font-size:12px;padding:0 10px;}
+
+/* ---------- 运行队列 ---------- */
+.queue-grid{display:grid;gap:16px;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));}
+.queue-card{background:#fff;border:1px solid var(--line-2);border-radius:var(--r-card);padding:18px;
+  display:flex;flex-direction:column;gap:12px;
+  transition:transform var(--t-fast),border-color var(--t-fast),box-shadow var(--t-fast);}
+.queue-card:hover{transform:translateY(-4px);border-color:var(--ink-4);
+  box-shadow:0 18px 40px -22px rgba(0,0,0,.28);}
+.queue-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;}
+.queue-head-left{min-width:0;}
+.queue-title{font-size:13px;font-weight:600;color:var(--ink);word-break:break-all;line-height:1.4;}
+.queue-sub{font-size:11px;color:var(--ink-4);margin-top:3px;line-height:1.6;}
+.queue-head-right{flex-shrink:0;}
+.queue-progress{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--ink-4);}
+.queue-count{font-family:"JetBrains Mono",monospace;flex-shrink:0;}
+.queue-bar{flex:1;height:4px;border-radius:999px;background:var(--bg-sub);overflow:hidden;}
+.queue-bar i{display:block;height:100%;background:var(--ink-3);border-radius:999px;
+  transition:width var(--t-fast);}
+.queue-items{list-style:none;margin:0;padding:0;border:1px solid var(--line);border-radius:8px;overflow:hidden;}
+.queue-item,.q-item{display:flex;align-items:center;gap:8px;padding:8px 10px;font-size:12px;
+  border-bottom:1px solid var(--line);background:#fff;}
+.queue-item:last-child,.q-item:last-child{border-bottom:none;}
+.queue-item.running{background:var(--bg-sub);}
+.qi-no{width:18px;height:18px;border-radius:5px;background:var(--bg-sub);color:var(--ink-4);
+  font-size:10px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  font-family:"JetBrains Mono",monospace;}
+.qi-name{color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
+.qi-script{color:var(--ink-4);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  flex:0 1 auto;min-width:0;}
+.queue-item .status-pill,.q-item .status-pill{flex-shrink:0;padding:0 7px;font-size:10px;height:auto;line-height:16px;}
+.qi-ops{margin-left:auto;display:flex;gap:2px;flex-shrink:0;}
+.qi-btn{width:22px;height:22px;border-radius:5px;border:1px solid transparent;background:transparent;
+  color:var(--ink-4);font-size:12px;line-height:1;display:inline-flex;align-items:center;
+  justify-content:center;cursor:pointer;
+  transition:background var(--t-fast),color var(--t-fast),border-color var(--t-fast);}
+.qi-btn:hover:not(:disabled){background:var(--bg-hover);color:var(--ink);}
+.qi-btn:disabled{opacity:.35;cursor:default;}
+.qi-btn-x:hover:not(:disabled){background:rgba(253,76,76,.1);color:var(--danger);}
+.queue-empty{font-size:11px;color:var(--ink-4);padding:12px;text-align:center;
+  border:1px dashed var(--line-2);border-radius:8px;}
+.queue-ops{display:flex;gap:8px;}
+.queue-ops .btn{flex:1;height:32px;font-size:12px;padding:0 8px;}
+/* 队列弹窗里的任务清单 */
+.q-items{list-style:none;margin:0 0 8px;padding:0;border:1px solid var(--line-2);border-radius:8px;
+  overflow-y:auto;max-height:220px;}
+.q-items-empty{font-size:11px;color:var(--ink-4);padding:14px;text-align:center;list-style:none;}
+.q-add{display:flex;gap:8px;align-items:center;}
+.q-add select{flex:1;height:34px;padding:0 10px;border:1px solid var(--line-2);border-radius:8px;
+  background:#fff;font-size:12px;color:var(--ink);}
+.q-add select:focus{outline:none;border-color:var(--brand-6);box-shadow:0 0 0 3px rgba(20,86,240,.1);}
+.q-add .btn{height:34px;font-size:12px;padding:0 12px;flex-shrink:0;}
 
 /* ---------- 弹窗 ---------- */
 .modal-mask{position:fixed;inset:0;background:rgba(24,30,37,.4);backdrop-filter:blur(4px);

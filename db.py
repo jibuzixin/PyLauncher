@@ -98,6 +98,36 @@ CREATE TABLE IF NOT EXISTS schedules (
 );
 CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON schedules(enabled);
 
+-- 运行队列：把若干定时任务排成一条串行执行的队伍
+CREATE TABLE IF NOT EXISTS queues (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    start_at TEXT NOT NULL,                    -- 队列的开始执行时间
+    interval_seconds INTEGER NOT NULL DEFAULT 5,-- 两个任务之间的间隔
+    stop_on_error INTEGER NOT NULL DEFAULT 0,  -- 1=出错就停下；0=跳过继续下一个
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / done / stopped
+    next_ready_at TEXT,                        -- 上一个任务跑完后，最早可以开始下一个的时刻
+    started_at TEXT,
+    finished_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS queue_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    queue_id INTEGER NOT NULL REFERENCES queues(id) ON DELETE CASCADE,
+    schedule_id INTEGER NOT NULL REFERENCES schedules(id) ON DELETE CASCADE,
+    position INTEGER NOT NULL DEFAULT 0,       -- 先进先出：位置小的先跑
+    status TEXT NOT NULL DEFAULT 'pending',    -- pending / running / success / failed / skipped
+    error TEXT,
+    exec_id INTEGER,
+    started_at TEXT,
+    finished_at TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_queue_items_queue ON queue_items(queue_id, position);
+
 CREATE INDEX IF NOT EXISTS idx_scripts_path ON scripts(path);
 CREATE INDEX IF NOT EXISTS idx_exec_script ON executions(script_id);
 CREATE INDEX IF NOT EXISTS idx_exec_status ON executions(status);
@@ -651,6 +681,262 @@ def set_schedule_runtime(
     vals.append(schedule_id)
     with _lock, _conn() as conn:
         conn.execute(f"UPDATE schedules SET {', '.join(sets)} WHERE id=?", vals)
+
+
+# ---------- queues（运行队列） ----------
+
+def add_queue(name: str, start_at: str, interval_seconds: int = 5,
+              stop_on_error: bool = False) -> dict:
+    now = now_iso()
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO queues(name, start_at, interval_seconds, stop_on_error, status,"
+            " created_at, updated_at) VALUES(?,?,?,?,'pending',?,?)",
+            (name, start_at, max(0, int(interval_seconds)), 1 if stop_on_error else 0, now, now),
+        )
+        return dict(conn.execute("SELECT * FROM queues WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def get_queue(queue_id: int) -> Optional[dict]:
+    if not queue_id:
+        return None
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM queues WHERE id=?", (queue_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_queues() -> list[dict]:
+    """所有队列，带上任务总数 / 已完成数 / 失败数，供列表直接显示进度。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT q.*,"
+            " (SELECT COUNT(*) FROM queue_items qi WHERE qi.queue_id=q.id) AS item_count,"
+            " (SELECT COUNT(*) FROM queue_items qi WHERE qi.queue_id=q.id"
+            "  AND qi.status IN ('success','failed','skipped')) AS done_count,"
+            " (SELECT COUNT(*) FROM queue_items qi WHERE qi.queue_id=q.id AND qi.status='failed')"
+            "  AS failed_count"
+            " FROM queues q ORDER BY q.id DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def update_queue(queue_id: int, name: Optional[str] = None, start_at: Optional[str] = None,
+                 interval_seconds: Optional[int] = None,
+                 stop_on_error: Optional[bool] = None) -> dict:
+    fields, vals = [], []
+    if name is not None:
+        fields.append("name=?"); vals.append(name)
+    if start_at is not None:
+        fields.append("start_at=?"); vals.append(start_at)
+    if interval_seconds is not None:
+        fields.append("interval_seconds=?"); vals.append(max(0, int(interval_seconds)))
+    if stop_on_error is not None:
+        fields.append("stop_on_error=?"); vals.append(1 if stop_on_error else 0)
+    fields.append("updated_at=?"); vals.append(now_iso())
+    vals.append(queue_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE queues SET {', '.join(fields)} WHERE id=?", vals)
+        return dict(conn.execute("SELECT * FROM queues WHERE id=?", (queue_id,)).fetchone())
+
+
+def set_queue_status(queue_id: int, status: str, next_ready_at: Optional[str] = None,
+                     clear_next_ready: bool = False, started: bool = False,
+                     finished: bool = False) -> None:
+    sets, vals = ["status=?"], [status]
+    if clear_next_ready:
+        sets.append("next_ready_at=NULL")
+    elif next_ready_at is not None:
+        sets.append("next_ready_at=?"); vals.append(next_ready_at)
+    if started:
+        sets.append("started_at=?"); vals.append(now_iso())
+    if finished:
+        sets.append("finished_at=?"); vals.append(now_iso())
+    sets.append("updated_at=?"); vals.append(now_iso())
+    vals.append(queue_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE queues SET {', '.join(sets)} WHERE id=?", vals)
+
+
+def delete_queue(queue_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM queues WHERE id=?", (queue_id,))
+        return cur.rowcount > 0
+
+
+def clear_queue_items(queue_id: int) -> None:
+    """清空队列里的任务（队列本身留着，还能继续加任务）。"""
+    with _lock, _conn() as conn:
+        conn.execute("DELETE FROM queue_items WHERE queue_id=?", (queue_id,))
+        conn.execute("UPDATE queues SET status='pending', next_ready_at=NULL, started_at=NULL,"
+                     " finished_at=NULL, updated_at=? WHERE id=?", (now_iso(), queue_id))
+
+
+def restart_queue(queue_id: int) -> None:
+    """重新启动：所有任务回到「待执行」，队列回到「等待开始」，按原开始时间再跑一遍。"""
+    now = now_iso()
+    with _lock, _conn() as conn:
+        conn.execute(
+            "UPDATE queue_items SET status='pending', error=NULL, exec_id=NULL,"
+            " started_at=NULL, finished_at=NULL, updated_at=? WHERE queue_id=?", (now, queue_id))
+        conn.execute("UPDATE queues SET status='pending', next_ready_at=NULL, started_at=NULL,"
+                     " finished_at=NULL, updated_at=? WHERE id=?", (now, queue_id))
+
+
+# ---------- queue_items ----------
+
+def add_queue_item(queue_id: int, schedule_id: int) -> dict:
+    """加入队尾（先进先出）。"""
+    now = now_iso()
+    with _lock, _conn() as conn:
+        row = conn.execute("SELECT COALESCE(MAX(position), -1) FROM queue_items WHERE queue_id=?",
+                           (queue_id,)).fetchone()
+        # 注意：0 是合法位置，不能用 `or` 判断空值（0 会被当成空）
+        pos = (row[0] if row[0] is not None else -1) + 1
+        cur = conn.execute(
+            "INSERT INTO queue_items(queue_id, schedule_id, position, status, created_at, updated_at)"
+            " VALUES(?,?,?,'pending',?,?)",
+            (queue_id, schedule_id, pos, now, now))
+        return dict(conn.execute("SELECT * FROM queue_items WHERE id=?", (cur.lastrowid,)).fetchone())
+
+
+def get_queue_item(item_id: int) -> Optional[dict]:
+    with _conn() as conn:
+        row = conn.execute("SELECT * FROM queue_items WHERE id=?", (item_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def list_queue_items(queue_id: int) -> list[dict]:
+    """队列里的任务（按执行顺序），带上定时任务名与脚本名。"""
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT qi.*, s.name AS schedule_name, s.cron AS schedule_cron,"
+            " sc.name AS script_name, sc.path AS script_path"
+            " FROM queue_items qi"
+            " LEFT JOIN schedules s ON qi.schedule_id = s.id"
+            " LEFT JOIN scripts sc ON s.script_id = sc.id"
+            " WHERE qi.queue_id=? ORDER BY qi.position ASC, qi.id ASC", (queue_id,)
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def set_queue_items(queue_id: int, schedule_ids: list[int]) -> list[dict]:
+    """按给定的定时任务顺序重建队列的任务清单。
+
+    已经在队列里的任务保留原来的执行状态（不会因为调顺序就重置），
+    新加的排在后面，不在列表里的移除掉。
+    """
+    now = now_iso()
+    with _lock, _conn() as conn:
+        existing = {}
+        for r in conn.execute("SELECT * FROM queue_items WHERE queue_id=?", (queue_id,)).fetchall():
+            existing.setdefault(r["schedule_id"], dict(r))
+        keep: set[int] = set()
+        seen: set[int] = set()
+        pos = 0
+        for sid in schedule_ids:
+            sid = int(sid)
+            if sid in seen:
+                continue          # 同一个任务在一个队列里只出现一次
+            seen.add(sid)
+            it = existing.get(sid)
+            if it:
+                conn.execute("UPDATE queue_items SET position=?, updated_at=? WHERE id=?",
+                             (pos, now, it["id"]))
+                keep.add(it["id"])
+            else:
+                cur = conn.execute(
+                    "INSERT INTO queue_items(queue_id, schedule_id, position, status, created_at, updated_at)"
+                    " VALUES(?,?,?,'pending',?,?)", (queue_id, sid, pos, now, now))
+                keep.add(cur.lastrowid)
+            pos += 1
+        for r in conn.execute("SELECT id FROM queue_items WHERE queue_id=?", (queue_id,)).fetchall():
+            if r["id"] not in keep:
+                conn.execute("DELETE FROM queue_items WHERE id=?", (r["id"],))
+    return list_queue_items(queue_id)
+
+
+def remove_queue_item(item_id: int) -> bool:
+    with _lock, _conn() as conn:
+        cur = conn.execute("DELETE FROM queue_items WHERE id=?", (item_id,))
+        return cur.rowcount > 0
+
+
+def move_queue_item(item_id: int, direction: str) -> bool:
+    """队列内上下移动：up 往前挪一格，down 往后挪一格。"""
+    with _lock, _conn() as conn:
+        row = conn.execute("SELECT * FROM queue_items WHERE id=?", (item_id,)).fetchone()
+        if not row:
+            return False
+        item = dict(row)
+        if direction == "up":
+            other = conn.execute(
+                "SELECT * FROM queue_items WHERE queue_id=? AND position < ?"
+                " ORDER BY position DESC LIMIT 1", (item["queue_id"], item["position"])).fetchone()
+        else:
+            other = conn.execute(
+                "SELECT * FROM queue_items WHERE queue_id=? AND position > ?"
+                " ORDER BY position ASC LIMIT 1", (item["queue_id"], item["position"])).fetchone()
+        if not other:
+            return False
+        other = dict(other)
+        now = now_iso()
+        conn.execute("UPDATE queue_items SET position=?, updated_at=? WHERE id=?",
+                     (other["position"], now, item["id"]))
+        conn.execute("UPDATE queue_items SET position=?, updated_at=? WHERE id=?",
+                     (item["position"], now, other["id"]))
+        return True
+
+
+def set_queue_item_status(item_id: int, status: str, error: Optional[str] = None,
+                          exec_id: Optional[int] = None, started: bool = False,
+                          finished: bool = False) -> None:
+    sets, vals = ["status=?"], [status]
+    if error is not None:
+        sets.append("error=?"); vals.append(error)
+    elif status != "failed":
+        sets.append("error=NULL")
+    if exec_id is not None:
+        sets.append("exec_id=?"); vals.append(exec_id)
+    if started:
+        sets.append("started_at=?"); vals.append(now_iso())
+    if finished:
+        sets.append("finished_at=?"); vals.append(now_iso())
+    sets.append("updated_at=?"); vals.append(now_iso())
+    vals.append(item_id)
+    with _lock, _conn() as conn:
+        conn.execute(f"UPDATE queue_items SET {', '.join(sets)} WHERE id=?", vals)
+
+
+def next_queue_item(queue_id: int) -> Optional[dict]:
+    """下一个该跑的任务（先进先出：位置最小且还没跑的）。"""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT * FROM queue_items WHERE queue_id=? AND status='pending'"
+            " ORDER BY position ASC, id ASC LIMIT 1", (queue_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def skip_pending_queue_items(queue_id: int) -> int:
+    """出错停止时，把还没跑的任务标成「已跳过」。"""
+    with _lock, _conn() as conn:
+        cur = conn.execute(
+            "UPDATE queue_items SET status='skipped', error=?, updated_at=?"
+            " WHERE queue_id=? AND status='pending'", ("队列已中止", now_iso(), queue_id))
+        return cur.rowcount
+
+
+def recover_queues() -> int:
+    """服务重启后的收尾：正在跑的那一项没人收尾了，放回「待执行」；
+    队列回到「等待开始」，服务起来后接着跑（按原来的开始时间）。"""
+    now = now_iso()
+    with _lock, _conn() as conn:
+        n = conn.execute(
+            "UPDATE queue_items SET status='pending', error=NULL, exec_id=NULL,"
+            " started_at=NULL, finished_at=NULL, updated_at=?"
+            " WHERE status='running'", (now,)).rowcount
+        conn.execute("UPDATE queues SET status='pending', next_ready_at=NULL, started_at=NULL,"
+                     " updated_at=? WHERE status='running'", (now,))
+        return n
 
 
 # ---------- executions ----------

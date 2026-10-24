@@ -15,7 +15,7 @@ import threading
 import time
 import webbrowser
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -105,12 +105,21 @@ async def _lifespan(app: FastAPI):
             print(f"[startup] 清理 {n} 条遗留的定时任务 running 状态 → failed", flush=True)
     except Exception:  # noqa: BLE001
         pass
+    # 队列同理：上次进程被杀掉时，正在跑的那一项没人收尾，
+    # 把它放回「待执行」、队列回到「等待开始」，服务起来后接着跑
+    try:
+        db.recover_queues()
+    except Exception:  # noqa: BLE001
+        pass
     # 定时任务调度循环（服务生命周期内常驻）
     task = asyncio.create_task(_schedule_loop())
+    # 运行队列单独跑一个更快的循环：队列要尽量贴着用户设的开始时间开跑
+    qtask = asyncio.create_task(_queue_loop())
     try:
         yield
     finally:
         task.cancel()
+        qtask.cancel()
 
 
 app = FastAPI(title="Tool Launcher", docs_url=None, redoc_url=None, lifespan=_lifespan)
@@ -226,6 +235,38 @@ class ScheduleUpdateReq(BaseModel):
 
 class CronPreviewReq(BaseModel):
     cron: str
+
+
+class QueueReq(BaseModel):
+    """新建运行队列：名字 + 开始时间 + 间隔 + 出错策略 + 队列里的定时任务。"""
+    name: str
+    start_at: str
+    interval_seconds: int = 5
+    stop_on_error: bool = False
+    schedule_ids: list[int] = []
+
+
+class QueueUpdateReq(BaseModel):
+    name: Optional[str] = None
+    start_at: Optional[str] = None
+    interval_seconds: Optional[int] = None
+    stop_on_error: Optional[bool] = None
+
+
+class QueueItemReq(BaseModel):
+    schedule_id: int
+
+
+class QueueMoveReq(BaseModel):
+    direction: str = "up"          # up | down
+
+
+class QueueRestartReq(BaseModel):
+    start_at: Optional[str] = None
+
+
+class QueueReorderReq(BaseModel):
+    schedule_ids: list[int] = []
 
 
 class MetaReq(BaseModel):
@@ -971,6 +1012,122 @@ async def _schedule_loop() -> None:
         await asyncio.sleep(10)
 
 
+# ---------------- 运行队列 ----------------
+# 队列 = 一串定时任务按先进先出的顺序串行执行：
+# 前一个跑完（成不成都算跑完）才轮到下一个，任务之间隔一个可配置的间隔。
+_QUEUES_RUNNING: dict[int, int] = {}
+
+
+def _queue_running_count(queue_id: int) -> int:
+    return _QUEUES_RUNNING.get(queue_id, 0)
+
+
+def _queue_begin(queue_id: int) -> None:
+    _QUEUES_RUNNING[queue_id] = _queue_running_count(queue_id) + 1
+
+
+def _queue_end(queue_id: int) -> None:
+    n = _queue_running_count(queue_id) - 1
+    if n > 0:
+        _QUEUES_RUNNING[queue_id] = n
+    else:
+        _QUEUES_RUNNING.pop(queue_id, None)
+
+
+async def _queue_run_item(queue: dict, item: dict) -> None:
+    """执行队列里的一个任务：跑完写终态，再决定是继续下一个还是就此停下。"""
+    queue_id = queue["id"]
+    status = "failed"
+    err = ""
+    exec_id = None
+    try:
+        sched = db.get_schedule(item["schedule_id"])
+        rec = db.get_script(sched["script_id"]) if sched else None
+        if not sched or not rec:
+            err = "定时任务或脚本已不存在"
+        else:
+            # 参数与命令前后缀沿用该定时任务自己的设置（绑了预设就跟预设走）
+            args, arg_list, cmd_text = _sched_resolve(sched, rec)
+            exec_row = db.add_execution(rec["id"], args, sched.get("preset_id"), cmd_text)
+            exec_id = exec_row["id"]
+            _new_session(exec_id)
+
+            async def coro(emit: Callable) -> dict:
+                if cmd_text:
+                    return await _execute_command_task(exec_id, cmd_text, rec["path"], emit)
+                return await _execute_task(exec_id, rec["path"], arg_list, emit,
+                                           rec.get("venv_path") or "")
+            result = await _run_in_session(exec_id, coro) or {}
+            status = result.get("status") or "failed"
+            if status != "success":
+                err = (result.get("message") or "").strip() or f"执行未成功（{status}）"
+    except asyncio.CancelledError:
+        status = "terminated"
+        err = "已终止"
+        raise
+    except Exception as e:  # noqa: BLE001
+        status = "failed"
+        err = str(e) or e.__class__.__name__
+    finally:
+        try:
+            db.set_queue_item_status(item["id"], status, error=err or None, exec_id=exec_id,
+                                     finished=True)
+            failed = status not in ("success",)
+            stop = failed and bool(queue.get("stop_on_error"))
+            if stop:
+                # 出错就停下：剩下的任务标成「已跳过」，队列收尾
+                db.skip_pending_queue_items(queue_id)
+                db.set_queue_status(queue_id, "stopped", finished=True)
+            else:
+                # 继续下一个：等够间隔再开跑
+                gap = max(0, int(queue.get("interval_seconds") or 0))
+                ready = datetime.now().astimezone() + timedelta(seconds=gap)
+                db.set_queue_status(queue_id, "running", next_ready_at=_iso(ready))
+        except Exception as e:  # noqa: BLE001
+            print(f"[queue {queue_id}] 收尾失败: {e}", file=sys.stderr)
+        _queue_end(queue_id)
+
+
+async def _tick_queues() -> None:
+    """推进所有队列：到点就开跑，跑完一个接一个。"""
+    now = datetime.now().astimezone()
+    for q in db.list_queues():
+        try:
+            if q["status"] == "pending":
+                start_at = _parse_iso(q.get("start_at"))
+                if start_at is None or start_at > now:
+                    continue
+                # 到点了：队列开跑
+                db.set_queue_status(q["id"], "running", started=True)
+                q = db.get_queue(q["id"]) or q
+            if q["status"] != "running":
+                continue
+            if _queue_running_count(q["id"]) > 0:
+                continue        # 正在跑一个，等它跑完
+            ready_at = _parse_iso(q.get("next_ready_at"))
+            if ready_at is not None and now < ready_at:
+                continue        # 还没到间隔时间
+            item = db.next_queue_item(q["id"])
+            if item is None:
+                db.set_queue_status(q["id"], "done", finished=True)
+                continue
+            db.set_queue_item_status(item["id"], "running", started=True)
+            _queue_begin(q["id"])
+            asyncio.create_task(_queue_run_item(q, item))
+        except Exception as e:  # noqa: BLE001
+            print(f"[queue {q.get('id')}] tick 失败: {e}", file=sys.stderr)
+
+
+async def _queue_loop() -> None:
+    """队列循环：每 2 秒看一次，让队列尽量贴着用户设的开始时间开跑。"""
+    while True:
+        try:
+            await _tick_queues()
+        except Exception as e:  # noqa: BLE001
+            print(f"[queue] 循环异常: {e}", file=sys.stderr)
+        await asyncio.sleep(2)
+
+
 # ---------------- REST API ----------------
 
 @app.get("/api/export")
@@ -1119,6 +1276,126 @@ async def run_schedule_now(schedule_id: int):
 async def delete_schedule_api(schedule_id: int):
     db.delete_schedule(schedule_id)
     return {"ok": True}
+
+
+# ---------------- 运行队列 API ----------------
+
+@app.get("/api/queues")
+async def list_queues_api():
+    """所有队列（含任务清单）。"""
+    out = []
+    for q in db.list_queues():
+        q["items"] = db.list_queue_items(q["id"])
+        out.append(q)
+    return out
+
+
+@app.get("/api/queues/{queue_id}")
+async def get_queue_api(queue_id: int):
+    q = db.get_queue(queue_id)
+    if not q:
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    q["items"] = db.list_queue_items(queue_id)
+    return q
+
+
+@app.post("/api/queues")
+async def create_queue(req: QueueReq):
+    name = req.name.strip()
+    if not name:
+        return JSONResponse({"ok": False, "error": "队列名称不能为空"}, status_code=400)
+    if not req.start_at:
+        return JSONResponse({"ok": False, "error": "请设置队列的开始执行时间"}, status_code=400)
+    q = db.add_queue(name, req.start_at, req.interval_seconds, req.stop_on_error)
+    for sid in req.schedule_ids or []:
+        if db.get_schedule(sid):
+            db.add_queue_item(q["id"], sid)
+    return {"ok": True, "queue": _queue_detail(q["id"])}
+
+
+@app.put("/api/queues/{queue_id}")
+async def update_queue_api(queue_id: int, req: QueueUpdateReq):
+    q = db.get_queue(queue_id)
+    if not q:
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    db.update_queue(
+        queue_id,
+        name=req.name.strip() if req.name is not None else None,
+        start_at=req.start_at if req.start_at is not None else None,
+        interval_seconds=req.interval_seconds,
+        stop_on_error=req.stop_on_error,
+    )
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.delete("/api/queues/{queue_id}")
+async def delete_queue_api(queue_id: int):
+    db.delete_queue(queue_id)
+    return {"ok": True}
+
+
+@app.post("/api/queues/{queue_id}/items")
+async def add_queue_item_api(queue_id: int, req: QueueItemReq):
+    """把一个定时任务加入队尾。"""
+    if not db.get_queue(queue_id):
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    if not db.get_schedule(req.schedule_id):
+        return JSONResponse({"ok": False, "error": "定时任务不存在"}, status_code=404)
+    db.add_queue_item(queue_id, req.schedule_id)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.post("/api/queues/{queue_id}/items/reorder")
+async def reorder_queue_items_api(queue_id: int, req: QueueReorderReq):
+    """按给定的定时任务顺序重建队列清单（前端拖动/上下移动后一次性提交）。"""
+    if not db.get_queue(queue_id):
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    ids = [s for s in (req.schedule_ids or []) if db.get_schedule(s)]
+    db.set_queue_items(queue_id, ids)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.delete("/api/queues/{queue_id}/items/{item_id}")
+async def remove_queue_item_api(queue_id: int, item_id: int):
+    item = db.get_queue_item(item_id)
+    if item and item["queue_id"] == queue_id:
+        db.remove_queue_item(item_id)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.post("/api/queues/{queue_id}/items/{item_id}/move")
+async def move_queue_item_api(queue_id: int, item_id: int, req: QueueMoveReq):
+    """队列内调整顺序（up 往前 / down 往后）。"""
+    item = db.get_queue_item(item_id)
+    if item and item["queue_id"] == queue_id:
+        db.move_queue_item(item_id, req.direction)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.post("/api/queues/{queue_id}/clear")
+async def clear_queue_api(queue_id: int):
+    """清空队列里的任务（队列本身保留，可以继续加任务）。"""
+    if not db.get_queue(queue_id):
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    db.clear_queue_items(queue_id)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+@app.post("/api/queues/{queue_id}/restart")
+async def restart_queue_api(queue_id: int, req: QueueRestartReq):
+    """重新启动：所有任务回到待执行，队列回到等待开始。"""
+    if not db.get_queue(queue_id):
+        return JSONResponse({"ok": False, "error": "队列不存在"}, status_code=404)
+    if req.start_at:
+        db.update_queue(queue_id, start_at=req.start_at)
+    db.restart_queue(queue_id)
+    return {"ok": True, "queue": _queue_detail(queue_id)}
+
+
+def _queue_detail(queue_id: int) -> dict:
+    q = db.get_queue(queue_id) or {}
+    q["items"] = db.list_queue_items(queue_id)
+    return q
 
 
 @app.post("/api/schedules/preview")
