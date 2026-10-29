@@ -1177,6 +1177,43 @@ def clear_executions(script_id: int | None = None) -> int:
         return cur.rowcount
 
 
+def purge_executions_before(cutoff: str, dry_run: bool = False) -> tuple[int, int]:
+    """删除 started_at 早于 cutoff 的执行记录，只保留 cutoff 之后的。
+
+    永久删除（真 DELETE，不做假性删除 / 软标记）。running 的记录会跳过，
+    免得把正在跑的任务连同它的输出一起抹掉。
+
+    cutoff 用 ISO 字符串。started_at 存的是带时区偏移的 ISO（如 2026-10-29T17:37:46+08:00），
+    直接字符串比较不可靠（不同偏移量排序会错），统一交给 SQLite 的 julianday 解析。
+
+    返回 (删除条数, 跳过的 running 条数)。
+    """
+    with _lock, _conn() as conn:
+        rows = conn.execute(
+            "SELECT id, status FROM executions WHERE julianday(started_at) < julianday(?)",
+            (cutoff,),
+        ).fetchall()
+        running = [r["id"] for r in rows if r["status"] == "running"]
+        old_ids = [r["id"] for r in rows if r["status"] != "running"]
+        if dry_run or not old_ids:
+            return len(old_ids), len(running)
+        dph = ",".join("?" * len(old_ids))
+        cur = conn.execute(f"DELETE FROM executions WHERE id IN ({dph})", old_ids)
+        return cur.rowcount, len(running)
+
+
+def count_executions_before(cutoff: str) -> tuple[int, int]:
+    """（真正会被删掉的条数, 因 running 被跳过的条数），用于删除前提示。"""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n, SUM(CASE WHEN status='running' THEN 1 ELSE 0 END) AS r"
+            " FROM executions WHERE julianday(started_at) < julianday(?)",
+            (cutoff,),
+        ).fetchone()
+        running = int(row["r"] or 0)
+        return int(row["n"] or 0) - running, running
+
+
 # ---------- folders ----------
 
 def create_folder(name: str) -> Optional[dict]:

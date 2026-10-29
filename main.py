@@ -15,7 +15,7 @@ import threading
 import time
 import webbrowser
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -1990,6 +1990,34 @@ async def delete_executions(req: DeleteExecsReq):
     """批量删除执行记录；运行中的记录自动跳过。"""
     deleted, skipped_running = db.delete_executions(req.ids)
     return {"ok": True, "deleted": deleted, "skipped_running": skipped_running}
+
+
+class PurgeOldReq(BaseModel):
+    days: int = 30
+    dry_run: bool = False
+
+
+def _purge_cutoff(days: int) -> str:
+    """保留天数 → 截止时刻（ISO）。只接受合理的正数天数。"""
+    days = max(1, min(int(days), 3650))
+    return (datetime.now(timezone.utc) - timedelta(days=days)).astimezone().isoformat(timespec="seconds")
+
+
+@app.get("/api/executions/purge-old/preview")
+async def purge_old_preview(days: int = 30):
+    """删除前先看看会清掉多少条（不实际删除）。"""
+    cutoff = _purge_cutoff(days)
+    n, running = db.count_executions_before(cutoff)
+    return {"ok": True, "days": days, "cutoff": cutoff, "would_delete": n, "skipped_running": running}
+
+
+@app.post("/api/executions/purge-old")
+async def purge_old_executions(req: PurgeOldReq):
+    """永久删除 N 天之前的执行记录（真删，不做假性删除）；running 的自动跳过。"""
+    cutoff = _purge_cutoff(req.days)
+    deleted, skipped_running = db.purge_executions_before(cutoff, dry_run=req.dry_run)
+    return {"ok": True, "days": req.days, "cutoff": cutoff,
+            "deleted": deleted, "skipped_running": skipped_running}
 
 
 @app.post("/api/executions/{exec_id}/terminate")

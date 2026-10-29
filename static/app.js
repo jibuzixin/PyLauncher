@@ -2443,6 +2443,31 @@ function initHistoryView() {
       },
     });
   });
+  $('#btn-purge-old').addEventListener('click', async () => {
+    // 先问服务端有多少条会被清掉，拿到数字再让用户确认
+    let n = 0, running = 0;
+    try {
+      const p = await api('/api/executions/purge-old/preview?days=30');
+      n = p.would_delete || 0;
+      running = p.skipped_running || 0;
+    } catch (e) { toast('查询待清理记录失败：' + e.message, 'err'); return; }
+    if (!n) { toast('没有 30 天前的记录，无需清理'); return; }
+    const skip = running ? `，跳过 ${running} 条运行中` : '';
+    armDelConfirm($('#btn-purge-old'), {
+      label: '清理 30 天前的记录',
+      hint: `确认永久删除 ${n} 条 30 天前的执行记录${skip}？删除后无法恢复`,
+      onConfirm: async () => {
+        try {
+          const r = await api('/api/executions/purge-old', { method: 'POST', body: { days: 30 } });
+          state.detailId = null;
+          state.tabs.forEach(t => t.stream.clear());
+          const sk = r.skipped_running || 0;
+          toast(sk ? `已删除 ${r.deleted} 条，跳过 ${sk} 条运行中记录` : `已删除 ${r.deleted} 条旧记录`);
+          await refreshHistory();
+        } catch (e) { toast(e.message, 'err'); }
+      },
+    });
+  });
 }
 /* ========================= 轮询与连接状态 ========================= */
 
