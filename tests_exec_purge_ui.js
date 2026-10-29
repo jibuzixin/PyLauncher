@@ -13,6 +13,7 @@ const { readApp } = require('./tests_jsutil');
 
 const src = readApp();
 const tpl = fs.readFileSync(path.join(__dirname, 'static', 'index.template.html'), 'utf8');
+const css = fs.readFileSync(path.join(__dirname, 'static', 'style.css'), 'utf8');
 const dbSrc = fs.readFileSync(path.join(__dirname, 'db.py'), 'utf8');
 const mainSrc = fs.readFileSync(path.join(__dirname, 'main.py'), 'utf8');
 
@@ -24,8 +25,17 @@ function check(desc, ok, extra) {
 
 /* ---- 页面骨架 ---- */
 check('执行记录页有「清理30天前」按钮', tpl.includes('id="btn-purge-old"'));
-check('按钮文案是「清理30天前」', tpl.includes('>清理30天前<'));
-check('按钮用红色危险样式', /class="[^"]*btn-danger[^"]*"[^>]*id="btn-purge-old"/.test(tpl));
+check('按钮文案是「清理30天前的记录」', tpl.includes('>清理30天前的记录<'));
+
+/* ---- 两个清理操作合并成一个「⋯」按钮，悬浮展开 ---- */
+check('有一个「⋯」触发按钮', tpl.includes('id="btn-hs-more"'));
+check('触发按钮带 aria-haspopup', tpl.includes('aria-haspopup="true"'));
+check('触发按钮带 aria-expanded', tpl.includes('aria-expanded="false"'));
+check('两个清理项在同一个下拉容器里',
+  /id="hs-more-pop"[\s\S]*id="btn-purge-old"[\s\S]*id="btn-clear-history"/.test(tpl));
+check('头部不再直接放「清理30天前」按钮',
+  !/class="btn btn-danger" id="btn-purge-old"/.test(tpl));
+check('下拉容器包住触发按钮', /id="hs-more"[\s\S]*id="btn-hs-more"[\s\S]*id="hs-more-pop"/.test(tpl));
 
 /* ---- 接口 ---- */
 check('有 preview 接口（删除前先看数量）',
@@ -49,7 +59,18 @@ check('后端用 DELETE 语句真删', dbSrc.includes('DELETE FROM executions WH
 check('后端没有引入软删除字段',
   !/deleted_at|is_deleted|soft_delete/i.test(dbSrc));
 check('清理函数带 running 保护', dbSrc.includes('status') && dbSrc.includes('running'));
-check('用 julianday 比较时间（跨时区偏移安全）', dbSrc.includes('julianday(started_at)'));
+check('后端用 julianday 比较时间（跨时区偏移安全）', dbSrc.includes('julianday(started_at)'));
+
+/* ---- 下拉展开行为 ---- */
+check('悬浮即展开（CSS :hover）', css.includes('.hs-more:hover .hs-more-pop'));
+check('点击也能开合（触屏/键盘可达）', src.includes('openHistMore()') && src.includes('closeHistMore()'));
+check('点外面收起', src.includes('if (!wrap.contains(e.target)) closeHistMore();'));
+check('Esc 收起', /e\.key === 'Escape'\) closeHistMore\(\)/.test(src));
+check('菜单项待确认时有独立样式',
+  css.includes('.hs-more-item.pending-del'));
+check('菜单项用危险色', css.includes('.hs-more-item.danger'));
+check('确认真正执行后才收起菜单',
+  /onConfirm: async \(\) => \{\s*closeHistMore\(\);/.test(src));
 
 console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
 process.exit(failed ? 1 : 0);

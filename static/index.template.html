@@ -95,8 +95,15 @@
         </div>
         <div class="head-ops">
           <button class="btn btn-ghost" id="btn-history-multi">多选</button>
-          <button class="btn btn-danger" id="btn-purge-old">清理30天前</button>
-          <button class="btn btn-ghost" id="btn-clear-history">清空记录</button>
+          <div class="hs-more" id="hs-more">
+            <button class="btn btn-ghost hs-more-btn" id="btn-hs-more" aria-haspopup="true" aria-expanded="false" title="清理执行记录">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <div class="hs-more-pop" id="hs-more-pop" role="menu">
+              <button class="hs-more-item danger" id="btn-purge-old" role="menuitem">清理30天前的记录</button>
+              <button class="hs-more-item danger" id="btn-clear-history" role="menuitem">清空全部记录</button>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -2429,10 +2429,12 @@ function initHistoryView() {
     });
   });
   $('#btn-clear-history').addEventListener('click', () => {
+    // 不在这里收起菜单：第一次点只是「待确认」，菜单得留着让用户能再点一次
     armDelConfirm($('#btn-clear-history'), {
       label: '清空执行记录',
       hint: `确认清空全部 ${state.executions.length} 条执行记录？`,
       onConfirm: async () => {
+        closeHistMore();
         try {
           const r = await api('/api/executions/clear', { method: 'POST', body: {} });
           state.detailId = null;
@@ -2451,12 +2453,13 @@ function initHistoryView() {
       n = p.would_delete || 0;
       running = p.skipped_running || 0;
     } catch (e) { toast('查询待清理记录失败：' + e.message, 'err'); return; }
-    if (!n) { toast('没有 30 天前的记录，无需清理'); return; }
+    if (!n) { toast('没有 30 天前的记录，无需清理'); closeHistMore(); return; }
     const skip = running ? `，跳过 ${running} 条运行中` : '';
     armDelConfirm($('#btn-purge-old'), {
       label: '清理 30 天前的记录',
       hint: `确认永久删除 ${n} 条 30 天前的执行记录${skip}？删除后无法恢复`,
       onConfirm: async () => {
+        closeHistMore();
         try {
           const r = await api('/api/executions/purge-old', { method: 'POST', body: { days: 30 } });
           state.detailId = null;
@@ -2467,6 +2470,38 @@ function initHistoryView() {
         } catch (e) { toast(e.message, 'err'); }
       },
     });
+  });
+  initHistMore();
+}
+
+/* ---------- 「⋯」下拉（清理30天前 / 清空全部） ----------
+ * 悬浮直接展开（CSS），点击也能开合（触屏和键盘走这条路），
+ * 点外面或按 Esc 收起。 */
+function openHistMore() {
+  $('#hs-more').classList.add('open');
+  $('#btn-hs-more').setAttribute('aria-expanded', 'true');
+}
+function closeHistMore() {
+  const w = $('#hs-more');
+  if (!w) return;
+  w.classList.remove('open');
+  $('#btn-hs-more').setAttribute('aria-expanded', 'false');
+}
+function initHistMore() {
+  const btn = $('#btn-hs-more');
+  const wrap = $('#hs-more');
+  if (!btn || !wrap) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (wrap.classList.contains('open')) closeHistMore();
+    else openHistMore();
+  });
+  // 点菜单外面 → 收起
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) closeHistMore();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeHistMore();
   });
 }
 /* ========================= 轮询与连接状态 ========================= */

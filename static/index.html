@@ -205,6 +205,24 @@ h1{font-size:26px;font-weight:600;line-height:1.15;letter-spacing:-.02em;
 .term-tab.pending-del{color:var(--warning);}
 @keyframes pendingDelPulse{0%,100%{box-shadow:0 0 0 0 rgba(255,140,33,.28);}50%{box-shadow:0 0 0 5px rgba(255,140,33,0);}}
 .btn.icon-only{width:44px;padding:0;}
+/* 「更多」下拉：执行记录页把「清理30天前」「清空记录」收进一个 ⋯ 按钮，
+   悬浮展开两项，让头部保持两个按钮的简洁。展开层贴着按钮右侧对齐。 */
+.hs-more{position:relative;}
+.hs-more-btn{width:44px;padding:0;}
+.hs-more-btn svg{width:16px;height:16px;}
+.hs-more-pop{position:absolute;top:calc(100% + 6px);right:0;z-index:220;min-width:172px;
+  background:#fff;border:1px solid var(--line-2);border-radius:var(--r-sm,10px);box-shadow:var(--shadow-pop);
+  padding:5px;opacity:0;visibility:hidden;transform:translateY(-4px);
+  transition:opacity .18s var(--ease),transform .18s var(--ease),visibility .18s;}
+.hs-more:hover .hs-more-pop,.hs-more.open .hs-more-pop{opacity:1;visibility:visible;transform:translateY(0);}
+.hs-more-item{display:block;width:100%;text-align:left;border:0;background:transparent;
+  padding:8px 11px;border-radius:6px;font-size:12px;color:var(--ink);cursor:pointer;
+  font-family:inherit;transition:background var(--t-fast),color var(--t-fast);}
+.hs-more-item:hover{background:var(--bg-hover);}
+.hs-more-item.danger{color:var(--danger);}
+.hs-more-item.danger:hover{background:#fff1f1;}
+/* 菜单项待确认时也要有脉冲提示（pending-del 是全局样式，这里补一下菜单项的表现） */
+.hs-more-item.pending-del{color:#fff !important;background:var(--warning) !important;}
 .quick-btn{display:inline-flex;align-items:center;gap:5px;height:28px;padding:0 10px;
   border-radius:6px;border:1px solid var(--line-2);background:#fff;font-size:11px;color:var(--ink-2);
   transition:all var(--t-fast);}
@@ -1066,8 +1084,15 @@ body.no-select{user-select:none;}
         </div>
         <div class="head-ops">
           <button class="btn btn-ghost" id="btn-history-multi">多选</button>
-          <button class="btn btn-danger" id="btn-purge-old">清理30天前</button>
-          <button class="btn btn-ghost" id="btn-clear-history">清空记录</button>
+          <div class="hs-more" id="hs-more">
+            <button class="btn btn-ghost hs-more-btn" id="btn-hs-more" aria-haspopup="true" aria-expanded="false" title="清理执行记录">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="1"/><circle cx="12" cy="5" r="1"/><circle cx="12" cy="19" r="1"/></svg>
+            </button>
+            <div class="hs-more-pop" id="hs-more-pop" role="menu">
+              <button class="hs-more-item danger" id="btn-purge-old" role="menuitem">清理30天前的记录</button>
+              <button class="hs-more-item danger" id="btn-clear-history" role="menuitem">清空全部记录</button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -3803,10 +3828,12 @@ function initHistoryView() {
     });
   });
   $('#btn-clear-history').addEventListener('click', () => {
+    // 不在这里收起菜单：第一次点只是「待确认」，菜单得留着让用户能再点一次
     armDelConfirm($('#btn-clear-history'), {
       label: '清空执行记录',
       hint: `确认清空全部 ${state.executions.length} 条执行记录？`,
       onConfirm: async () => {
+        closeHistMore();
         try {
           const r = await api('/api/executions/clear', { method: 'POST', body: {} });
           state.detailId = null;
@@ -3825,12 +3852,13 @@ function initHistoryView() {
       n = p.would_delete || 0;
       running = p.skipped_running || 0;
     } catch (e) { toast('查询待清理记录失败：' + e.message, 'err'); return; }
-    if (!n) { toast('没有 30 天前的记录，无需清理'); return; }
+    if (!n) { toast('没有 30 天前的记录，无需清理'); closeHistMore(); return; }
     const skip = running ? `，跳过 ${running} 条运行中` : '';
     armDelConfirm($('#btn-purge-old'), {
       label: '清理 30 天前的记录',
       hint: `确认永久删除 ${n} 条 30 天前的执行记录${skip}？删除后无法恢复`,
       onConfirm: async () => {
+        closeHistMore();
         try {
           const r = await api('/api/executions/purge-old', { method: 'POST', body: { days: 30 } });
           state.detailId = null;
@@ -3841,6 +3869,38 @@ function initHistoryView() {
         } catch (e) { toast(e.message, 'err'); }
       },
     });
+  });
+  initHistMore();
+}
+
+/* ---------- 「⋯」下拉（清理30天前 / 清空全部） ----------
+ * 悬浮直接展开（CSS），点击也能开合（触屏和键盘走这条路），
+ * 点外面或按 Esc 收起。 */
+function openHistMore() {
+  $('#hs-more').classList.add('open');
+  $('#btn-hs-more').setAttribute('aria-expanded', 'true');
+}
+function closeHistMore() {
+  const w = $('#hs-more');
+  if (!w) return;
+  w.classList.remove('open');
+  $('#btn-hs-more').setAttribute('aria-expanded', 'false');
+}
+function initHistMore() {
+  const btn = $('#btn-hs-more');
+  const wrap = $('#hs-more');
+  if (!btn || !wrap) return;
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (wrap.classList.contains('open')) closeHistMore();
+    else openHistMore();
+  });
+  // 点菜单外面 → 收起
+  document.addEventListener('click', (e) => {
+    if (!wrap.contains(e.target)) closeHistMore();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeHistMore();
   });
 }
 /* ========================= 轮询与连接状态 ========================= */
