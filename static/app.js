@@ -2108,8 +2108,10 @@ function historyFiltered() {
       // 状态词只跟「状态 / 名字 / 标签」比，不去命令、输出里匹配
       const alias = EXEC_STATUS_ALIAS[t];
       if (alias) return h.status === alias || nameHay.includes(t);
-      return nameHay.includes(t) || cmdHay.includes(t)
-        || (h.status || '').toLowerCase().includes(t);
+      if (nameHay.includes(t) || cmdHay.includes(t)) return true;
+      if ((h.status || '').toLowerCase().includes(t)) return true;
+      // 输出内容可能很长，放到最后再查一次，避免每次都拼进 haystack
+      return (h.output || '').toLowerCase().includes(t);
     });
   });
 }

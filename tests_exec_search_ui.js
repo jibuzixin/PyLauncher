@@ -69,6 +69,12 @@ reset('成功');
 check('本地过滤能按中文状态命中（成功）', ids(historyFiltered()).includes(1));
 check('状态词不误伤：输出含「成功」但状态是 failed 的记录不该被捞进来',
   !ids(historyFiltered()).includes(5), JSON.stringify(ids(historyFiltered())));
+reset('全部成功');
+check('只在输出里的词也能被本地过滤命中（避免闪「无匹配」）',
+  ids(historyFiltered()).includes(5), JSON.stringify(ids(historyFiltered())));
+reset('共 3 项失败');
+check('只在输出里的中文词也能被本地过滤命中',
+  ids(historyFiltered()).includes(4), JSON.stringify(ids(historyFiltered())));
 reset('月度');
 check('本地过滤能按记录名命中（另一条）', ids(historyFiltered()).includes(3));
 
