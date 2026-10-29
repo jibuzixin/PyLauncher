@@ -15,6 +15,20 @@ from typing import Any, Iterable, Iterator, Optional
 
 _DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "launcher.db")
 
+# 状态别名：搜「成功」「失败」也能命中执行记录（库里存的是英文状态）
+# 这些词是「状态词」，只跟状态字段比，不会去 output/命令 里乱匹配
+EXEC_STATUS_ALIAS = {
+    "成功": "success",
+    "失败": "failed",
+    "运行中": "running",
+    "已终止": "terminated",
+    "终止": "terminated",
+    "success": "success",
+    "failed": "failed",
+    "running": "running",
+    "terminated": "terminated",
+}
+
 # 执行记录只保留程序结束后的最后 N 行
 OUTPUT_KEEP_LINES = 1000
 
@@ -1073,7 +1087,13 @@ def list_executions(
     tag: str | None = None,
     status: str | None = None,
     limit: int = 200,
+    kw: str | None = None,
 ) -> list[dict]:
+    """执行记录列表。kw 非空时按「记录名 / 脚本名 / 标签 / 状态 / 命令 / 参数」过滤。
+
+    多个关键词按空格拆开，逐个都要命中（AND），所以「1022 知识库」这种
+    只给了片段的搜索也能用。搜索覆盖的是全部记录，不只是首页那 200 条。
+    """
     sql = "SELECT e.*, s.name AS script_name FROM executions e LEFT JOIN scripts s ON e.script_id = s.id WHERE 1=1"
     params: list = []
     if script_id is not None:
@@ -1085,6 +1105,33 @@ def list_executions(
     if tag:
         sql += " AND e.tags LIKE ?"
         params.append(f'%"{tag}"%')
+    for token in [t for t in str(kw or "").lower().split() if t]:
+        like = f"%{token}%"
+        alias = EXEC_STATUS_ALIAS.get(token)
+        if alias:
+            # 状态词（成功/失败/运行中/已终止/success/failed/...）只跟「状态 / 名字 / 标签」比，
+            # 不去 output、命令、参数里匹配，否则「失败」会把输出里出现「失败」二字的记录也捞进来
+            conds = [
+                "e.status = ?",                            # 状态（精确）
+                "LOWER(COALESCE(e.tab_name,'')) LIKE ?",    # 记录名
+                "LOWER(COALESCE(s.name,'')) LIKE ?",        # 脚本名
+                "LOWER(COALESCE(e.tags,'')) LIKE ?",        # 标签
+            ]
+            sql += " AND (" + " OR ".join(conds) + ")"
+            params.append(alias)
+            params += [like] * 3
+            continue
+        conds = [
+            "LOWER(COALESCE(e.tab_name,'')) LIKE ?",     # 记录名（控制台重命名后的名字）
+            "LOWER(COALESCE(s.name,'')) LIKE ?",         # 脚本名
+            "LOWER(COALESCE(e.tags,'')) LIKE ?",         # 标签
+            "LOWER(COALESCE(e.status,'')) LIKE ?",       # 状态（英文，用于 fail/succ 这类片段）
+            "LOWER(COALESCE(e.command,'')) LIKE ?",      # 实际执行的命令
+            "LOWER(COALESCE(e.args,'')) LIKE ?",         # 参数
+            "LOWER(COALESCE(e.output,'')) LIKE ?",       # 输出内容
+        ]
+        sql += " AND (" + " OR ".join(conds) + ")"
+        params += [like] * len(conds)
     sql += " ORDER BY e.started_at DESC LIMIT ?"
     params.append(limit)
     with _conn() as conn:

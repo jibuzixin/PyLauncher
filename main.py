@@ -1888,8 +1888,10 @@ async def parse_script_command(script_id: int, req: ParseCommandReq):
 
 @app.get("/api/executions")
 async def list_executions(script_id: Optional[int] = None, tag: Optional[str] = None,
-                          status: Optional[str] = None, limit: int = 200):
-    return db.list_executions(script_id, tag, status, limit)
+                          status: Optional[str] = None, limit: int = 200,
+                          kw: Optional[str] = None):
+    """执行记录列表。kw 非空时按记录名 / 脚本名 / 标签 / 状态 / 命令 / 参数 / 输出过滤。"""
+    return db.list_executions(script_id, tag, status, limit, kw)
 
 
 @app.get("/api/executions/running")

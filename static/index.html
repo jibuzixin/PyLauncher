@@ -1715,6 +1715,8 @@ const state = {
   historyMulti: false,
   selectedHistory: new Set(),
   histSig: null,
+  histRows: null,          // 有关键词时：服务端搜出来的结果（覆盖全部记录，不只最近 200 条）
+  histRowsKw: '',          // histRows 对应的关键词；和当前关键词不一致说明结果还没到，先走本地即时过滤
   schedSig: null,
   schedAnimated: false,
   schedKw: '',
@@ -3418,8 +3420,21 @@ async function refreshHistory() {
       if (h.script_id && !latest[h.script_id]) latest[h.script_id] = h.status;
     }
     state.lastStatus = latest;
+    // 有关键词时另查一次：搜索要覆盖全部记录，不只是最新这 200 条
+    const kw = (state.histKw || '').trim();
+    if (kw) {
+      try {
+        const rows = await api('/api/executions?limit=200&kw=' + encodeURIComponent(kw));
+        // 关键词在请求期间又变了 → 丢弃这次结果，等下一轮
+        if ((state.histKw || '').trim() === kw) { state.histRows = rows; state.histRowsKw = kw; }
+      } catch { /* 搜索失败就退回本地过滤 */ }
+    } else {
+      state.histRows = null;
+      state.histRowsKw = '';
+    }
     // 只有列表内容真的变了才重绘，否则 6 秒轮询会让整页反复闪
-    const sig = signature(list, ['id', 'status', 'finished_at', 'tags', 'script_name', 'tab_name']);
+    const sig = signature(list, ['id', 'status', 'finished_at', 'tags', 'script_name', 'tab_name'])
+      + '|' + (state.histKw || '');
     const changed = sig !== state.histSig;
     state.histSig = sig;
     if (changed) renderHistory();
@@ -3441,14 +3456,41 @@ function updatePageBadge() {
   el.classList.remove('bad');
 }
 
+/** 状态别名：搜「成功」「失败」也能命中（库里存的是英文状态）。
+ *  和后端 db.EXEC_STATUS_ALIAS 保持一致。 */
+const EXEC_STATUS_ALIAS = {
+  '成功': 'success', '失败': 'failed', '运行中': 'running',
+  '已终止': 'terminated', '终止': 'terminated',
+  success: 'success', failed: 'failed', running: 'running', terminated: 'terminated',
+};
+
+/** 执行记录搜索：记录名（控制台重命名的名字）/ 脚本名 / 标签 / 状态 / 命令 / 参数 / 输出。
+ *  多个关键词按空格拆开，逐个都要命中（AND）。
+ *  服务端结果已按当前关键词过滤好了，直接用；结果还没回来的那 160ms 内先用本地已有的记录即时反馈。 */
 function historyFiltered() {
   const kw = (state.histKw || '').trim().toLowerCase();
+  const tokens = kw ? kw.split(/\s+/).filter(Boolean) : [];
+  if (!tokens.length) return state.executions;
+  // 服务端结果已就绪且就是当前关键词 → 直接用（它覆盖了全部历史记录，不只最近 200 条）
+  if (state.histRows && state.histRowsKw === (state.histKw || '').trim()) return state.histRows;
   return state.executions.filter(h => {
-    if (!kw) return true;
     const tags = jparse(h.tags, []).join(' ');
-    const hay = `${h.script_name || ''} ${h.status} ${STATUS_TEXT[h.status] || ''} ${tags} ${h.command || ''}`.toLowerCase();
-    return hay.includes(kw);
+    const nameHay = `${h.tab_name || ''} ${h.script_name || ''} ${tags}`.toLowerCase();
+    const cmdHay = `${h.command || ''} ${h.args || ''}`.toLowerCase();
+    return tokens.every(t => {
+      // 状态词只跟「状态 / 名字 / 标签」比，不去命令、输出里匹配
+      const alias = EXEC_STATUS_ALIAS[t];
+      if (alias) return h.status === alias || nameHay.includes(t);
+      return nameHay.includes(t) || cmdHay.includes(t)
+        || (h.status || '').toLowerCase().includes(t);
+    });
   });
+}
+
+/** 按 id 找一条执行记录（服务端搜索结果里可能有更早的记录，不在最近 200 条内） */
+function findExecution(id) {
+  return (state.histRows || []).find(h => h.id === id)
+    || state.executions.find(h => h.id === id);
 }
 
 function renderHistory() {
@@ -3492,7 +3534,7 @@ function initHistoryRowEvents() {
     const row = e.target.closest('.hist-row');
     if (!row) return;
     const id = Number(row.dataset.id);
-    const rec = state.executions.find(h => h.id === id);
+    const rec = findExecution(id);
     if (state.historyMulti) {
       if (e.target.closest('.hi-del')) return;
       if (state.selectedHistory.has(id)) state.selectedHistory.delete(id); else state.selectedHistory.add(id);
@@ -5704,7 +5746,7 @@ function syncTopSearch() {
   if (!box) return;
   const map = {
     schedules: ['搜索定时任务 / 脚本名 / 预设 / cron…', state.schedKw],
-    history: ['搜索执行记录：脚本名 / 状态 / 标签…', state.histKw],
+    history: ['搜索执行记录：记录名 / 脚本名 / 标签 / 状态…', state.histKw],
   };
   const [ph, kw] = map[state.view] || ['搜索脚本…', state.kw];
   box.placeholder = ph;
@@ -5735,7 +5777,11 @@ function initTopbar() {
   $('#search').addEventListener('input', debounce((e) => {
     const v = e.target.value;
     if (state.view === 'schedules') { state.schedKw = v; renderSchedules(); }
-    else if (state.view === 'history') { state.histKw = v; renderHistory(); }
+    else if (state.view === 'history') {
+      state.histKw = v;
+      renderHistory();                       // 先用本地已有的记录即时反馈
+      refreshHistory();                      // 再问服务端要全量搜索结果（清空关键词时也要刷新）
+    }
     else { state.kw = v; renderGrid(); }
   }, 160));
 
