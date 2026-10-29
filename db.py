@@ -1089,10 +1089,11 @@ def list_executions(
     limit: int = 200,
     kw: str | None = None,
 ) -> list[dict]:
-    """执行记录列表。kw 非空时按「记录名 / 脚本名 / 标签 / 状态 / 命令 / 参数」过滤。
+    """执行记录列表。kw 非空时按「记录名 / 脚本名 / 标签 / 状态」过滤。
 
     多个关键词按空格拆开，逐个都要命中（AND），所以「1022 知识库」这种
     只给了片段的搜索也能用。搜索覆盖的是全部记录，不只是首页那 200 条。
+    刻意不搜命令、参数、控制台输出：那些是执行细节，命中太多反而查不出想要的记录。
     """
     sql = "SELECT e.*, s.name AS script_name FROM executions e LEFT JOIN scripts s ON e.script_id = s.id WHERE 1=1"
     params: list = []
@@ -1110,7 +1111,7 @@ def list_executions(
         alias = EXEC_STATUS_ALIAS.get(token)
         if alias:
             # 状态词（成功/失败/运行中/已终止/success/failed/...）只跟「状态 / 名字 / 标签」比，
-            # 不去 output、命令、参数里匹配，否则「失败」会把输出里出现「失败」二字的记录也捞进来
+            # 不去名字之外的字段里匹配，否则「失败」会把名字里带这字的记录也捞进来
             conds = [
                 "e.status = ?",                            # 状态（精确）
                 "LOWER(COALESCE(e.tab_name,'')) LIKE ?",    # 记录名
@@ -1126,9 +1127,6 @@ def list_executions(
             "LOWER(COALESCE(s.name,'')) LIKE ?",         # 脚本名
             "LOWER(COALESCE(e.tags,'')) LIKE ?",         # 标签
             "LOWER(COALESCE(e.status,'')) LIKE ?",       # 状态（英文，用于 fail/succ 这类片段）
-            "LOWER(COALESCE(e.command,'')) LIKE ?",      # 实际执行的命令
-            "LOWER(COALESCE(e.args,'')) LIKE ?",         # 参数
-            "LOWER(COALESCE(e.output,'')) LIKE ?",       # 输出内容
         ]
         sql += " AND (" + " OR ".join(conds) + ")"
         params += [like] * len(conds)

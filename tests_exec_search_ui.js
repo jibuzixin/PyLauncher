@@ -1,7 +1,8 @@
 /**
  * 执行记录搜索（前端）单元测试：
  *  - 多关键词按空格拆开，逐个都要命中（AND）
- *  - 匹配范围含：记录名（tab_name）/ 脚本名 / 标签 / 状态（中英文）/ 命令 / 参数
+ *  - 匹配范围含：记录名（tab_name）/ 脚本名 / 标签 / 状态（中英文）
+ *  - 匹配范围不含：命令 / 参数 / 控制台输出（执行细节不参与搜索）
  *  - 服务端结果（histRows）就绪时直接用它，不再被本地过滤误杀
  *  - 服务端结果还没回来时，退回本地即时过滤
  *  - 源码级断言：接口带 kw 参数、搜索框 placeholder、histRowsKw 一致性校验
@@ -70,11 +71,13 @@ check('本地过滤能按中文状态命中（成功）', ids(historyFiltered())
 check('状态词不误伤：输出含「成功」但状态是 failed 的记录不该被捞进来',
   !ids(historyFiltered()).includes(5), JSON.stringify(ids(historyFiltered())));
 reset('全部成功');
-check('只在输出里的词也能被本地过滤命中（避免闪「无匹配」）',
-  ids(historyFiltered()).includes(5), JSON.stringify(ids(historyFiltered())));
+check('只在输出里的词搜不到（搜索范围不含控制台输出）',
+  !ids(historyFiltered()).includes(5), JSON.stringify(ids(historyFiltered())));
 reset('共 3 项失败');
-check('只在输出里的中文词也能被本地过滤命中',
-  ids(historyFiltered()).includes(4), JSON.stringify(ids(historyFiltered())));
+check('只在输出里的中文词也搜不到',
+  !ids(historyFiltered()).includes(4), JSON.stringify(ids(historyFiltered())));
+reset('--mode 知识库');
+check('命令、参数不参与搜索', ids(historyFiltered()).length === 0, JSON.stringify(ids(historyFiltered())));
 reset('月度');
 check('本地过滤能按记录名命中（另一条）', ids(historyFiltered()).includes(3));
 
@@ -113,6 +116,10 @@ check('后端路由声明了 kw', fs.readFileSync(path.join(__dirname, 'main.py'
 check('搜索框 placeholder 提到记录名', src.includes('搜索执行记录：记录名 / 脚本名 / 标签 / 状态…'));
 check('关键词变化时会丢弃过期结果', src.includes('histRowsKw'));
 check('后端有状态中文别名表', fs.readFileSync(path.join(__dirname, 'db.py'), 'utf8').includes('EXEC_STATUS_ALIAS'));
+check('后端 SQL 不搜输出内容',
+  !/LOWER\(COALESCE\(e\.output/.test(fs.readFileSync(path.join(__dirname, 'db.py'), 'utf8')));
+check('前端本地过滤不搜输出内容',
+  !/h\.output/.test(extract(src, 'historyFiltered')));
 
 console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
 process.exit(failed ? 1 : 0);

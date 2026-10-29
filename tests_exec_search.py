@@ -72,16 +72,24 @@ class ExecSearchTest(unittest.TestCase):
         self.e4 = db.add_execution(self.sid2, {}, None, "uv run c.py")
         db.finish_execution(self.e4["id"], "success", 0, ["共 3 项失败"])
         self.assertNotIn(self.e4["id"], self.hit_ids("失败"))
-        self.assertIn(self.e4["id"], self.hit_ids("共 3 项失败"))
         # 反过来：状态是失败、输出里写「成功」的记录，搜「成功」也不该命中
         self.e5 = db.add_execution(self.sid2, {}, None, "uv run d.py")
         db.finish_execution(self.e5["id"], "failed", 1, ["全部成功"])
         self.assertNotIn(self.e5["id"], self.hit_ids("成功"))
-        self.assertIn(self.e5["id"], self.hit_ids("全部成功"))
 
-    def test_by_command_and_args(self):
-        self.assertIn(self.e1["id"], self.hit_ids("知识库"))
-        self.assertIn(self.e3["id"], self.hit_ids("--bad"))
+    def test_output_is_not_searchable(self):
+        """搜索只查记录本身的信息，不查控制台输出内容（用户明确要求收窄）"""
+        self.e4 = db.add_execution(self.sid2, {}, None, "uv run c.py")
+        db.finish_execution(self.e4["id"], "success", 0, ["共 3 项失败"])
+        # 输出里的话搜不到
+        self.assertNotIn(self.e4["id"], self.hit_ids("共 3 项失败"))
+        self.assertEqual(self.hit_ids("共 3 项失败"), [])
+
+    def test_command_and_args_are_not_searchable(self):
+        """命令、参数是执行细节，不参与搜索"""
+        # e1 的命令里有「--mode 知识库」，参数里也有「知识库」
+        self.assertNotIn(self.e3["id"], self.hit_ids("--bad"))
+        self.assertNotIn(self.e1["id"], self.hit_ids("--mode 知识库"))
 
     def test_multiple_tokens_are_and(self):
         # 两个词都要命中才算

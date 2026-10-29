@@ -2091,7 +2091,8 @@ const EXEC_STATUS_ALIAS = {
   success: 'success', failed: 'failed', running: 'running', terminated: 'terminated',
 };
 
-/** 执行记录搜索：记录名（控制台重命名的名字）/ 脚本名 / 标签 / 状态 / 命令 / 参数 / 输出。
+/** 执行记录搜索：只查「记录本身的信息」—— 记录名（控制台重命名的名字）/ 脚本名 / 标签 / 状态。
+ *  刻意不搜命令、参数、控制台输出：那些是执行细节，命中太多反而查不出想要的记录。
  *  多个关键词按空格拆开，逐个都要命中（AND）。
  *  服务端结果已按当前关键词过滤好了，直接用；结果还没回来的那 160ms 内先用本地已有的记录即时反馈。 */
 function historyFiltered() {
@@ -2103,15 +2104,11 @@ function historyFiltered() {
   return state.executions.filter(h => {
     const tags = jparse(h.tags, []).join(' ');
     const nameHay = `${h.tab_name || ''} ${h.script_name || ''} ${tags}`.toLowerCase();
-    const cmdHay = `${h.command || ''} ${h.args || ''}`.toLowerCase();
     return tokens.every(t => {
-      // 状态词只跟「状态 / 名字 / 标签」比，不去命令、输出里匹配
+      // 状态词只跟「状态 / 名字 / 标签」比
       const alias = EXEC_STATUS_ALIAS[t];
       if (alias) return h.status === alias || nameHay.includes(t);
-      if (nameHay.includes(t) || cmdHay.includes(t)) return true;
-      if ((h.status || '').toLowerCase().includes(t)) return true;
-      // 输出内容可能很长，放到最后再查一次，避免每次都拼进 haystack
-      return (h.output || '').toLowerCase().includes(t);
+      return nameHay.includes(t) || (h.status || '').toLowerCase().includes(t);
     });
   });
 }
