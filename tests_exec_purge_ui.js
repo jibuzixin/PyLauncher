@@ -25,6 +25,7 @@ function check(desc, ok, extra) {
 /* ---- 页面骨架 ---- */
 check('执行记录页有「清理30天前」按钮', tpl.includes('id="btn-purge-old"'));
 check('按钮文案是「清理30天前」', tpl.includes('>清理30天前<'));
+check('按钮用红色危险样式', /class="[^"]*btn-danger[^"]*"[^>]*id="btn-purge-old"/.test(tpl));
 
 /* ---- 接口 ---- */
 check('有 preview 接口（删除前先看数量）',
